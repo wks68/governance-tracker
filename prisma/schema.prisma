@@ -1,0 +1,184 @@
+// DMS Governance Tracker - Prisma Schema
+// MVP 使用 SQLite，欄位設計已預留未來切換 PostgreSQL 的彈性
+// 若要改用 PostgreSQL，只需將 datasource provider 改為 "postgresql"
+// 並將 DATABASE_URL 換成 PostgreSQL 連線字串，欄位定義不需大幅更動。
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 使用者主檔（MVP 以 SQLite 儲存，未串接企業 SSO）
+model User {
+  id          String    @id @default(cuid())
+  name        String
+  email       String    @unique
+  department  String    @default("")
+  role        String // PM / RD / QA / OP / 資安推動小組 / DMS主管 / Admin
+  isActive    Boolean   @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  ownedIssues    Issue[]    @relation("IssueOwner")
+  reportedIssues Issue[]    @relation("IssueReporter")
+  auditLogs      AuditLog[]
+
+  @@index([role])
+  @@index([isActive])
+}
+
+// 工單主表（原「工作單/議題」）
+model Issue {
+  id          String  @id @default(cuid())
+  issueKey    String  @unique // 工單編號，例如 HOTFIX-0001
+  issueType   String // Hotfix / Incident / RCA / RiskException / QaVerification / ChangeRelease / MonitoringInventory / BackupRecoveryTest
+
+  title       String
+  description String  @default("")
+
+  systemName  String  @default("")
+  environment String  @default("") // Production / Staging / UAT / Dev
+
+  riskLevel   String  @default("") // 高 / 中 / 低
+  priority    String  @default("") // P1 / P2 / P3 / P4
+
+  ownerRole      String  @default("")
+  ownerName      String  @default("")
+  ownerUserId    String?
+  reporter       String  @default("")
+  reporterUserId String?
+
+  workflowStatus String // 目前流程關卡（中文狀態名稱）
+  statusLight    String @default("Green") // Red / Yellow / Blue / Green / Gray
+
+  dueDate     DateTime?
+
+  needRca            Boolean @default(false)
+  needRiskException  Boolean @default(false)
+  impactProduction   Boolean @default(false)
+
+  evidenceStatus String @default("缺漏") // 齊備 / 部分缺漏 / 缺漏
+  blockReason    String @default("")
+  waitingRole    String @default("")
+  nextStep       String @default("")
+
+  alertLevel      String @default("") // Critical / Warning / Info（主要給 Monitoring Inventory 使用）
+  firstResponseAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  closedAt  DateTime?
+
+  owner        User?             @relation("IssueOwner", fields: [ownerUserId], references: [id])
+  reporterUser User?             @relation("IssueReporter", fields: [reporterUserId], references: [id])
+  fieldValues  IssueFieldValue[]
+  comments     Comment[]
+  evidences    Evidence[]
+  aiSuggestions AiSuggestion[]
+
+  @@index([issueType])
+  @@index([workflowStatus])
+  @@index([statusLight])
+  @@index([ownerUserId])
+  @@index([reporterUserId])
+}
+
+// 工作單類型主檔（MVP 以靜態常數搭配此表展示用途）
+model IssueType {
+  id          String @id @default(cuid())
+  typeKey     String @unique
+  label       String
+  description String @default("")
+}
+
+// 流程狀態主檔（MVP 以靜態常數搭配此表展示用途）
+model WorkflowStatus {
+  id        String @id @default(cuid())
+  issueType String
+  stepOrder Int
+  statusKey String
+  label     String
+
+  @@index([issueType])
+}
+
+// 動態欄位（依工作單類型不同而不同）
+model IssueFieldValue {
+  id         String   @id @default(cuid())
+  issueId    String
+  fieldKey   String
+  fieldLabel String
+  fieldValue String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId, fieldKey])
+  @@index([issueId])
+}
+
+// 佐證資料
+model Evidence {
+  id          String   @id @default(cuid())
+  issueId     String
+  type        String // Jira連結 / GitLabPR / Log / 監控截圖 / Email / MSTeams / 文件 / 其他
+  title       String
+  url         String
+  description String   @default("")
+  createdAt   DateTime @default(now())
+
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+// 留言
+model Comment {
+  id         String   @id @default(cuid())
+  issueId    String
+  authorRole String
+  authorName String
+  body       String
+  createdAt  DateTime @default(now())
+
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+// 異動紀錄（適用於工單異動與使用者角色/帳號異動等系統事件）
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actionType  String // IssueCreated / StatusChange / FieldChange / CommentAdded / EvidenceAdded / AiSuggestion / RoleChange / AccountStatusChange
+  entityType  String // Issue / User
+  entityId    String
+  summary     String
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+}
+
+// Mock AI 建議紀錄
+model AiSuggestion {
+  id             String   @id @default(cuid())
+  issueId        String
+  suggestionType String // ProblemSummary / ImpactScope / RcaDraft / CorrectiveAction / PreventiveAction / NextStep / EvidenceGap
+  prompt         String
+  output         String
+  accepted       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
