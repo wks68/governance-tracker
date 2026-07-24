@@ -19,6 +19,14 @@ import {
   type TeamMembershipLike,
 } from "../src/lib/permissions";
 import { decideSystemTeamRouting, type SystemTeamMappingLike } from "../src/lib/systemTeamRouting";
+import {
+  TEAM_MEMBERSHIP_ROLES,
+  isTeamMembershipRole,
+  SYSTEM_RESPONSIBILITY_TYPES,
+  isSystemResponsibilityType,
+  CHANGE_SUB_TYPES,
+  isChangeSubType,
+} from "../src/lib/constants";
 import { prisma } from "../src/lib/prisma";
 
 let passCount = 0;
@@ -159,21 +167,83 @@ async function main() {
       multiplePrimaryDecision.conflictingTeamIds.length === 2,
   );
 
-  console.log("\n=== M1-A 驗證：資料庫相依檢查（需 Migration 已套用；M1-A 階段預期為 SKIPPED） ===");
+  console.log("\n=== M1-B 驗證：固定值域集中常數（src/lib/constants.ts，純邏輯） ===");
 
+  check(
+    "TEAM_MEMBERSHIP_ROLES 值域正確",
+    TEAM_MEMBERSHIP_ROLES.length === 2 &&
+      TEAM_MEMBERSHIP_ROLES.includes("MEMBER") &&
+      TEAM_MEMBERSHIP_ROLES.includes("LEAD"),
+  );
+  check("isTeamMembershipRole：合法值通過", isTeamMembershipRole("MEMBER") && isTeamMembershipRole("LEAD"));
+  check("isTeamMembershipRole：非法值拒絕（deny-by-default）", !isTeamMembershipRole("OWNER"));
+
+  check(
+    "SYSTEM_RESPONSIBILITY_TYPES 值域正確",
+    SYSTEM_RESPONSIBILITY_TYPES.length === 4 &&
+      ["RD", "QA", "OP", "OTHER"].every((v) => (SYSTEM_RESPONSIBILITY_TYPES as readonly string[]).includes(v)),
+  );
+  check(
+    "isSystemResponsibilityType：合法值通過",
+    isSystemResponsibilityType("RD") && isSystemResponsibilityType("OTHER"),
+  );
+  check("isSystemResponsibilityType：非法值拒絕（deny-by-default）", !isSystemResponsibilityType("SALES"));
+
+  check(
+    "CHANGE_SUB_TYPES 值域正確",
+    CHANGE_SUB_TYPES.length === 2 &&
+      CHANGE_SUB_TYPES.includes("QUARTERLY_RELEASE") &&
+      CHANGE_SUB_TYPES.includes("GENERAL_CHANGE"),
+  );
+  check(
+    "isChangeSubType：合法值通過",
+    isChangeSubType("QUARTERLY_RELEASE") && isChangeSubType("GENERAL_CHANGE"),
+  );
+  check("isChangeSubType：非法值拒絕（deny-by-default）", !isChangeSubType("HOTFIX_RELEASE"));
+
+  console.log("\n=== 資料庫相依檢查（需 Migration 已套用；M1-A 階段預期為 SKIPPED，M1-B 測試複本套用後須為完整檢查） ===");
+
+  let migrationApplied = false;
   try {
     await prisma.team.count();
-    await prisma.userRole.count();
-    await prisma.systemTeamMapping.count();
-    // 若能成功查詢，代表 Migration 已套用，才進一步驗證既有資料未被誤改
+    migrationApplied = true;
+  } catch {
+    migrationApplied = false;
+  }
+
+  if (!migrationApplied) {
+    skip(
+      "Team / UserRole / SystemTeamMapping / TeamMember / System 資料表查詢",
+      "資料表尚未建立，等待 Migration 套用後才能驗證",
+    );
+  } else {
+    const teamCount = await prisma.team.count();
+    check("Team 資料表可查詢", teamCount >= 0);
+    const userRoleCount = await prisma.userRole.count();
+    check("UserRole 資料表可查詢", userRoleCount >= 0);
+    const systemCount = await prisma.system.count();
+    check("System 資料表可查詢", systemCount >= 0);
+    const systemTeamMappingCount = await prisma.systemTeamMapping.count();
+    check("SystemTeamMapping 資料表可查詢", systemTeamMappingCount >= 0);
+    const teamMemberCount = await prisma.teamMember.count();
+    check("TeamMember 資料表可查詢", teamMemberCount >= 0);
+
     const userCount = await prisma.user.count();
     check("既有 User 資料表可正常查詢（DB 已連線）", userCount >= 0);
-    skip("略過標記已不適用：Migration 似乎已套用，如需完整 DB 驗證請於 M1-B 後另行執行", "informational");
-  } catch (err) {
-    skip(
-      "Team / UserRole / SystemTeamMapping 資料表查詢",
-      "資料表尚未建立，等待 M1-B 套用 Migration 後才能驗證",
+
+    const issueCount = await prisma.issue.count();
+    const issuesWithAssignedTeam = await prisma.issue.count({ where: { NOT: { assignedTeamId: null } } });
+    check(
+      `既有 Issue（共 ${issueCount} 筆）的 assignedTeamId 均未被回填（維持 null）`,
+      issuesWithAssignedTeam === 0,
     );
+    const issuesWithStageEnteredAt = await prisma.issue.count({ where: { NOT: { stageEnteredAt: null } } });
+    check("既有 Issue 的 stageEnteredAt 均未被回填（維持 null）", issuesWithStageEnteredAt === 0);
+    const issuesWithChangeSubType = await prisma.issue.count({ where: { NOT: { changeSubType: null } } });
+    check("既有 Issue 的 changeSubType 均未被回填（維持 null）", issuesWithChangeSubType === 0);
+
+    const auditLogCount = await prisma.auditLog.count();
+    check("AuditLog 資料表可查詢（含新增 fromValue/toValue/reasonCode 欄位）", auditLogCount >= 0);
   }
 
   console.log(`\n=== 結果：PASS=${passCount} FAIL=${failCount} SKIP=${skipCount} ===`);

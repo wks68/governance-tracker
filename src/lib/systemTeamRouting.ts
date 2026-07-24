@@ -11,9 +11,7 @@
 // routeSystemTeam 為 DB 查詢版本，需 SystemTeamMapping 資料表已存在，須等 M1-B 套用 Migration 後才能實際驗證。
 
 import { prisma } from "./prisma";
-
-// SQLite connector 不支援原生 enum，SystemTeamMapping.responsibilityType 於 Prisma Schema 中為 String（值域見該欄位註解）
-export type SystemResponsibilityTypeValue = "RD" | "QA" | "OP" | "OTHER";
+import type { SystemResponsibilityType } from "./constants";
 
 export interface SystemTeamMappingLike {
   id: string;
@@ -57,7 +55,7 @@ export function decideSystemTeamRouting(candidates: readonly SystemTeamMappingLi
 // DB 查詢版本：需 SystemTeamMapping 資料表已存在（M1-B 套用 Migration 後）
 export async function routeSystemTeam(
   systemId: string,
-  responsibilityType: SystemResponsibilityTypeValue,
+  responsibilityType: SystemResponsibilityType,
 ): Promise<RoutingDecision> {
   const candidates = await prisma.systemTeamMapping.findMany({
     where: { systemId, responsibilityType },

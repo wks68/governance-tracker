@@ -13,8 +13,8 @@
 // TeamMember 資料表已存在，須等 M1-B 套用 Migration 後才能實際驗證。
 
 import type { User } from "@prisma/client";
-import type { RoleKey } from "./constants";
-import { ROLES } from "./constants";
+import type { RoleKey, TeamMembershipRole } from "./constants";
+import { ROLES, isTeamMembershipRole } from "./constants";
 import { prisma } from "./prisma";
 
 export type Capability =
@@ -106,12 +106,10 @@ export function requireCapabilitySync(
 // Team 成員身分（MEMBER／LEAD）判斷
 // ---------------------------------------------------------------------------
 
-export type TeamMembershipRoleValue = "MEMBER" | "LEAD";
-
 export interface TeamMembershipLike {
   teamId: string;
   userId: string;
-  membershipRole: TeamMembershipRoleValue;
+  membershipRole: TeamMembershipRole;
   isActive: boolean;
 }
 
@@ -152,14 +150,16 @@ export async function requireCapability(user: Pick<User, "id" | "role">, capabil
 }
 
 // 查詢使用者在指定團隊的成員身分（DB 版本）
+// deny-by-default：資料庫中若出現不在固定值域內的髒資料，視為無有效成員身分，不得盲目轉型
 export async function getTeamMembershipRole(
   teamId: string,
   userId: string,
-): Promise<TeamMembershipRoleValue | null> {
+): Promise<TeamMembershipRole | null> {
   const membership = await prisma.teamMember.findFirst({
     where: { teamId, userId, isActive: true },
   });
-  return membership ? (membership.membershipRole as TeamMembershipRoleValue) : null;
+  if (!membership || !isTeamMembershipRole(membership.membershipRole)) return null;
+  return membership.membershipRole;
 }
 
 export async function isUserTeamMember(teamId: string, userId: string): Promise<boolean> {

@@ -118,3 +118,26 @@ export const ISSUE_TYPE_PREFIX: Record<string, string> = {
   MonitoringInventory: "MON",
   BackupRecoveryTest: "BAK",
 };
+
+// ---------------------------------------------------------------------------
+// M1 新增：以 String 欄位模擬固定值域者（SQLite 不支援原生 enum），
+// 集中於此提供 TypeScript 層的 literal union type 及驗證函式，避免值域散落各處。
+// ---------------------------------------------------------------------------
+
+export const TEAM_MEMBERSHIP_ROLES = ["MEMBER", "LEAD"] as const;
+export type TeamMembershipRole = (typeof TEAM_MEMBERSHIP_ROLES)[number];
+export function isTeamMembershipRole(value: string): value is TeamMembershipRole {
+  return (TEAM_MEMBERSHIP_ROLES as readonly string[]).includes(value);
+}
+
+export const SYSTEM_RESPONSIBILITY_TYPES = ["RD", "QA", "OP", "OTHER"] as const;
+export type SystemResponsibilityType = (typeof SYSTEM_RESPONSIBILITY_TYPES)[number];
+export function isSystemResponsibilityType(value: string): value is SystemResponsibilityType {
+  return (SYSTEM_RESPONSIBILITY_TYPES as readonly string[]).includes(value);
+}
+
+export const CHANGE_SUB_TYPES = ["QUARTERLY_RELEASE", "GENERAL_CHANGE"] as const;
+export type ChangeSubType = (typeof CHANGE_SUB_TYPES)[number];
+export function isChangeSubType(value: string): value is ChangeSubType {
+  return (CHANGE_SUB_TYPES as readonly string[]).includes(value);
+}
