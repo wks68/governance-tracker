@@ -24,28 +24,107 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  ownedIssues    Issue[]    @relation("IssueOwner")
-  reportedIssues Issue[]    @relation("IssueReporter")
-  auditLogs      AuditLog[]
+  ownedIssues     Issue[]      @relation("IssueOwner")
+  reportedIssues  Issue[]      @relation("IssueReporter")
+  auditLogs       AuditLog[]
+  teamMemberships TeamMember[]
+  userRoles       UserRole[]
 
   @@index([role])
   @@index([isActive])
 }
 
+// 使用者多角色關聯（M1 新增：帳號可同時擁有多個角色；User.role 保留作為既有相容欄位，不刪除、不改名）
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String // 沿用既有 RoleKey 值域字串（含既有角色與未來新增角色），不另開 DB enum
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, role])
+  @@index([userId])
+}
+
+// 團隊主檔（M1 新增）
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members        TeamMember[]
+  systemMappings SystemTeamMapping[]
+  assignedIssues Issue[]             @relation("IssueAssignedTeam")
+}
+
+// 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分
+// SQLite connector 不支援原生 enum，沿用既有慣例（如 User.role）改用 String + 註解值域，值域固定為 MEMBER / LEAD
+model TeamMember {
+  id             String   @id @default(cuid())
+  teamId         String
+  userId         String
+  membershipRole String   @default("MEMBER") // MEMBER / LEAD
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  team Team @relation(fields: [teamId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+// 系統主檔（M1 新增）：與既有 Issue.systemName（自由文字）暫不自動關聯，僅作為受控清單基準，供 M3 起漸進導入
+model System {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teamMappings SystemTeamMapping[]
+}
+
+// 系統對應負責團隊（M1 新增）：同一系統/職能可有多個候選團隊，需有唯一 isPrimary 才能自動路由（見 src/lib/systemTeamRouting.ts）
+// SQLite connector 不支援原生 enum，沿用既有慣例改用 String + 註解值域，值域固定為 RD / QA / OP / OTHER
+model SystemTeamMapping {
+  id                 String   @id @default(cuid())
+  systemId           String
+  responsibilityType String // RD / QA / OP / OTHER
+  teamId             String
+  isPrimary          Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  system System @relation(fields: [systemId], references: [id])
+  team   Team   @relation(fields: [teamId], references: [id])
+
+  @@index([systemId, responsibilityType])
+}
+
+// 計畫變更子分類（M1 新增）：僅 ChangeRelease 工單類型使用，其餘工單類型必須為 null
+// SQLite connector 不支援原生 enum，沿用既有慣例改用 String + 註解值域，值域固定為 QUARTERLY_RELEASE / GENERAL_CHANGE
+
 // 工單主表（原「工作單/議題」）
 model Issue {
-  id          String  @id @default(cuid())
-  issueKey    String  @unique // 工單編號，例如 HOTFIX-0001
-  issueType   String // Hotfix / Incident / RCA / RiskException / QaVerification / ChangeRelease / MonitoringInventory / BackupRecoveryTest
+  id        String @id @default(cuid())
+  issueKey  String @unique // 工單編號，例如 HOTFIX-0001
+  issueType String // Hotfix / Incident / RCA / RiskException / QaVerification / ChangeRelease / MonitoringInventory / BackupRecoveryTest
 
   title       String
-  description String  @default("")
+  description String @default("")
 
-  systemName  String  @default("")
-  environment String  @default("") // Production / Staging / UAT / Dev
+  systemName  String @default("")
+  environment String @default("") // Production / Staging / UAT / Dev
 
-  riskLevel   String  @default("") // 高 / 中 / 低
-  priority    String  @default("") // P1 / P2 / P3 / P4
+  riskLevel String @default("") // 高 / 中 / 低
+  priority  String @default("") // P1 / P2 / P3 / P4
 
   ownerRole      String  @default("")
   ownerName      String  @default("")
@@ -56,29 +135,35 @@ model Issue {
   workflowStatus String // 目前流程關卡（中文狀態名稱）
   statusLight    String @default("Green") // Red / Yellow / Blue / Green / Gray
 
-  dueDate     DateTime?
+  dueDate DateTime?
 
-  needRca            Boolean @default(false)
-  needRiskException  Boolean @default(false)
-  impactProduction   Boolean @default(false)
+  needRca           Boolean @default(false)
+  needRiskException Boolean @default(false)
+  impactProduction  Boolean @default(false)
 
   evidenceStatus String @default("缺漏") // 齊備 / 部分缺漏 / 缺漏
   blockReason    String @default("")
   waitingRole    String @default("")
   nextStep       String @default("")
 
-  alertLevel      String @default("") // Critical / Warning / Info（主要給 Monitoring Inventory 使用）
+  alertLevel      String    @default("") // Critical / Warning / Info（主要給 Monitoring Inventory 使用）
   firstResponseAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // ---- M1 新增（皆為 nullable，既有資料維持 null，不回填、不猜測） ----
+  assignedTeamId String? // 目前處理團隊（非永久擁有），M3 起由 SystemTeamMapping 自動路由或授權人員手動指派
+  stageEnteredAt DateTime? // 進入目前關卡的時間；既有資料維持 null，新工單於建立時設定，M3 起每次合法關卡轉換更新
+  changeSubType  String? // QUARTERLY_RELEASE / GENERAL_CHANGE；僅 ChangeRelease 使用，其餘工單類型必須為 null
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   closedAt  DateTime?
 
-  owner        User?             @relation("IssueOwner", fields: [ownerUserId], references: [id])
-  reporterUser User?             @relation("IssueReporter", fields: [reporterUserId], references: [id])
-  fieldValues  IssueFieldValue[]
-  comments     Comment[]
-  evidences    Evidence[]
+  owner         User?             @relation("IssueOwner", fields: [ownerUserId], references: [id])
+  reporterUser  User?             @relation("IssueReporter", fields: [reporterUserId], references: [id])
+  assignedTeam  Team?             @relation("IssueAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  fieldValues   IssueFieldValue[]
+  comments      Comment[]
+  evidences     Evidence[]
   aiSuggestions AiSuggestion[]
 
   @@index([issueType])
@@ -86,6 +171,7 @@ model Issue {
   @@index([statusLight])
   @@index([ownerUserId])
   @@index([reporterUserId])
+  @@index([assignedTeamId])
 }
 
 // 工作單類型主檔（MVP 以靜態常數搭配此表展示用途）
@@ -156,11 +242,16 @@ model Comment {
 model AuditLog {
   id          String   @id @default(cuid())
   actorUserId String?
-  actionType  String // IssueCreated / StatusChange / FieldChange / CommentAdded / EvidenceAdded / AiSuggestion / RoleChange / AccountStatusChange
+  actionType  String // IssueCreated / StatusChange / FieldChange / CommentAdded / EvidenceAdded / AiSuggestion / RoleChange / AccountStatusChange / TeamReassigned ...
   entityType  String // Issue / User
   entityId    String
   summary     String
   createdAt   DateTime @default(now())
+
+  // ---- M1 新增（皆為 nullable）：供團隊指派等「原值→新值＋原因代碼」事件結構化保存，通用於未來各類異動原因記錄 ----
+  fromValue  String?
+  toValue    String?
+  reasonCode String?
 
   actor User? @relation(fields: [actorUserId], references: [id])
 
