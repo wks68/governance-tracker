@@ -1,4 +1,4 @@
-import { isClosed } from "./workflow";
+import { isClosed, statusLabel } from "./workflow";
 
 export interface GateInput {
   issueType: string;
@@ -38,7 +38,7 @@ export function evaluateGateRules(input: GateInput): GateResult {
 
   // ---- 各工單類型的關卡卡控 ----
   if (issueType === "Hotfix") {
-    if (targetStatus === "RD自測") {
+    if (targetStatus === "rdSelfTest") {
       require("rdFixVersion", "修正版本 / Branch / Commit");
       const approval = fields["rdManagerApproval"];
       if (isEmpty(approval)) {
@@ -49,18 +49,18 @@ export function evaluateGateRules(input: GateInput): GateResult {
         blockReasons.push("主管已退回修正，請依核准意見調整後再送核");
       }
     }
-    if (targetStatus === "QA驗證") {
+    if (targetStatus === "qaVerify") {
       require("rdSelfTestItems", "自測項目");
       require("rdTesterName", "RD");
       if (fields["rdSelfTestResult"] !== "true") {
         blockReasons.push("RD 自測尚未通過，請先完成自測並確認通過");
       }
     }
-    if (targetStatus === "QA放行確認") {
+    if (targetStatus === "qaRelease") {
       require("qaTestItems", "測試項目");
       require("qaVerifyResult", "QA 驗證結果");
     }
-    if (targetStatus === "OP上版") {
+    if (targetStatus === "opDeploy") {
       const result = fields["qaVerifyResult"];
       if (isEmpty(result)) {
         missingFields.push("QA 驗證結果");
@@ -70,7 +70,7 @@ export function evaluateGateRules(input: GateInput): GateResult {
         blockReasons.push("QA 驗證結果為有條件通過，需勾選「需要風險例外」");
       }
     }
-    if (targetStatus === "正式環境確認") {
+    if (targetStatus === "prodConfirm") {
       require("opDeployResult", "部署結果");
       require("opPostCheckConclusion", "上線後確認結論");
       if (fields["opDeployResult"] === "未完成") {
@@ -83,10 +83,10 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "Incident") {
-    if (targetStatus === "初步處置中") {
+    if (targetStatus === "initialResponse") {
       require("incidentLevel", "事件等級");
     }
-    if (targetStatus === "RCA判定" || targetStatus === "初步處置中") {
+    if (targetStatus === "rcaDecision" || targetStatus === "initialResponse") {
       const level = fields["incidentLevel"];
       const impactProduction = fields["__impactProduction"] === "true";
       if (level === "高" && !needRca) {
@@ -102,10 +102,10 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "RCA") {
-    if (targetStatus === "矯正措施") {
+    if (targetStatus === "correctiveAction") {
       require("rootCauseAnalysis", "事件原因分析");
     }
-    if (targetStatus === "驗證中") {
+    if (targetStatus === "verifying") {
       require("correctiveAction", "矯正措施");
       require("preventiveAction", "預防措施");
     }
@@ -115,12 +115,12 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "RiskException") {
-    if (targetStatus === "待核准") {
+    if (targetStatus === "pendingApproval") {
       require("riskDescription", "風險說明");
       require("tempMitigation", "暫時風險降低措施");
       require("followUpPlan", "後續處理計畫");
     }
-    if (targetStatus === "已核准") {
+    if (targetStatus === "approved") {
       const approver = fields["approverRole"];
       if (isEmpty(approver)) {
         missingFields.push("核准角色");
@@ -134,7 +134,7 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "QaVerification") {
-    if (targetStatus === "放行判定") {
+    if (targetStatus === "releaseDecision") {
       require("testItems", "測試項目");
       require("qaVerifyResult", "QA 驗證結果");
     }
@@ -146,7 +146,7 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "ChangeRelease") {
-    if (targetStatus === "上版中") {
+    if (targetStatus === "deploying") {
       require("releaseVersion", "上線版本");
       require("rollbackPlan", "回復計畫");
     }
@@ -156,11 +156,11 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "MonitoringInventory") {
-    if (targetStatus === "審核中") {
+    if (targetStatus === "reviewing") {
       require("hostServiceComponent", "主機 / 服務 / 元件名稱");
       require("monitoringItem", "監控項目");
     }
-    if (targetStatus === "生效中") {
+    if (targetStatus === "active") {
       require("hostServiceComponent", "主機 / 服務 / 元件名稱");
       require("monitoringItem", "監控項目");
       require("notifyMethod", "通知方式");
@@ -173,7 +173,7 @@ export function evaluateGateRules(input: GateInput): GateResult {
   }
 
   if (issueType === "BackupRecoveryTest") {
-    if (targetStatus === "驗證中") {
+    if (targetStatus === "verifying") {
       require("backupResult", "備份結果");
     }
     if (fields["backupResult"] === "失敗") {
@@ -199,7 +199,7 @@ export function evaluateGateRules(input: GateInput): GateResult {
       else if (missingEvidence.length > 0) nextStep = `請先補齊佐證：${missingEvidence.join("、")}`;
       else if (blockReasons.length > 0) nextStep = blockReasons[0];
     } else {
-      nextStep = `可進入下一關卡：${targetStatus}`;
+      nextStep = `可進入下一關卡：${statusLabel(issueType, targetStatus)}`;
     }
   }
 

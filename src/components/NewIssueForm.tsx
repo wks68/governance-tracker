@@ -17,7 +17,7 @@ export interface ActiveUserOption {
 
 export default function NewIssueForm({ users, currentUserId }: { users: ActiveUserOption[]; currentUserId: string }) {
   const [issueType, setIssueType] = useState<string>(ISSUE_TYPES[0].key);
-  const initialStatus = getWorkflow(issueType)[0] ?? "";
+  const initialStatus = getWorkflow(issueType)[0]?.key ?? "";
   const template = getVisibleFieldTemplate(issueType, initialStatus);
 
   return (

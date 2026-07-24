@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { isClosed } from "@/lib/workflow";
+import { isClosed, statusLabel } from "@/lib/workflow";
 import FilterBar from "@/components/FilterBar";
 import IssueTable, { IssueRow } from "@/components/IssueTable";
 import { requireCurrentUser } from "@/lib/auth";
@@ -15,7 +15,7 @@ function toRow(issue: any): IssueRow {
     systemName: issue.systemName,
     environment: issue.environment,
     title: issue.title,
-    workflowStatus: issue.workflowStatus,
+    workflowStatus: statusLabel(issue.issueType, issue.workflowStatus),
     statusLight: issue.statusLight,
     blockReason: issue.blockReason,
     waitingRole: issue.waitingRole,

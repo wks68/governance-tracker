@@ -1,85 +1,126 @@
 import { IssueTypeKey } from "./constants";
 
+export interface WorkflowStep {
+  // 穩定識別碼：儲存於 Issue.workflowStatus、比對邏輯（gateRules/statusLight）一律使用這個值
+  key: string;
+  // 畫面顯示文字，可自由改動而不影響既有資料或比對邏輯
+  label: string;
+}
+
 // 每一種工單類型的流程關卡（依序）
-export const WORKFLOWS: Record<IssueTypeKey, string[]> = {
+export const WORKFLOW_STEPS: Record<IssueTypeKey, WorkflowStep[]> = {
   Hotfix: [
-    "Hotfix已開單",
-    "RD修正",
-    "RD自測",
-    "QA驗證",
-    "QA放行確認",
-    "OP上版",
-    "正式環境確認",
-    "結案確認",
+    { key: "opened", label: "Hotfix已開單" },
+    { key: "rdFix", label: "RD修正" },
+    { key: "rdSelfTest", label: "RD自測" },
+    { key: "qaVerify", label: "QA驗證" },
+    { key: "qaRelease", label: "QA放行確認" },
+    { key: "opDeploy", label: "OP上版" },
+    { key: "prodConfirm", label: "正式環境確認" },
+    { key: "closed", label: "結案確認" },
   ],
   Incident: [
-    "已通報",
-    "初步影響判定",
-    "初步處置中",
-    "RCA判定",
-    "改善追蹤",
-    "驗證中",
-    "已結案",
+    { key: "reported", label: "已通報" },
+    { key: "initialImpact", label: "初步影響判定" },
+    { key: "initialResponse", label: "初步處置中" },
+    { key: "rcaDecision", label: "RCA判定" },
+    { key: "improvementTracking", label: "改善追蹤" },
+    { key: "verifying", label: "驗證中" },
+    { key: "closed", label: "已結案" },
   ],
   RCA: [
-    "已建立",
-    "分析中",
-    "矯正措施",
-    "預防措施",
-    "改善追蹤",
-    "驗證中",
-    "已結案",
+    { key: "created", label: "已建立" },
+    { key: "analyzing", label: "分析中" },
+    { key: "correctiveAction", label: "矯正措施" },
+    { key: "preventiveAction", label: "預防措施" },
+    { key: "improvementTracking", label: "改善追蹤" },
+    { key: "verifying", label: "驗證中" },
+    { key: "closed", label: "已結案" },
   ],
   RiskException: [
-    "例外申請",
-    "風險評估",
-    "待核准",
-    "已核准",
-    "追蹤中",
-    "驗證中",
-    "已結案",
+    { key: "requested", label: "例外申請" },
+    { key: "riskAssessment", label: "風險評估" },
+    { key: "pendingApproval", label: "待核准" },
+    { key: "approved", label: "已核准" },
+    { key: "tracking", label: "追蹤中" },
+    { key: "verifying", label: "驗證中" },
+    { key: "closed", label: "已結案" },
   ],
-  QaVerification: ["已建立", "測試中", "複測中", "放行判定", "已結案"],
-  ChangeRelease: ["已建立", "上線審核", "上版中", "正式環境確認", "已結案"],
-  MonitoringInventory: ["草稿", "審核中", "生效中", "需更新", "已結案"],
-  BackupRecoveryTest: ["已規劃", "備份確認中", "復原測試中", "驗證中", "已結案"],
+  QaVerification: [
+    { key: "created", label: "已建立" },
+    { key: "testing", label: "測試中" },
+    { key: "retesting", label: "複測中" },
+    { key: "releaseDecision", label: "放行判定" },
+    { key: "closed", label: "已結案" },
+  ],
+  ChangeRelease: [
+    { key: "created", label: "已建立" },
+    { key: "releaseReview", label: "上線審核" },
+    { key: "deploying", label: "上版中" },
+    { key: "prodConfirm", label: "正式環境確認" },
+    { key: "closed", label: "已結案" },
+  ],
+  MonitoringInventory: [
+    { key: "draft", label: "草稿" },
+    { key: "reviewing", label: "審核中" },
+    { key: "active", label: "生效中" },
+    { key: "needsUpdate", label: "需更新" },
+    { key: "closed", label: "已結案" },
+  ],
+  BackupRecoveryTest: [
+    { key: "planned", label: "已規劃" },
+    { key: "backupConfirming", label: "備份確認中" },
+    { key: "recoveryTesting", label: "復原測試中" },
+    { key: "verifying", label: "驗證中" },
+    { key: "closed", label: "已結案" },
+  ],
 };
 
+// 目前所有工單類型的結案關卡 key 統一為 "closed"，保留 Record 型別以利未來個別覆寫
 export const CLOSED_STATUS: Record<IssueTypeKey, string> = {
-  Hotfix: "結案確認",
-  Incident: "已結案",
-  RCA: "已結案",
-  RiskException: "已結案",
-  QaVerification: "已結案",
-  ChangeRelease: "已結案",
-  MonitoringInventory: "已結案",
-  BackupRecoveryTest: "已結案",
+  Hotfix: "closed",
+  Incident: "closed",
+  RCA: "closed",
+  RiskException: "closed",
+  QaVerification: "closed",
+  ChangeRelease: "closed",
+  MonitoringInventory: "closed",
+  BackupRecoveryTest: "closed",
 };
 
-export function getWorkflow(issueType: string): string[] {
-  return WORKFLOWS[issueType as IssueTypeKey] ?? [];
+export function getWorkflow(issueType: string): WorkflowStep[] {
+  return WORKFLOW_STEPS[issueType as IssueTypeKey] ?? [];
 }
 
-export function isClosed(issueType: string, status: string): boolean {
-  return status === CLOSED_STATUS[issueType as IssueTypeKey];
+export function getWorkflowKeys(issueType: string): string[] {
+  return getWorkflow(issueType).map((s) => s.key);
 }
 
-export function currentStepIndex(issueType: string, status: string): number {
-  return getWorkflow(issueType).indexOf(status);
+// statusKey -> 畫面顯示用 label；找不到時原樣回傳（例如舊資料殘留的值）
+export function statusLabel(issueType: string, statusKey: string): string {
+  return getWorkflow(issueType).find((s) => s.key === statusKey)?.label ?? statusKey;
 }
 
-export function nextStatusOf(issueType: string, status: string): string | null {
-  const wf = getWorkflow(issueType);
-  const idx = wf.indexOf(status);
-  if (idx === -1 || idx >= wf.length - 1) return null;
-  return wf[idx + 1];
+export function isClosed(issueType: string, statusKey: string): boolean {
+  return statusKey === CLOSED_STATUS[issueType as IssueTypeKey];
 }
 
-export function prevStatusOf(issueType: string, status: string): string | null {
-  const wf = getWorkflow(issueType);
-  const idx = wf.indexOf(status);
+export function currentStepIndex(issueType: string, statusKey: string): number {
+  return getWorkflowKeys(issueType).indexOf(statusKey);
+}
+
+export function nextStatusOf(issueType: string, statusKey: string): string | null {
+  const keys = getWorkflowKeys(issueType);
+  const idx = keys.indexOf(statusKey);
+  if (idx === -1 || idx >= keys.length - 1) return null;
+  return keys[idx + 1];
+}
+
+export function prevStatusOf(issueType: string, statusKey: string): string | null {
+  const keys = getWorkflowKeys(issueType);
+  const idx = keys.indexOf(statusKey);
   if (idx <= 0) return null;
-  return wf[idx - 1];
+  return keys[idx - 1];
 }
 
 // ---------------------------------------------------------------------------
@@ -117,13 +158,13 @@ export const FORM_TEMPLATES: Record<IssueTypeKey, FieldTemplate[]> = {
   Hotfix: [
     // ---- 建立工單時（Hotfix已開單）：不顯示任何動態欄位，僅填基本欄位 ----
     // ---- RD修正：進入此關卡才顯示 ----
-    { key: "rdFixVersion", label: "修正版本 / Branch / Commit", type: "text", stage: "RD修正", helpText: "進入「RD自測」前必填" },
+    { key: "rdFixVersion", label: "修正版本 / Branch / Commit", type: "text", stage: "rdFix", helpText: "進入「RD自測」前必填" },
     {
       key: "rdManagerApproval",
       label: "主管核准結果",
       type: "radio",
       options: ["已於 Comment 核准", "不核准", "退回修正"],
-      stage: "RD修正",
+      stage: "rdFix",
       helpText: "請先由主管於下方留言區留下核准意見，再選擇對應結果；進入「RD自測」前必填，選擇「不核准」或「退回修正」將無法推進",
     },
 
@@ -132,7 +173,7 @@ export const FORM_TEMPLATES: Record<IssueTypeKey, FieldTemplate[]> = {
       key: "rdSelfTestItems",
       label: "自測項目",
       type: "textarea",
-      stage: "RD自測",
+      stage: "rdSelfTest",
       placeholder: "請條列：1. 2. 3.",
       helpText: "進入「QA驗證」前必填；可使用右側「AI 輔助」產生草稿，如需附圖請於下方「佐證資料」貼上截圖連結",
     },
@@ -142,7 +183,7 @@ export const FORM_TEMPLATES: Record<IssueTypeKey, FieldTemplate[]> = {
       type: "checkbox",
       checkboxTrueLabel: "通過",
       checkboxFalseLabel: "未通過",
-      stage: "RD自測",
+      stage: "rdSelfTest",
       helpText: "進入「QA驗證」前必填；未通過將無法推進",
     },
     {
@@ -150,66 +191,66 @@ export const FORM_TEMPLATES: Record<IssueTypeKey, FieldTemplate[]> = {
       label: "RD",
       type: "select",
       dynamicOptionsRole: "RD",
-      stage: "RD自測",
+      stage: "rdSelfTest",
       helpText: "進入「QA驗證」前必填",
     },
 
     // ---- QA驗證：進入此關卡才顯示 ----
-    { key: "qaTestItems", label: "測試項目", type: "textarea", stage: "QA驗證", helpText: "進入「QA放行確認」前必填" },
+    { key: "qaTestItems", label: "測試項目", type: "textarea", stage: "qaVerify", helpText: "進入「QA放行確認」前必填" },
     {
       key: "qaVerifyResult",
       label: "QA 驗證結果",
       type: "select",
       options: ["通過", "有條件通過", "未通過"],
-      stage: "QA驗證",
+      stage: "qaVerify",
       helpText: "進入「QA放行確認」前必填，且不可為未通過才能進入「OP上版」",
     },
 
     // ---- OP上版：進入此關卡才顯示（DEI-DMS-PR18-F01 DMS 上線變更紀錄表）----
     // 一、上線前確認與回復（Rollback）計畫
-    { key: "opNeedDowntime", label: "是否需停機或公告", type: "checkbox", stage: "OP上版" },
-    { key: "opNeedDowntimeNote", label: "停機或公告說明", type: "text", stage: "OP上版" },
+    { key: "opNeedDowntime", label: "是否需停機或公告", type: "checkbox", stage: "opDeploy" },
+    { key: "opNeedDowntimeNote", label: "停機或公告說明", type: "text", stage: "opDeploy" },
     {
       key: "opExpectedImpact",
       label: "預計影響",
       type: "checkboxGroup",
       options: ["無明顯影響", "需停機", "服務短暫中斷", "影響功能", "影響資料", "影響效能", "影響權限", "其他"],
-      stage: "OP上版",
+      stage: "opDeploy",
     },
-    { key: "opExpectedImpactOther", label: "預計影響（其他說明）", type: "text", stage: "OP上版" },
-    { key: "opImpactDurationMinutes", label: "預計影響時間（分鐘）", type: "number", stage: "OP上版", helpText: "無預計影響時間可留空" },
-    { key: "opRollbackTrigger", label: "回復（Rollback）觸發條件", type: "text", stage: "OP上版" },
-    { key: "opRollbackMethod", label: "回復（Rollback）方式", type: "text", stage: "OP上版" },
-    { key: "opRollbackNotApplicable", label: "無法立即回復時之處置：不適用", type: "checkbox", stage: "OP上版" },
-    { key: "opRollbackTempPlan", label: "無法立即回復時之臨時處置說明", type: "text", stage: "OP上版" },
+    { key: "opExpectedImpactOther", label: "預計影響（其他說明）", type: "text", stage: "opDeploy" },
+    { key: "opImpactDurationMinutes", label: "預計影響時間（分鐘）", type: "number", stage: "opDeploy", helpText: "無預計影響時間可留空" },
+    { key: "opRollbackTrigger", label: "回復（Rollback）觸發條件", type: "text", stage: "opDeploy" },
+    { key: "opRollbackMethod", label: "回復（Rollback）方式", type: "text", stage: "opDeploy" },
+    { key: "opRollbackNotApplicable", label: "無法立即回復時之處置：不適用", type: "checkbox", stage: "opDeploy" },
+    { key: "opRollbackTempPlan", label: "無法立即回復時之臨時處置說明", type: "text", stage: "opDeploy" },
     {
       key: "opPreApproval",
       label: "上線前核准結果",
       type: "radio",
       options: ["已由單位主管於 Comment 核准", "不核准上線", "條件式核准"],
-      stage: "OP上版",
+      stage: "opDeploy",
     },
-    { key: "opPreApprovalNote", label: "條件式核准說明", type: "text", stage: "OP上版" },
+    { key: "opPreApprovalNote", label: "條件式核准說明", type: "text", stage: "opDeploy" },
 
     // 二、正式環境部署紀錄
-    { key: "opActualStartTime", label: "實際開始時間", type: "datetime", stage: "OP上版" },
-    { key: "opActualEndTime", label: "實際完成時間", type: "datetime", stage: "OP上版" },
-    { key: "opDeployResult", label: "部署結果", type: "radio", options: ["完成", "未完成"], stage: "OP上版" },
-    { key: "opDeployIssue", label: "異常與處置：有", type: "checkbox", stage: "OP上版" },
-    { key: "opDeployIssueNote", label: "異常與處置說明", type: "text", stage: "OP上版" },
-    { key: "opRollbackTriggered", label: "是否啟動回復（Rollback）", type: "checkbox", stage: "OP上版" },
-    { key: "opRollbackResult", label: "回復（Rollback）結果", type: "text", stage: "OP上版" },
+    { key: "opActualStartTime", label: "實際開始時間", type: "datetime", stage: "opDeploy" },
+    { key: "opActualEndTime", label: "實際完成時間", type: "datetime", stage: "opDeploy" },
+    { key: "opDeployResult", label: "部署結果", type: "radio", options: ["完成", "未完成"], stage: "opDeploy" },
+    { key: "opDeployIssue", label: "異常與處置：有", type: "checkbox", stage: "opDeploy" },
+    { key: "opDeployIssueNote", label: "異常與處置說明", type: "text", stage: "opDeploy" },
+    { key: "opRollbackTriggered", label: "是否啟動回復（Rollback）", type: "checkbox", stage: "opDeploy" },
+    { key: "opRollbackResult", label: "回復（Rollback）結果", type: "text", stage: "opDeploy" },
 
     // 三、上線後確認與結案
-    { key: "opServiceStatus", label: "服務狀態確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "OP上版" },
-    { key: "opVersionCheck", label: "版本確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "OP上版" },
-    { key: "opFuncDataCheck", label: "功能 / 資料確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "OP上版" },
-    { key: "opLogMonitorCheck", label: "日誌 / 監控確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "OP上版" },
-    { key: "opPostCheckConclusion", label: "上線後確認結論", type: "radio", options: ["通過", "未通過", "不適用"], stage: "OP上版" },
-    { key: "opFollowUp", label: "後續追蹤：有", type: "checkbox", stage: "OP上版" },
-    { key: "opFollowUpNote", label: "後續追蹤說明", type: "text", stage: "OP上版" },
-    { key: "opCloseResult", label: "結案結果", type: "radio", options: ["已完成", "已回復（Rollback）", "有後續追蹤"], stage: "OP上版" },
-    { key: "opRemark", label: "備註", type: "textarea", stage: "OP上版" },
+    { key: "opServiceStatus", label: "服務狀態確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "opDeploy" },
+    { key: "opVersionCheck", label: "版本確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "opDeploy" },
+    { key: "opFuncDataCheck", label: "功能 / 資料確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "opDeploy" },
+    { key: "opLogMonitorCheck", label: "日誌 / 監控確認", type: "radio", options: ["正常", "異常", "不適用"], stage: "opDeploy" },
+    { key: "opPostCheckConclusion", label: "上線後確認結論", type: "radio", options: ["通過", "未通過", "不適用"], stage: "opDeploy" },
+    { key: "opFollowUp", label: "後續追蹤：有", type: "checkbox", stage: "opDeploy" },
+    { key: "opFollowUpNote", label: "後續追蹤說明", type: "text", stage: "opDeploy" },
+    { key: "opCloseResult", label: "結案結果", type: "radio", options: ["已完成", "已回復（Rollback）", "有後續追蹤"], stage: "opDeploy" },
+    { key: "opRemark", label: "備註", type: "textarea", stage: "opDeploy" },
   ],
   Incident: [
     { key: "incidentLevel", label: "事件等級", type: "select", options: ["高", "中", "低"], helpText: "進入「初步處置中」前必填" },

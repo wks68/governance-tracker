@@ -6,7 +6,7 @@ import { prisma } from "./prisma";
 import { writeAuditLog } from "./audit";
 import { calculateStatusLight, suggestWaitingRole } from "./statusLight";
 import { evaluateGateRules } from "./gateRules";
-import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, isClosed } from "./workflow";
+import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, isClosed, statusLabel } from "./workflow";
 import { ISSUE_TYPE_PREFIX, RoleKey, ROLES } from "./constants";
 import { generateAiSuggestion, AiSuggestionType, AiContext } from "./mockAi";
 import { requireCurrentUser, requireAdmin } from "./auth";
@@ -141,7 +141,7 @@ export async function createIssueAction(formData: FormData) {
   const reporterUser = await findActiveUserOrNull(reporterUserId);
 
   const issueKey = await generateIssueKey(issueType);
-  const initialStatus = workflow[0];
+  const initialStatus = workflow[0].key;
   const waitingRole = suggestWaitingRole(issueType, initialStatus);
 
   const issue = await prisma.issue.create({
@@ -185,7 +185,7 @@ export async function createIssueAction(formData: FormData) {
     entityType: "Issue",
     entityId: issue.id,
     actionType: "IssueCreated",
-    summary: `建立工單「${issue.title}」，初始關卡：${initialStatus}`,
+    summary: `建立工單「${issue.title}」，初始關卡：${statusLabel(issueType, initialStatus)}`,
     actorUserId: currentUser.id,
   });
 
@@ -371,7 +371,7 @@ export async function transitionStatusAction(issueId: string, direction: "next" 
       entityType: "Issue",
       entityId: issueId,
       actionType: "StatusChange",
-      summary: `流程退回：${issue.workflowStatus} → ${prev}`,
+      summary: `流程退回：${statusLabel(issue.issueType, issue.workflowStatus)} → ${statusLabel(issue.issueType, prev)}`,
       actorUserId: currentUser.id,
     });
     await recalcIssue(issueId);
@@ -416,7 +416,7 @@ export async function transitionStatusAction(issueId: string, direction: "next" 
     entityType: "Issue",
     entityId: issueId,
     actionType: "StatusChange",
-    summary: `流程推進：${issue.workflowStatus} → ${next}`,
+    summary: `流程推進：${statusLabel(issue.issueType, issue.workflowStatus)} → ${statusLabel(issue.issueType, next)}`,
     actorUserId: currentUser.id,
   });
 
@@ -426,8 +426,8 @@ export async function transitionStatusAction(issueId: string, direction: "next" 
   revalidatePath("/issues");
 }
 
-const QA_STAGES_CAN_SEND_BACK = ["QA驗證", "QA放行確認"];
-const SEND_BACK_TARGET_STATUS = "RD修正";
+const QA_STAGES_CAN_SEND_BACK = ["qaVerify", "qaRelease"];
+const SEND_BACK_TARGET_STATUS = "rdFix";
 
 // QA 關卡不通過時，可直接發回給 RD（不同於一般退回上一關），且必須填寫發回訊息
 export async function sendBackToRdAction(issueId: string, formData: FormData) {
@@ -460,7 +460,7 @@ export async function sendBackToRdAction(issueId: string, formData: FormData) {
     entityType: "Issue",
     entityId: issueId,
     actionType: "StatusChange",
-    summary: `QA 發回 RD：${issue.workflowStatus} → ${SEND_BACK_TARGET_STATUS}，訊息：${message}`,
+    summary: `QA 發回 RD：${statusLabel(issue.issueType, issue.workflowStatus)} → ${statusLabel(issue.issueType, SEND_BACK_TARGET_STATUS)}，訊息：${message}`,
     actorUserId: currentUser.id,
   });
 
@@ -561,7 +561,7 @@ export async function runAiAction(issueId: string, suggestionType: AiSuggestionT
     systemName: issue.systemName,
     environment: issue.environment,
     riskLevel: issue.riskLevel,
-    workflowStatus: issue.workflowStatus,
+    workflowStatus: statusLabel(issue.issueType, issue.workflowStatus),
     missingFields: gate.missingFields,
     missingEvidence: gate.missingEvidence,
     evidenceCount,

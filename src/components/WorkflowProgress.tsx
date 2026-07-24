@@ -3,7 +3,7 @@ import { getWorkflow } from "@/lib/workflow";
 
 export default function WorkflowProgress({ issueType, currentStatus }: { issueType: string; currentStatus: string }) {
   const steps = getWorkflow(issueType);
-  const currentIdx = steps.indexOf(currentStatus);
+  const currentIdx = steps.findIndex((s) => s.key === currentStatus);
 
   return (
     <div className="overflow-x-auto">
@@ -12,7 +12,7 @@ export default function WorkflowProgress({ issueType, currentStatus }: { issueTy
           const isDone = idx < currentIdx;
           const isCurrent = idx === currentIdx;
           return (
-            <li key={step} className="flex items-center">
+            <li key={step.key} className="flex items-center">
               <div className="flex flex-col items-center gap-1">
                 <div
                   className={clsx(
@@ -30,7 +30,7 @@ export default function WorkflowProgress({ issueType, currentStatus }: { issueTy
                     isCurrent ? "font-semibold text-primary-hover" : isDone ? "text-gray-600" : "text-gray-400"
                   )}
                 >
-                  {step}
+                  {step.label}
                 </span>
               </div>
               {idx < steps.length - 1 && (

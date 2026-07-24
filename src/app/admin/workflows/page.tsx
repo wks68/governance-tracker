@@ -24,11 +24,11 @@ export default async function WorkflowsAdminPage() {
               <h2 className="text-sm font-semibold text-gray-800">{t.label}</h2>
               <ol className="mt-3 space-y-1.5">
                 {steps.map((s, idx) => (
-                  <li key={s} className="flex items-center gap-2 text-sm text-gray-600">
+                  <li key={s.key} className="flex items-center gap-2 text-sm text-gray-600">
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500">
                       {idx + 1}
                     </span>
-                    {s}
+                    {s.label}
                   </li>
                 ))}
               </ol>

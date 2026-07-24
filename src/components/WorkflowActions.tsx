@@ -7,12 +7,14 @@ import { transitionStatusAction, sendBackToRdAction } from "@/lib/actions";
 export default function WorkflowActions({
   issueId,
   nextStatus,
+  nextStatusLabel,
   prevStatus,
   gatePassed,
   canSendBackToRd,
 }: {
   issueId: string;
   nextStatus: string | null;
+  nextStatusLabel?: string | null;
   prevStatus: string | null;
   gatePassed: boolean;
   canSendBackToRd?: boolean;
@@ -67,7 +69,7 @@ export default function WorkflowActions({
           title={!gatePassed ? "關卡卡控未通過，請先補齊下方缺漏項目" : undefined}
           className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {nextStatus ? `推進至下一關卡：${nextStatus}` : "已是最終關卡"}
+          {nextStatus ? `推進至下一關卡：${nextStatusLabel ?? nextStatus}` : "已是最終關卡"}
         </button>
         {canSendBackToRd && (
           <button

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireCurrentUser } from "@/lib/auth";
 import { issueTypeLabel } from "@/lib/constants";
-import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf } from "@/lib/workflow";
+import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, statusLabel } from "@/lib/workflow";
 import { evaluateGateRules } from "@/lib/gateRules";
 import StatusBadge from "@/components/StatusBadge";
 import WorkflowProgress from "@/components/WorkflowProgress";
@@ -103,7 +103,7 @@ export default async function IssueDetailPage({ params }: { params: { id: string
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div>
             <div className="text-xs text-gray-400">目前流程狀態</div>
-            <div className="font-medium text-gray-800">{issue.workflowStatus}</div>
+            <div className="font-medium text-gray-800">{statusLabel(issue.issueType, issue.workflowStatus)}</div>
           </div>
           <div>
             <div className="text-xs text-gray-400">負責人</div>
@@ -173,10 +173,11 @@ export default async function IssueDetailPage({ params }: { params: { id: string
               <WorkflowActions
                 issueId={issue.id}
                 nextStatus={next}
+                nextStatusLabel={next ? statusLabel(issue.issueType, next) : null}
                 prevStatus={prev}
                 gatePassed={gate.passed}
                 canSendBackToRd={
-                  issue.issueType === "Hotfix" && ["QA驗證", "QA放行確認"].includes(issue.workflowStatus)
+                  issue.issueType === "Hotfix" && ["qaVerify", "qaRelease"].includes(issue.workflowStatus)
                 }
               />
             </div>
@@ -184,13 +185,13 @@ export default async function IssueDetailPage({ params }: { params: { id: string
 
           {/* 6.5 關卡卡控檢查區 */}
           <section>
-            <GateCheckPanel gate={gate} nextStatusLabel={next} />
+            <GateCheckPanel gate={gate} nextStatusLabel={next ? statusLabel(issue.issueType, next) : null} />
           </section>
 
           {/* 6.4 動態欄位區：直接在本頁填寫目前關卡的動態欄位，不需跳轉 */}
           <section id="dynamic-fields-section" className="rounded-lg border border-gray-200 bg-white p-5">
             <h2 className="mb-3 text-sm font-semibold text-gray-700">
-              {issueTypeLabel(issue.issueType)} 專屬欄位（{issue.workflowStatus}）
+              {issueTypeLabel(issue.issueType)} 專屬欄位（{statusLabel(issue.issueType, issue.workflowStatus)}）
             </h2>
             <DynamicFieldsEditForm
               issueId={issue.id}
