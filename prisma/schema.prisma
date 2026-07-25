@@ -30,6 +30,22 @@ model User {
   teamMemberships TeamMember[]
   userRoles       UserRole[]
 
+  // ---- M1.5-A 新增：核准治理層反向關聯 ----
+  approvalRequestsMade         ApprovalRecord[]           @relation("ApprovalRequestedBy")
+  approvalsDecided             ApprovalRecord[]           @relation("ApprovalApprover")
+  approvalsExpected            ApprovalRecord[]           @relation("ApprovalExpectedApprover")
+  approvalsReceivedAsDelegator ApprovalRecord[]           @relation("ApprovalDelegatedFrom")
+  riskChecksAnswered           StageRiskCheck[]           @relation("RiskCheckAnsweredBy")
+  riskChecksOwned              StageRiskCheck[]           @relation("RiskCheckVerificationOwner")
+  riskChecksResolved           StageRiskCheck[]           @relation("RiskCheckResolvedBy")
+  supervisorAssignmentsAsUser  UserSupervisorAssignment[] @relation("SupervisorAssignmentUser")
+  supervisorAssignmentsAsLead  UserSupervisorAssignment[] @relation("SupervisorAssignmentSupervisor")
+  supervisorAssignmentsCreated UserSupervisorAssignment[] @relation("SupervisorAssignmentCreatedBy")
+  delegationsGranted           ApprovalDelegation[]       @relation("DelegationDelegator")
+  delegationsReceived          ApprovalDelegation[]       @relation("DelegationDelegate")
+  delegationsRevoked           ApprovalDelegation[]       @relation("DelegationRevokedBy")
+  delegationsCreated           ApprovalDelegation[]       @relation("DelegationCreatedBy")
+
   @@index([role])
   @@index([isActive])
 }
@@ -58,6 +74,10 @@ model Team {
   members        TeamMember[]
   systemMappings SystemTeamMapping[]
   assignedIssues Issue[]             @relation("IssueAssignedTeam")
+
+  // ---- M1.5-A 新增 ----
+  approvalRecords     ApprovalRecord[]
+  approvalDelegations ApprovalDelegation[]
 }
 
 // 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分
@@ -166,6 +186,10 @@ model Issue {
   evidences     Evidence[]
   aiSuggestions AiSuggestion[]
 
+  // ---- M1.5-A 新增：核准治理層不得因 Issue 刪除而連動刪除，關聯側以 Restrict 保護（見 ApprovalRecord/StageRiskCheck 定義） ----
+  approvalRecords ApprovalRecord[]
+  stageRiskChecks StageRiskCheck[]
+
   @@index([issueType])
   @@index([workflowStatus])
   @@index([statusLight])
@@ -272,4 +296,162 @@ model AiSuggestion {
   issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
   @@index([issueId])
+}
+
+// ============================================================================
+// M1.5-A 新增：核准治理層（ApprovalRecord / StageRiskCheck / UserSupervisorAssignment /
+// ApprovalDelegation）。本輪僅新增獨立資料表，不變更既有模型的既有欄位與資料。
+//
+// 固定值域欄位沿用既有 M1 慣例：Schema 使用 String，TypeScript 於 src/lib/constants.ts
+// 集中以 as const + literal union type + 型別守衛驗證，deny-by-default。
+//
+// 治理與稽核紀錄不得因刪除 User / Team / Issue 而連動遺失或消失：所有關聯一律使用
+// onDelete: Restrict（自我關聯之 supersedes 例外使用 NoAction，避免自我參照的多重刪除
+// 路徑衝突），不使用 Cascade、不使用 SetNull。
+// ============================================================================
+
+// 直屬主管關聯（M1.5-A 新增）：以獨立關聯表表示，保留歷史、支援生效區間，
+// 不新增 User.supervisorUserId 自關聯欄位。
+// 有效性與唯一 primary 判斷、循環偵測均由服務層（src/lib/permissions.ts、
+// src/lib/timeWindow.ts）強制驗證，SQLite 無法以條件式唯一索引表達。
+model UserSupervisorAssignment {
+  id               String    @id @default(cuid())
+  userId           String // 被管理人／開單人
+  supervisorUserId String // 直屬主管
+  validFrom        DateTime
+  validUntil       DateTime? // null = 尚未設定終止日；有效性採半開區間 [validFrom, validUntil)
+  isPrimary        Boolean   @default(true)
+  isActive         Boolean   @default(true)
+  createdByUserId  String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user            User             @relation("SupervisorAssignmentUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supervisor      User             @relation("SupervisorAssignmentSupervisor", fields: [supervisorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy       User             @relation("SupervisorAssignmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalRecords ApprovalRecord[]
+
+  @@index([userId, isActive])
+  @@index([supervisorUserId])
+}
+
+// 核准代理（M1.5-A 新增）：approvalType 為必填，不允許 null 代表全部類型；
+// 不支援代理人再次轉代理、不允許循環代理，由服務層（src/lib/permissions.ts）強制驗證。
+model ApprovalDelegation {
+  id               String    @id @default(cuid())
+  delegatorUserId  String
+  delegateUserId   String
+  teamId           String? // RD/QA/OP LEAD 代理必填；BUSINESS_APPROVAL 可為 null
+  approvalType     String // BUSINESS_APPROVAL / RD_LEAD_APPROVAL / QA_LEAD_APPROVAL / DEPLOYMENT_APPROVAL / RISK_EXCEPTION_APPROVAL（必填，不代表全部類型）
+  validFrom        DateTime
+  validUntil       DateTime // 必填；有效性仍採半開區間語意（now < validUntil）
+  isActive         Boolean   @default(true)
+  reason           String    @default("")
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revocationReason String?
+  createdByUserId  String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  delegator       User             @relation("DelegationDelegator", fields: [delegatorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  delegate        User             @relation("DelegationDelegate", fields: [delegateUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  team            Team?            @relation(fields: [teamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revokedBy       User?            @relation("DelegationRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy       User             @relation("DelegationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalRecords ApprovalRecord[]
+
+  @@index([delegateUserId, isActive])
+  @@index([delegatorUserId])
+}
+
+// 通用核准紀錄（M1.5-A 新增）。
+// decision：PENDING / APPROVED / REJECTED / CANCELLED（不使用 INVALIDATED）。
+// recordStatus：ACTIVE / INVALIDATED / SUPERSEDED。
+//   - 原 APPROVED 紀錄因內容變更而失效：decision 保留 APPROVED，recordStatus 改 INVALIDATED。
+//   - 原 REJECTED/CANCELLED 紀錄因重新送核而不再是目前版本：decision 保留原值，recordStatus 改 SUPERSEDED。
+// supersedesApprovalRecordId 為 @unique，形成單一取代路徑（一對一自我關聯），不得分岔。
+// 實際「同一 issueId+approvalType+relatedStageKey 僅一筆 ACTIVE+PENDING」的唯一性，
+// 另由 migration 內手動追加的 partial unique index 於 DB 層保護（schema 語法無法表達條件式唯一索引），
+// 變更本 model 時務必同步檢查該 index 是否仍需調整。
+model ApprovalRecord {
+  id                         String    @id @default(cuid())
+  issueId                    String
+  approvalType               String // BUSINESS_APPROVAL / RD_LEAD_APPROVAL / QA_LEAD_APPROVAL / DEPLOYMENT_APPROVAL / RISK_EXCEPTION_APPROVAL
+  relatedStageKey            String // 對應 Hotfix 主流程關卡 key，見 src/lib/hotfixWorkflow.ts
+  requestedByUserId          String // 將該階段成果正式送交核准的人（見 src/lib/approvalService.ts 對各 approvalType 的定義）
+  requestedAt                DateTime  @default(now())
+  approverUserId             String? // 實際完成核准/退回者，決定時才填入
+  approverTeamId             String?
+  expectedApproverUserId     String? // 預先解析出的應核准人，供 UI 顯示與稽核比對
+  delegatedFromUserId        String? // 代理核准時記錄被代理人
+  approvalAuthorityType      String // DIRECT_SUPERVISOR / TEAM_LEAD / DELEGATE；建立時先填預期資格來源，決策時更新為實際來源
+  supervisorAssignmentId     String? // approvalAuthorityType=DIRECT_SUPERVISOR 時必填，且與 approvalDelegationId 互斥
+  approvalDelegationId       String? // approvalAuthorityType=DELEGATE 時必填，且與 supervisorAssignmentId 互斥
+  decision                   String    @default("PENDING") // PENDING / APPROVED / REJECTED / CANCELLED
+  recordStatus               String    @default("ACTIVE") // ACTIVE / INVALIDATED / SUPERSEDED
+  decisionReasonCode         String?
+  decisionComment            String?
+  decidedAt                  DateTime?
+  approvalSnapshotJson       String? // 由 src/lib/approvalSnapshotSchemas.ts 建立之 JSON 字串（非 Prisma Json scalar，不升級 Prisma）
+  snapshotSchemaVersion      Int       @default(1)
+  snapshotHash               String? // 對 approvalSnapshotJson 做穩定排序後計算之雜湊，讀取時用於偵測損毀
+  revisionNo                 Int       @default(1)
+  supersedesApprovalRecordId String?   @unique
+  dueAt                      DateTime?
+  remindedAt                 DateTime?
+  invalidatedAt              DateTime?
+  invalidationReason         String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  issue                Issue                     @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requestedBy          User                      @relation("ApprovalRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approver             User?                     @relation("ApprovalApprover", fields: [approverUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approverTeam         Team?                     @relation(fields: [approverTeamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  expectedApprover     User?                     @relation("ApprovalExpectedApprover", fields: [expectedApproverUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  delegatedFrom        User?                     @relation("ApprovalDelegatedFrom", fields: [delegatedFromUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supervisorAssignment UserSupervisorAssignment? @relation(fields: [supervisorAssignmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalDelegation   ApprovalDelegation?       @relation(fields: [approvalDelegationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supersedes           ApprovalRecord?           @relation("ApprovalSupersession", fields: [supersedesApprovalRecordId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supersededBy         ApprovalRecord?           @relation("ApprovalSupersession")
+  riskChecks           StageRiskCheck[]
+
+  @@index([issueId, approvalType, recordStatus])
+  @@index([decision])
+  @@index([approverUserId])
+  @@index([dueAt])
+}
+
+// 階段影響檢核（M1.5-A 新增）。answer 為 nullable：
+// null=尚未填答（純技術未完成，非可選答案）／YES／NO／UNKNOWN，不得使用 default 冒充已填答。
+// 每次主管退回重新送核時 assessmentRound 遞增，不覆寫前次結果。
+model StageRiskCheck {
+  id                      String    @id @default(cuid())
+  issueId                 String
+  approvalRecordId        String?
+  stageKey                String // 對應送核關卡，如 pendingRdLeadApproval
+  assessmentRound         Int
+  checkKey                String // 固定模板 key，見 src/lib/riskCheckTemplates.ts
+  answer                  String? // null / YES / NO / UNKNOWN
+  detail                  String    @default("")
+  answeredByUserId        String?
+  answeredAt              DateTime?
+  verificationOwnerUserId String?
+  verificationDueAt       DateTime?
+  resolvedByUserId        String?
+  resolutionComment       String?
+  resolvedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  issue             Issue           @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalRecord    ApprovalRecord? @relation(fields: [approvalRecordId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  answeredBy        User?           @relation("RiskCheckAnsweredBy", fields: [answeredByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  verificationOwner User?           @relation("RiskCheckVerificationOwner", fields: [verificationOwnerUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy        User?           @relation("RiskCheckResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([issueId, stageKey, assessmentRound, checkKey])
+  @@index([issueId])
+  @@index([answer])
 }

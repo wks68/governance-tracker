@@ -141,3 +141,51 @@ export type ChangeSubType = (typeof CHANGE_SUB_TYPES)[number];
 export function isChangeSubType(value: string): value is ChangeSubType {
   return (CHANGE_SUB_TYPES as readonly string[]).includes(value);
 }
+
+// ---------------------------------------------------------------------------
+// M1.5-A 新增：核准治理層固定值域（SQLite 不支援原生 enum，沿用 M1 慣例）。
+// ---------------------------------------------------------------------------
+
+export const APPROVAL_TYPES = [
+  "BUSINESS_APPROVAL",
+  "RD_LEAD_APPROVAL",
+  "QA_LEAD_APPROVAL",
+  "DEPLOYMENT_APPROVAL",
+  "RISK_EXCEPTION_APPROVAL",
+] as const;
+export type ApprovalType = (typeof APPROVAL_TYPES)[number];
+export function isApprovalType(value: string): value is ApprovalType {
+  return (APPROVAL_TYPES as readonly string[]).includes(value);
+}
+
+export const APPROVAL_DECISIONS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"] as const;
+export type ApprovalDecision = (typeof APPROVAL_DECISIONS)[number];
+export function isApprovalDecision(value: string): value is ApprovalDecision {
+  return (APPROVAL_DECISIONS as readonly string[]).includes(value);
+}
+
+// recordStatus：與 decision 分離的獨立生命週期欄位。
+// ACTIVE=目前有效版本；INVALIDATED=原 APPROVED 因內容變更而追溯失效（decision 維持 APPROVED）；
+// SUPERSEDED=因重新送核而不再是目前版本（decision 維持原值，例如 REJECTED/CANCELLED）。
+export const APPROVAL_RECORD_STATUSES = ["ACTIVE", "INVALIDATED", "SUPERSEDED"] as const;
+export type ApprovalRecordStatus = (typeof APPROVAL_RECORD_STATUSES)[number];
+export function isApprovalRecordStatus(value: string): value is ApprovalRecordStatus {
+  return (APPROVAL_RECORD_STATUSES as readonly string[]).includes(value);
+}
+
+// 核准資格來源：DIRECT_SUPERVISOR=業務直屬主管本人核准；TEAM_LEAD=團隊主管本人核准；
+// DELEGATE=有效代理人核准。ApprovalRecord 建立時先填「預期」來源，決策時更新為「實際」來源，
+// 不得依目前組織設定事後反推。
+export const APPROVAL_AUTHORITY_TYPES = ["DIRECT_SUPERVISOR", "TEAM_LEAD", "DELEGATE"] as const;
+export type ApprovalAuthorityType = (typeof APPROVAL_AUTHORITY_TYPES)[number];
+export function isApprovalAuthorityType(value: string): value is ApprovalAuthorityType {
+  return (APPROVAL_AUTHORITY_TYPES as readonly string[]).includes(value);
+}
+
+// StageRiskCheck.answer：資料庫欄位為 nullable String，null 代表「尚未填答」（非可選答案）。
+// 此處固定值域僅涵蓋「已填答」的三種明確答案；null 由呼叫端另行判斷，不納入型別守衛值域。
+export const RISK_CHECK_ANSWERS = ["YES", "NO", "UNKNOWN"] as const;
+export type RiskCheckAnswer = (typeof RISK_CHECK_ANSWERS)[number];
+export function isRiskCheckAnswer(value: string): value is RiskCheckAnswer {
+  return (RISK_CHECK_ANSWERS as readonly string[]).includes(value);
+}

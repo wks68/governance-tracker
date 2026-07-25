@@ -9,9 +9,20 @@ export type ActionType =
   | "AiSuggestion"
   | "RoleChange"
   | "AccountStatusChange"
-  | "TeamReassigned"; // M1 新增：供 M3 起團隊指派/轉派事件使用
+  | "TeamReassigned" // M1 新增：供 M3 起團隊指派/轉派事件使用
+  // ---- M1.5-A 新增：核准治理層事件 ----
+  | "ApprovalRequested"
+  | "ApprovalApproved"
+  | "ApprovalRejected"
+  | "ApprovalCancelled"
+  | "ApprovalInvalidated"
+  | "ApprovalDelegated"
+  | "ApprovalReassigned"
+  | "RiskCheckUpdated"
+  | "UnknownRiskAssigned"
+  | "UnknownRiskResolved";
 
-export type EntityType = "Issue" | "User";
+export type EntityType = "Issue" | "User" | "ApprovalRecord"; // M1.5-A 新增：ApprovalRecord
 
 export async function writeAuditLog(params: {
   entityType: EntityType;
