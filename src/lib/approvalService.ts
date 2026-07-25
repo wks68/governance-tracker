@@ -311,7 +311,22 @@ async function fetchEligibleApproversInTx(
   });
 }
 
-// 建立階段（尚無決策）：解析「預期」核准來源，僅供 UI 顯示與稽核比對，非決策時的授權依據。
+// expectedApproverUserId 僅為 UI 顯示／通知輔助資訊，絕非授權依據（實際授權一律由
+// resolveActualAuthorityForDecision 於決策當下現場重新解析）。deny-by-default：
+// 只有在「決策當下只有唯一一位合格核准人」時才可明確指名；只要存在兩位以上合格候選人
+// （例如主管本人＋其代理人、或同一團隊多位 LEAD），一律回傳 null，不得依資料庫回傳順序、
+// 型別優先度或任何啟發式任選其一。候選人陣列順序不影響本函式結果。
+export function pickExpectedApproverUserId(eligible: readonly ApprovalAuthoritySource[]): string | null {
+  return eligible.length === 1 ? eligible[0].userId : null;
+}
+
+// 建立階段（尚無決策）：解析「資格類別」（DIRECT_SUPERVISOR／TEAM_LEAD，決定
+// approvalAuthorityType／supervisorAssignmentId／approvalDelegationId／delegatedFromUserId
+// 等欄位）與「預期核准人顯示值」（expectedApproverUserId，見 pickExpectedApproverUserId）。
+// 兩者分開計算：資格類別在結構上恆為單一類別（同一使用者至多一筆有效 primary 主管指派；
+// 同一團隊可能有多位 LEAD，但類別皆為 TEAM_LEAD，選哪一筆不影響要寫入的欄位值，因此
+// 「優先取非 DELEGATE 的第一筆」在此僅用於決定類別代表、不構成「任選核准人」問題）；
+// expectedApproverUserId 則嚴格採計數規則，不得沿用相同的啟發式。
 // TEAM_LEAD 類型的目標團隊一律取自 Issue.assignedTeamId（現有 DB 權威來源），
 // 不接受呼叫端自行指定 teamId，避免呼叫端指定任意團隊使自己成為該團隊 LEAD 而取得資格。
 async function resolveExpectedAuthorityForCreation(
@@ -320,7 +335,7 @@ async function resolveExpectedAuthorityForCreation(
   approvalType: ApprovalType,
   requestedByUserId: string,
   now: Date,
-): Promise<{ expected: ApprovalAuthoritySource; teamId: string | null }> {
+): Promise<{ baseAuthority: ApprovalAuthoritySource; expectedApproverUserId: string | null; teamId: string | null }> {
   const issue = await tx.issue.findUnique({ where: { id: issueId } });
   if (!issue) throw new ApprovalValidationError(["issueId 對應的 Issue 不存在"]);
 
@@ -331,14 +346,17 @@ async function resolveExpectedAuthorityForCreation(
   }
 
   const eligible = await fetchEligibleApproversInTx(tx, { approvalType, requestedByUserId, teamId, now });
-  const expected = eligible.find((e) => e.authorityType !== "DELEGATE") ?? eligible[0] ?? null;
-  if (!expected) {
+  if (eligible.length === 0) {
     throw new ApprovalValidationError(["找不到合格的核准資格來源，不得建立核准紀錄"]);
   }
-  if (expected.userId === requestedByUserId) {
+
+  const expectedApproverUserId = pickExpectedApproverUserId(eligible);
+  const baseAuthority = eligible.find((e) => e.authorityType !== "DELEGATE") ?? eligible[0];
+
+  if (expectedApproverUserId !== null && expectedApproverUserId === requestedByUserId) {
     throw new ApprovalValidationError(["預期核准人與送核人相同，不得建立此核准紀錄"]);
   }
-  return { expected, teamId };
+  return { baseAuthority, expectedApproverUserId, teamId };
 }
 
 // 決策階段（信任邊界核心）：現場重新解析「實際」核准來源，僅接受 actorUserId 是否
@@ -430,7 +448,7 @@ export async function createPendingApprovalRecord(input: CreatePendingApprovalIn
         await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
       }
 
-      const { expected, teamId } = await resolveExpectedAuthorityForCreation(
+      const { baseAuthority, expectedApproverUserId, teamId } = await resolveExpectedAuthorityForCreation(
         tx,
         input.issueId,
         input.approvalType,
@@ -451,7 +469,7 @@ export async function createPendingApprovalRecord(input: CreatePendingApprovalIn
         throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
       }
 
-      const fields = authoritySourceToRecordFields(expected);
+      const fields = authoritySourceToRecordFields(baseAuthority);
       return tx.approvalRecord.create({
         data: {
           issueId: input.issueId,
@@ -459,7 +477,7 @@ export async function createPendingApprovalRecord(input: CreatePendingApprovalIn
           relatedStageKey: input.relatedStageKey,
           requestedByUserId: input.requestedByUserId,
           approverTeamId: teamId,
-          expectedApproverUserId: expected.userId,
+          expectedApproverUserId,
           dueAt: input.dueAt ?? null,
           ...fields,
         },
@@ -601,7 +619,7 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
         await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
       }
 
-      const { expected, teamId } = await resolveExpectedAuthorityForCreation(
+      const { baseAuthority, expectedApproverUserId, teamId } = await resolveExpectedAuthorityForCreation(
         tx,
         input.issueId,
         input.approvalType,
@@ -622,7 +640,7 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
         throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
       }
 
-      const fields = authoritySourceToRecordFields(expected);
+      const fields = authoritySourceToRecordFields(baseAuthority);
       const created = await tx.approvalRecord.create({
         data: {
           issueId: input.issueId,
@@ -630,7 +648,7 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
           relatedStageKey: input.relatedStageKey,
           requestedByUserId: input.requestedByUserId,
           approverTeamId: teamId,
-          expectedApproverUserId: expected.userId,
+          expectedApproverUserId,
           dueAt: input.dueAt ?? null,
           revisionNo: previous.revisionNo + 1,
           supersedesApprovalRecordId: previous.id,

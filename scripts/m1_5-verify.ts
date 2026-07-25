@@ -39,7 +39,7 @@ import {
   type SupervisorAssignmentLike,
   type ApprovalDelegationLike,
 } from "../src/lib/permissions";
-import type { TeamMembershipLike } from "../src/lib/permissions";
+import type { TeamMembershipLike, ApprovalAuthoritySource } from "../src/lib/permissions";
 import {
   checkApprovalRecordConsistency,
   assertAllRiskChecksAnswered,
@@ -49,6 +49,7 @@ import {
   createPendingApprovalRecord,
   decideApprovalRecord,
   resubmitApprovalRecord,
+  pickExpectedApproverUserId,
   ApprovalValidationError,
   ApprovalStateError,
   ApprovalAuthorityMismatchError,
@@ -307,6 +308,34 @@ function runPureLogicTests() {
   check(
     "沒有實際 UserSupervisorAssignment 紀錄時，即使角色為 Admin 也不會出現任何合格核准人",
     noAssignmentForAdmin.length === 0,
+  );
+
+  console.log("\n=== M1.5-A1 驗證：expectedApproverUserId 多候選人語意（src/lib/approvalService.ts，純邏輯） ===");
+
+  const singleCandidate: ApprovalAuthoritySource[] = [{ authorityType: "TEAM_LEAD", userId: "lead-x", teamId: "team-x" }];
+  check("pickExpectedApproverUserId：唯一合格核准人時正確填入該人", pickExpectedApproverUserId(singleCandidate) === "lead-x");
+
+  const twoLeads: ApprovalAuthoritySource[] = [
+    { authorityType: "TEAM_LEAD", userId: "lead-a", teamId: "team-x" },
+    { authorityType: "TEAM_LEAD", userId: "lead-b", teamId: "team-x" },
+  ];
+  check("pickExpectedApproverUserId：多位 TEAM_LEAD 時為 null", pickExpectedApproverUserId(twoLeads) === null);
+
+  const leadPlusDelegate: ApprovalAuthoritySource[] = [
+    { authorityType: "TEAM_LEAD", userId: "lead-a", teamId: "team-x" },
+    { authorityType: "DELEGATE", userId: "delegate-a", approvalDelegationId: "d1", onBehalfOfUserId: "lead-a" },
+  ];
+  check("pickExpectedApproverUserId：LEAD 加代理人形成多候選時為 null", pickExpectedApproverUserId(leadPlusDelegate) === null);
+
+  const reversedTwoLeads: ApprovalAuthoritySource[] = [twoLeads[1], twoLeads[0]];
+  check(
+    "pickExpectedApproverUserId：候選人順序改變不影響結果（正序與反序皆為 null）",
+    pickExpectedApproverUserId(twoLeads) === pickExpectedApproverUserId(reversedTwoLeads),
+  );
+  const reversedLeadPlusDelegate: ApprovalAuthoritySource[] = [leadPlusDelegate[1], leadPlusDelegate[0]];
+  check(
+    "pickExpectedApproverUserId：候選人順序改變不影響結果（LEAD+代理人正序與反序皆為 null）",
+    pickExpectedApproverUserId(leadPlusDelegate) === pickExpectedApproverUserId(reversedLeadPlusDelegate),
   );
 
   console.log("\n=== M1.5-A1 驗證：自行核准阻擋（src/lib/permissions.ts） ===");
@@ -773,12 +802,15 @@ async function runDbDependentTests(fx: Fixtures) {
   });
   fx.approvalRecordIdsNewestFirst.unshift(record1.id);
   check(
-    "createPendingApprovalRecord：成功建立第一筆 ACTIVE+PENDING，資格來源由服務層解析為 DIRECT_SUPERVISOR",
+    "createPendingApprovalRecord：成功建立第一筆 ACTIVE+PENDING，資格類別由服務層解析為 DIRECT_SUPERVISOR",
     record1.decision === "PENDING" &&
       record1.recordStatus === "ACTIVE" &&
       record1.approvalAuthorityType === "DIRECT_SUPERVISOR" &&
-      record1.supervisorAssignmentId === assignment1.id &&
-      record1.expectedApproverUserId === supervisor.id,
+      record1.supervisorAssignmentId === assignment1.id,
+  );
+  check(
+    "createPendingApprovalRecord：reporter 的主管本人＋其有效代理人（delegate）同時合格，兩位以上候選人時 expectedApproverUserId 必須為 null",
+    record1.expectedApproverUserId === null,
   );
 
   await expectError(
@@ -1025,6 +1057,10 @@ async function runDbDependentTests(fx: Fixtures) {
     "createPendingApprovalRecord：RD_LEAD_APPROVAL 全部已填答（含 UNKNOWN）後可成功建立，approverTeamId 取自 Issue.assignedTeamId",
     record3.decision === "PENDING" && record3.approverTeamId === teamRd.id && record3.approvalAuthorityType === "TEAM_LEAD",
   );
+  check(
+    "LEAD 加代理人形成多候選時 expectedApproverUserId 為 null（rdLead 本人＋其有效代理人 rdDelegate 同時合格）",
+    record3.expectedApproverUserId === null,
+  );
   await prisma.stageRiskCheck.updateMany({ where: { id: { in: riskCheckIds } }, data: { approvalRecordId: record3.id } });
 
   await expectError(
@@ -1070,7 +1106,15 @@ async function runDbDependentTests(fx: Fixtures) {
     requestedByUserId: rdMember.id,
   });
   fx.approvalRecordIdsNewestFirst.unshift(record4.id);
+  check(
+    "record4 同樣為多候選（rdLead＋rdDelegate），expectedApproverUserId 為 null",
+    record4.expectedApproverUserId === null,
+  );
   const decided4 = await decideApprovalRecord({ approvalRecordId: record4.id, actorUserId: rdDelegate.id, decision: "APPROVED" });
+  check(
+    "expectedApproverUserId 為 null 不影響合法候選人完成核准（record4 expectedApproverUserId=null，仍可由代理人 rdDelegate 成功 APPROVED）",
+    record4.expectedApproverUserId === null && decided4.decision === "APPROVED",
+  );
   check(
     "decideApprovalRecord：有效代理人（rdDelegate）可代理 rdLead 完成 APPROVED，資格來源正確記錄為 DELEGATE",
     decided4.decision === "APPROVED" &&
@@ -1118,6 +1162,90 @@ async function runDbDependentTests(fx: Fixtures) {
     const r = await prisma.approvalRecord.findUnique({ where: { id: record6.id } });
     return r?.decision === "APPROVED" && r.approvalAuthorityType === "DELEGATE" && r.approvalDelegationId === delegation1.id;
   });
+
+  console.log("\n=== M1.5-A1 驗證：expectedApproverUserId 多候選人語意（DB 版本：唯一候選人 vs 多位候選人） ===");
+
+  const reporterSingle = await createUser("reporterSingle", "PM");
+  const supervisorSingle = await createUser("supervisorSingle", "DMS主管");
+  fx.userIds.push(reporterSingle.id, supervisorSingle.id);
+  const assignmentSingle = await prisma.userSupervisorAssignment.create({
+    data: { userId: reporterSingle.id, supervisorUserId: supervisorSingle.id, validFrom: new Date(Date.now() - DAY), isPrimary: true, createdByUserId: supervisorSingle.id },
+  });
+  fx.assignmentIds.push(assignmentSingle.id);
+  const issueSingle = await prisma.issue.create({
+    data: { issueKey: `${RUN_TAG}-HOTFIX-6`, issueType: "Hotfix", title: "verify issue single supervisor", workflowStatus: "pendingBusinessApproval" },
+  });
+  fx.issueIds.push(issueSingle.id);
+  const recordSingle = await createPendingApprovalRecord({
+    issueId: issueSingle.id,
+    approvalType: "BUSINESS_APPROVAL",
+    relatedStageKey: "pendingBusinessApproval",
+    requestedByUserId: reporterSingle.id,
+  });
+  fx.approvalRecordIdsNewestFirst.unshift(recordSingle.id);
+  check(
+    "唯一合格核准人時 expectedApproverUserId 正確填入（BUSINESS_APPROVAL，reporterSingle 的主管無任何代理人）",
+    recordSingle.expectedApproverUserId === supervisorSingle.id,
+  );
+
+  const rdLeadSolo = await createUser("rdLeadSolo", "RD");
+  fx.userIds.push(rdLeadSolo.id);
+  const teamRdSolo = await prisma.team.create({ data: { name: `${RUN_TAG}-team-rd-solo` } });
+  fx.teamIds.push(teamRdSolo.id);
+  await prisma.teamMember.create({ data: { teamId: teamRdSolo.id, userId: rdLeadSolo.id, membershipRole: "LEAD" } });
+  const issueRdSolo = await prisma.issue.create({
+    data: { issueKey: `${RUN_TAG}-HOTFIX-7`, issueType: "Hotfix", title: "verify issue solo lead", workflowStatus: "rdInProgress", assignedTeamId: teamRdSolo.id },
+  });
+  fx.issueIds.push(issueRdSolo.id);
+  for (const item of rdTemplate2) {
+    await prisma.stageRiskCheck.create({
+      data: { issueId: issueRdSolo.id, stageKey: RD_LEAD_APPROVAL_STAGE_KEY, assessmentRound: 1, checkKey: item.checkKey, answer: "YES" },
+    });
+  }
+  const recordSolo = await createPendingApprovalRecord({
+    issueId: issueRdSolo.id,
+    approvalType: "RD_LEAD_APPROVAL",
+    relatedStageKey: RD_LEAD_APPROVAL_STAGE_KEY,
+    requestedByUserId: rdMember.id,
+  });
+  fx.approvalRecordIdsNewestFirst.unshift(recordSolo.id);
+  check(
+    "唯一合格核准人時 expectedApproverUserId 正確填入（RD_LEAD_APPROVAL，團隊只有單一 LEAD 且無代理人）",
+    recordSolo.expectedApproverUserId === rdLeadSolo.id,
+  );
+
+  const rdLeadDual1 = await createUser("rdLeadDual1", "RD");
+  const rdLeadDual2 = await createUser("rdLeadDual2", "RD");
+  fx.userIds.push(rdLeadDual1.id, rdLeadDual2.id);
+  const teamRdDual = await prisma.team.create({ data: { name: `${RUN_TAG}-team-rd-dual` } });
+  fx.teamIds.push(teamRdDual.id);
+  await prisma.teamMember.create({ data: { teamId: teamRdDual.id, userId: rdLeadDual1.id, membershipRole: "LEAD" } });
+  await prisma.teamMember.create({ data: { teamId: teamRdDual.id, userId: rdLeadDual2.id, membershipRole: "LEAD" } });
+  const issueRdDual = await prisma.issue.create({
+    data: { issueKey: `${RUN_TAG}-HOTFIX-8`, issueType: "Hotfix", title: "verify issue dual lead", workflowStatus: "rdInProgress", assignedTeamId: teamRdDual.id },
+  });
+  fx.issueIds.push(issueRdDual.id);
+  for (const item of rdTemplate2) {
+    await prisma.stageRiskCheck.create({
+      data: { issueId: issueRdDual.id, stageKey: RD_LEAD_APPROVAL_STAGE_KEY, assessmentRound: 1, checkKey: item.checkKey, answer: "YES" },
+    });
+  }
+  const recordDual = await createPendingApprovalRecord({
+    issueId: issueRdDual.id,
+    approvalType: "RD_LEAD_APPROVAL",
+    relatedStageKey: RD_LEAD_APPROVAL_STAGE_KEY,
+    requestedByUserId: rdMember.id,
+  });
+  fx.approvalRecordIdsNewestFirst.unshift(recordDual.id);
+  check(
+    "多位 TEAM_LEAD 時 expectedApproverUserId 為 null（團隊有兩位有效 LEAD、無代理人）",
+    recordDual.expectedApproverUserId === null && recordDual.approvalAuthorityType === "TEAM_LEAD",
+  );
+  const decidedDual = await decideApprovalRecord({ approvalRecordId: recordDual.id, actorUserId: rdLeadDual2.id, decision: "APPROVED" });
+  check(
+    "expectedApproverUserId 為 null 不影響任何一位合法候選人完成核准（兩位 LEAD 中的 rdLeadDual2 仍可成功 APPROVED）",
+    decidedDual.decision === "APPROVED" && decidedDual.approverUserId === rdLeadDual2.id,
+  );
 
   console.log("\n=== M1.5-A1 驗證：半開區間邊界（真實 DB 資料 + 指定 now） ===");
 
