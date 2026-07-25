@@ -12,7 +12,7 @@
 // 可在 Migration 套用前即可單元測試；DB 查詢型的便利函式（getUserCapabilities 等）需要 UserRole /
 // TeamMember 資料表已存在，須等 M1-B 套用 Migration 後才能實際驗證。
 
-import type { User } from "@prisma/client";
+import type { User, Prisma, PrismaClient } from "@prisma/client";
 import type { RoleKey, TeamMembershipRole, ApprovalType } from "./constants";
 import { ROLES, isTeamMembershipRole } from "./constants";
 import { prisma } from "./prisma";
@@ -25,7 +25,14 @@ export type Capability =
   | "issue.assignTeam"
   | "team.manageMembers"
   | "user.manageRoles"
-  | "admin.full";
+  | "admin.full"
+  // ---- M1.5-B 新增：核准治理設定管理能力 ----
+  // 這些能力只決定「能不能改治理設定」，跟「這筆設定本身有沒有核准資格」是兩件事；
+  // 後者永遠交由 getEligibleApprovers／canApproveStage 依實際紀錄判斷，不受這裡影響。
+  | "governance.manageSupervisors"
+  | "governance.manageTeamLeads"
+  | "governance.manageAnyDelegation"
+  | "governance.viewAllGovernance";
 
 const VALID_ROLE_KEYS: ReadonlySet<string> = new Set(ROLES.map((r) => r.key));
 
@@ -35,7 +42,7 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
   RD: ["issue.view", "issue.edit"],
   QA: ["issue.view", "issue.edit", "issue.approve"],
   OP: ["issue.view", "issue.edit"],
-  資安推動小組: ["issue.view", "issue.approve"],
+  資安推動小組: ["issue.view", "issue.approve", "governance.viewAllGovernance"],
   DMS主管: ["issue.view", "issue.edit", "issue.approve", "issue.assignTeam"],
   Admin: [
     "issue.view",
@@ -45,6 +52,10 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
     "team.manageMembers",
     "user.manageRoles",
     "admin.full",
+    "governance.manageSupervisors",
+    "governance.manageTeamLeads",
+    "governance.manageAnyDelegation",
+    "governance.viewAllGovernance",
   ],
 };
 
@@ -412,4 +423,239 @@ export function assertNotSelfApproval(requestedByUserId: string, approverUserId:
   if (requestedByUserId === approverUserId) {
     throw new SelfApprovalError();
   }
+}
+
+// ---------------------------------------------------------------------------
+// M1.5-B 新增：主管關係時間區間感知循環偵測（純邏輯）。
+//
+// 與 wouldCreateSupervisorCycle 的差異：wouldCreateSupervisorCycle 只沿「now 當下」
+// 的有效鏈往上追溯，無法反映「排定未來生效」情境下才會成環的狀況；本節函式改成
+// 對整段時間依 validFrom／validUntil 邊界切段，逐段建圖偵測，只有「同一時間真的
+// 同時生效」才視為成環。
+// ---------------------------------------------------------------------------
+
+export interface SupervisorCycleFinding {
+  userIds: string[]; // 循環節點順序，例如 [a,b,c] 代表 a→b→c→a
+  overlapFrom: Date;
+  overlapUntil: Date | null; // null = 目前仍開放（無終止日）
+}
+
+// 把循環節點序列旋轉到「以字典序最小的 userId 開頭」，作為判斷跨區段是否為
+// 「同一個環」的穩定 key（方向不變，只調整起點）。
+function canonicalCycleKey(cycle: readonly string[]): string {
+  let minIdx = 0;
+  for (let i = 1; i < cycle.length; i++) {
+    if (cycle[i] < cycle[minIdx]) minIdx = i;
+  }
+  const rotated = [...cycle.slice(minIdx), ...cycle.slice(0, minIdx)];
+  return rotated.join("→");
+}
+
+// 在一張有向圖（userId → supervisorUserId 邊，可能有多條出邊）裡找出所有環。
+// 資料乾淨時每個節點至多一條出邊（同一時間至多一筆有效 primary）；髒資料防禦性地
+// 只沿第一條出邊走，足以在 MVP 資料量下找出主要問題，不追求窮舉所有可能路徑。
+function findCyclesInDirectedGraph(edges: ReadonlyMap<string, readonly string[]>): string[][] {
+  const cycles: string[][] = [];
+  const globalVisited = new Set<string>();
+
+  for (const startNode of edges.keys()) {
+    if (globalVisited.has(startNode)) continue;
+    const path: string[] = [];
+    const onPath = new Map<string, number>();
+    let current: string | undefined = startNode;
+    while (current !== undefined) {
+      if (onPath.has(current)) {
+        const cycleStart = onPath.get(current)!;
+        const cycle = path.slice(cycleStart);
+        cycles.push(cycle);
+        for (const n of cycle) globalVisited.add(n);
+        break;
+      }
+      if (globalVisited.has(current)) break;
+      onPath.set(current, path.length);
+      path.push(current);
+      const next = edges.get(current);
+      current = next && next.length > 0 ? next[0] : undefined;
+    }
+    for (const n of path) globalVisited.add(n);
+  }
+  return cycles;
+}
+
+// 純邏輯：找出「在某段時間內真的同時生效並成環」的所有主管關係循環。
+// 只看 isPrimary && isActive 的指派（只有 primary 才構成回報鏈）。
+// 同一個環若跨多個相鄰、無落差的時間段持續存在，合併成一筆 finding；
+// 若中間出現沒有這個環的空窗，回傳成兩筆獨立 finding，不得失真合併。
+export function findSupervisorCyclesByTimeWindow(
+  assignments: readonly SupervisorAssignmentLike[],
+): SupervisorCycleFinding[] {
+  const primary = assignments.filter((a) => a.isPrimary && a.isActive);
+  if (primary.length === 0) return [];
+
+  const boundarySet = new Set<number>();
+  for (const a of primary) {
+    boundarySet.add(a.validFrom.getTime());
+    if (a.validUntil !== null) boundarySet.add(a.validUntil.getTime());
+  }
+  const boundaries = [...boundarySet].sort((a, b) => a - b);
+
+  interface Segment {
+    start: number;
+    end: number | null;
+    cycles: Map<string, string[]>;
+  }
+
+  const segments: Segment[] = [];
+  for (let i = 0; i < boundaries.length; i++) {
+    const start = boundaries[i];
+    const end = i + 1 < boundaries.length ? boundaries[i + 1] : null;
+    const t = new Date(start);
+    const edges = new Map<string, string[]>();
+    for (const a of primary) {
+      if (isWithinHalfOpenWindow(a.validFrom, a.validUntil, t)) {
+        const arr = edges.get(a.userId) ?? [];
+        arr.push(a.supervisorUserId);
+        edges.set(a.userId, arr);
+      }
+    }
+    const cycleMap = new Map<string, string[]>();
+    for (const c of findCyclesInDirectedGraph(edges)) {
+      cycleMap.set(canonicalCycleKey(c), c);
+    }
+    segments.push({ start, end, cycles: cycleMap });
+  }
+
+  interface OpenFinding {
+    userIds: string[];
+    overlapFrom: number;
+    overlapUntil: number | null;
+  }
+  const results: SupervisorCycleFinding[] = [];
+  const open = new Map<string, OpenFinding>();
+
+  const closeFinding = (finding: OpenFinding) => {
+    results.push({
+      userIds: finding.userIds,
+      overlapFrom: new Date(finding.overlapFrom),
+      overlapUntil: finding.overlapUntil === null ? null : new Date(finding.overlapUntil),
+    });
+  };
+
+  for (const seg of segments) {
+    const thisKeys = new Set(seg.cycles.keys());
+    for (const [key, finding] of [...open.entries()]) {
+      if (!thisKeys.has(key) || finding.overlapUntil !== seg.start) {
+        // 這段沒有這個環，或跟前一段有落差（不相鄰）→ close 掉，不得延伸涵蓋空窗
+        closeFinding(finding);
+        open.delete(key);
+      }
+    }
+    for (const key of thisKeys) {
+      if (!open.has(key)) {
+        open.set(key, { userIds: seg.cycles.get(key)!, overlapFrom: seg.start, overlapUntil: seg.end });
+      } else {
+        open.get(key)!.overlapUntil = seg.end;
+      }
+    }
+  }
+  for (const finding of open.values()) closeFinding(finding);
+
+  return results;
+}
+
+function cycleContainsEdge(cycle: readonly string[], from: string, to: string): boolean {
+  for (let i = 0; i < cycle.length; i++) {
+    if (cycle[i] === from && cycle[(i + 1) % cycle.length] === to) return true;
+  }
+  return false;
+}
+
+// 建立時的擋環檢查：把提議的新指派併入現有資料後重新找環，只有「新指派這條邊本身
+// 參與了某個環」才擋——不會因為資料庫裡既有、跟這次新增無關的舊循環而誤擋新指派。
+export function wouldCreateSupervisorCycleInWindow(
+  existingAssignments: readonly SupervisorAssignmentLike[],
+  proposed: { userId: string; supervisorUserId: string; validFrom: Date; validUntil: Date | null },
+): boolean {
+  if (proposed.userId === proposed.supervisorUserId) return true;
+  const merged: SupervisorAssignmentLike[] = [
+    ...existingAssignments,
+    {
+      id: "__proposed__",
+      userId: proposed.userId,
+      supervisorUserId: proposed.supervisorUserId,
+      validFrom: proposed.validFrom,
+      validUntil: proposed.validUntil,
+      isPrimary: true,
+      isActive: true,
+    },
+  ];
+  const cycles = findSupervisorCyclesByTimeWindow(merged);
+  return cycles.some((c) => cycleContainsEdge(c.userIds, proposed.userId, proposed.supervisorUserId));
+}
+
+// 純邏輯：candidateSupervisorUserId 目前是否為「任何人」的有效 primary 主管
+// （不是查詢某特定人的主管鏈，而是反過來問「這個人現在還算不算主管」）。
+// 供代理建立時驗證 delegator 的原始資格（見 approvalDelegationService.ts）。
+export function isCurrentPrimarySupervisorOfAnyone(
+  assignments: readonly SupervisorAssignmentLike[],
+  candidateSupervisorUserId: string,
+  now: Date = new Date(),
+): boolean {
+  return assignments.some(
+    (a) =>
+      a.supervisorUserId === candidateSupervisorUserId &&
+      a.isPrimary &&
+      a.isActive &&
+      isWithinHalfOpenWindow(a.validFrom, a.validUntil, now),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// M1.5-B 新增：治理設定查詢／管理的存取範圍解析（DB 版本）。
+//
+// 供 6 個查詢服務與 8 個寫入服務共用，統一在服務層現場重新解析 actor 的角色與
+// TeamMember 身分，不信任呼叫端（例如頁面）傳入的 isAdmin／ledTeamIds 等旗標。
+// ---------------------------------------------------------------------------
+
+export interface GovernanceAccessContext {
+  isActive: boolean;
+  canViewAllGovernance: boolean;
+  canManageSupervisors: boolean;
+  canManageTeamLeads: boolean;
+  canManageAnyDelegation: boolean;
+  ledTeamIds: string[];
+  memberTeamIds: string[];
+}
+
+// client 預設用全域 prisma（向下相容）；寫入服務在自己的 transaction 內解析 actor 權限時，
+// 必須傳入該 transaction 的 tx，避免另開一條連線在 SQLite 上跟持有寫鎖的 transaction 互相干擾。
+export async function resolveGovernanceAccessContext(
+  actorId: string,
+  client: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<GovernanceAccessContext> {
+  const user = await client.user.findUnique({ where: { id: actorId } });
+  if (!user || !user.isActive) {
+    return {
+      isActive: false,
+      canViewAllGovernance: false,
+      canManageSupervisors: false,
+      canManageTeamLeads: false,
+      canManageAnyDelegation: false,
+      ledTeamIds: [],
+      memberTeamIds: [],
+    };
+  }
+  const userRoles = await client.userRole.findMany({ where: { userId: user.id } });
+  const roles = effectiveRoles(user, userRoles.map((r) => r.role));
+  const caps = unionCapabilities(roles);
+  const memberships = await client.teamMember.findMany({ where: { userId: actorId, isActive: true } });
+  return {
+    isActive: true,
+    canViewAllGovernance: caps.has("governance.viewAllGovernance"),
+    canManageSupervisors: caps.has("governance.manageSupervisors"),
+    canManageTeamLeads: caps.has("governance.manageTeamLeads"),
+    canManageAnyDelegation: caps.has("governance.manageAnyDelegation"),
+    ledTeamIds: memberships.filter((m) => m.membershipRole === "LEAD").map((m) => m.teamId),
+    memberTeamIds: memberships.map((m) => m.teamId),
+  };
 }

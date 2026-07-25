@@ -189,3 +189,28 @@ export type RiskCheckAnswer = (typeof RISK_CHECK_ANSWERS)[number];
 export function isRiskCheckAnswer(value: string): value is RiskCheckAnswer {
   return (RISK_CHECK_ANSWERS as readonly string[]).includes(value);
 }
+
+// ---------------------------------------------------------------------------
+// M1.5-B 新增：核准治理健康檢查嚴重度徽章，仿 STATUS_LIGHT_META 寫法。
+// 顏色僅作輔助，文字（label）必須一律同時顯示，不得只靠顏色判讀。
+// ---------------------------------------------------------------------------
+
+export type GovernanceHealthSeverity = "normal" | "warning" | "critical";
+
+export const HEALTH_STATUS_META: Record<GovernanceHealthSeverity, { label: string; badgeClass: string; dotClass: string }> = {
+  normal: {
+    label: "正常",
+    badgeClass: "bg-gov-greenbg text-gov-green border border-success-border",
+    dotClass: "bg-gov-green",
+  },
+  warning: {
+    label: "注意",
+    badgeClass: "bg-gov-yellowbg text-gov-yellow border border-warning-border",
+    dotClass: "bg-gov-yellow",
+  },
+  critical: {
+    label: "異常",
+    badgeClass: "bg-gov-redbg text-gov-red border border-danger-border",
+    dotClass: "bg-gov-red",
+  },
+};
