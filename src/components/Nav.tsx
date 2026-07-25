@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "治理儀表板" },
   { href: "/issues", label: "工單清單" },
   { href: "/issues/new", label: "建立工單" },
+  { href: "/settings/approval-governance", label: "核准治理設定" },
 ];
 
 export default async function Nav() {
