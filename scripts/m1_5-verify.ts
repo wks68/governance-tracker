@@ -42,6 +42,7 @@ import {
 import type { TeamMembershipLike, ApprovalAuthoritySource } from "../src/lib/permissions";
 import {
   checkApprovalRecordConsistency,
+  type ApprovalRecordConsistencyInput,
   assertAllRiskChecksAnswered,
   assertNoUnresolvedUnknownRisks,
   RiskCheckIncompleteError,
@@ -55,6 +56,7 @@ import {
   ApprovalAuthorityMismatchError,
   DuplicateActivePendingApprovalError,
   type DecideApprovalInput,
+  type CreatePendingApprovalInput,
 } from "../src/lib/approvalService";
 import {
   buildApprovalSnapshot,
@@ -356,88 +358,161 @@ function runPureLogicTests() {
   }
   check("assertNotSelfApproval：送核人與核准人不同時不拋出", selfApprovalNotThrew);
 
-  console.log("\n=== M1.5-A1 驗證：決策欄位一致性（src/lib/approvalService.ts） ===");
+  console.log("\n=== M1.5-A3 驗證：決策欄位一致性（核准責任目標 vs 實際核准途徑分離，src/lib/approvalService.ts） ===");
 
-  check(
-    "checkApprovalRecordConsistency：PENDING＋decidedAt=null＋approverUserId=null 通過",
-    checkApprovalRecordConsistency({
-      decision: "PENDING",
-      recordStatus: "ACTIVE",
-      decidedAt: null,
-      approverUserId: null,
-      approvalAuthorityType: "DIRECT_SUPERVISOR",
-      supervisorAssignmentId: "sa1",
-      approvalDelegationId: null,
-      revisionNo: 1,
-      supersedesApprovalRecordId: null,
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
-  );
+  // 便於逐項覆寫的基準值：PENDING＋BUSINESS_APPROVAL 的合法狀態。
+  const baseBusinessPending: ApprovalRecordConsistencyInput = {
+    approvalType: "BUSINESS_APPROVAL",
+    decision: "PENDING",
+    recordStatus: "ACTIVE",
+    decidedAt: null,
+    approverUserId: null,
+    approverTeamId: null,
+    approvalAuthorityType: null,
+    supervisorAssignmentId: "sa1",
+    approvalDelegationId: null,
+    delegatedFromUserId: null,
+    decisionReasonCode: null,
+    decisionComment: null,
+    revisionNo: 1,
+    supersedesApprovalRecordId: null,
+    invalidatedAt: null,
+    invalidationReason: null,
+  };
+  const baseTeamLeadPending: ApprovalRecordConsistencyInput = {
+    ...baseBusinessPending,
+    approvalType: "RD_LEAD_APPROVAL",
+    approverTeamId: "team1",
+    supervisorAssignmentId: null,
+  };
+
+  check("checkApprovalRecordConsistency：PENDING＋BUSINESS_APPROVAL＋只有 supervisorAssignmentId（核准責任目標）通過", checkApprovalRecordConsistency(baseBusinessPending).ok);
+  check("checkApprovalRecordConsistency：PENDING＋RD_LEAD_APPROVAL＋只有 approverTeamId（核准責任目標）通過", checkApprovalRecordConsistency(baseTeamLeadPending).ok);
 
   check(
     "checkApprovalRecordConsistency：PENDING 卻有 decidedAt 視為不一致",
-    !checkApprovalRecordConsistency({
-      decision: "PENDING",
-      recordStatus: "ACTIVE",
-      decidedAt: now,
-      approverUserId: null,
-      approvalAuthorityType: "DIRECT_SUPERVISOR",
-      supervisorAssignmentId: "sa1",
-      approvalDelegationId: null,
-      revisionNo: 1,
-      supersedesApprovalRecordId: null,
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, decidedAt: now }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：PENDING 卻有 approvalAuthorityType（實際核准途徑尚未發生）視為不一致",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, approvalAuthorityType: "DIRECT_SUPERVISOR" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：PENDING 卻有 approvalDelegationId 視為不一致",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, approvalDelegationId: "ad1" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：PENDING 卻有 delegatedFromUserId 視為不一致",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, delegatedFromUserId: "u9" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：PENDING 卻有 decisionReasonCode 視為不一致",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, decisionReasonCode: "x" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：PENDING 卻有 decisionComment 視為不一致",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, decisionComment: "x" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：BUSINESS_APPROVAL 缺 supervisorAssignmentId（核准責任目標）視為不一致，即使仍是 PENDING",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, supervisorAssignmentId: null }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：BUSINESS_APPROVAL 卻填 approverTeamId 視為不一致",
+    !checkApprovalRecordConsistency({ ...baseBusinessPending, approverTeamId: "team-x" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：RD_LEAD_APPROVAL 缺 approverTeamId（核准責任目標）視為不一致，即使仍是 PENDING",
+    !checkApprovalRecordConsistency({ ...baseTeamLeadPending, approverTeamId: null }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：RD_LEAD_APPROVAL 卻填 supervisorAssignmentId 視為不一致",
+    !checkApprovalRecordConsistency({ ...baseTeamLeadPending, supervisorAssignmentId: "sa1" }).ok,
   );
 
+  const decidedDirectSupervisor: ApprovalRecordConsistencyInput = {
+    ...baseBusinessPending,
+    decision: "APPROVED",
+    decidedAt: now,
+    approverUserId: "u2",
+    approvalAuthorityType: "DIRECT_SUPERVISOR",
+  };
+  check("checkApprovalRecordConsistency：APPROVED＋DIRECT_SUPERVISOR 完整正確組合通過", checkApprovalRecordConsistency(decidedDirectSupervisor).ok);
+  check(
+    "checkApprovalRecordConsistency：APPROVED 卻 approvalAuthorityType=null（實際核准途徑必須已解析）視為不一致",
+    !checkApprovalRecordConsistency({ ...decidedDirectSupervisor, approvalAuthorityType: null }).ok,
+  );
   check(
     "checkApprovalRecordConsistency：APPROVED 缺 approverUserId 視為不一致",
-    !checkApprovalRecordConsistency({
-      decision: "APPROVED",
-      recordStatus: "ACTIVE",
-      decidedAt: now,
-      approverUserId: null,
-      approvalAuthorityType: "TEAM_LEAD",
-      supervisorAssignmentId: null,
-      approvalDelegationId: null,
-      revisionNo: 1,
-      supersedesApprovalRecordId: null,
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    !checkApprovalRecordConsistency({ ...decidedDirectSupervisor, approverUserId: null }).ok,
   );
-
   check(
     "checkApprovalRecordConsistency：DIRECT_SUPERVISOR 同時填 approvalDelegationId 視為不一致（互斥）",
-    !checkApprovalRecordConsistency({
-      decision: "PENDING",
-      recordStatus: "ACTIVE",
-      decidedAt: null,
-      approverUserId: null,
-      approvalAuthorityType: "DIRECT_SUPERVISOR",
-      supervisorAssignmentId: "sa1",
-      approvalDelegationId: "ad1",
-      revisionNo: 1,
-      supersedesApprovalRecordId: null,
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    !checkApprovalRecordConsistency({ ...decidedDirectSupervisor, approvalDelegationId: "ad1" }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：DIRECT_SUPERVISOR 同時填 delegatedFromUserId 視為不一致",
+    !checkApprovalRecordConsistency({ ...decidedDirectSupervisor, delegatedFromUserId: "u9" }).ok,
+  );
+
+  const decidedBusinessDelegate: ApprovalRecordConsistencyInput = {
+    ...baseBusinessPending,
+    decision: "APPROVED",
+    decidedAt: now,
+    approverUserId: "u9",
+    approvalAuthorityType: "DELEGATE",
+    approvalDelegationId: "ad1",
+    delegatedFromUserId: "u2",
+    // supervisorAssignmentId 沿用 baseBusinessPending 的 "sa1"：業務代理核准後仍須保留，
+    // 代表原始業務主管責任來源。
+  };
+  check(
+    "checkApprovalRecordConsistency：業務代理核准後完整正確組合通過（supervisorAssignmentId 仍保留＋approvalDelegationId／delegatedFromUserId 正確）",
+    checkApprovalRecordConsistency(decidedBusinessDelegate).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：DELEGATE 缺 approvalDelegationId 視為不一致",
+    !checkApprovalRecordConsistency({ ...decidedBusinessDelegate, approvalDelegationId: null }).ok,
+  );
+  check(
+    "checkApprovalRecordConsistency：DELEGATE 缺 delegatedFromUserId 視為不一致",
+    !checkApprovalRecordConsistency({ ...decidedBusinessDelegate, delegatedFromUserId: null }).ok,
+  );
+
+  const decidedTeamLead: ApprovalRecordConsistencyInput = {
+    ...baseTeamLeadPending,
+    decision: "APPROVED",
+    decidedAt: now,
+    approverUserId: "lead1",
+    approvalAuthorityType: "TEAM_LEAD",
+  };
+  check("checkApprovalRecordConsistency：Team LEAD 直接核准後完整正確組合通過（approverTeamId 仍保留）", checkApprovalRecordConsistency(decidedTeamLead).ok);
+  check(
+    "checkApprovalRecordConsistency：TEAM_LEAD 同時填 approvalDelegationId 視為不一致",
+    !checkApprovalRecordConsistency({ ...decidedTeamLead, approvalDelegationId: "ad1" }).ok,
+  );
+
+  const decidedTeamDelegate: ApprovalRecordConsistencyInput = {
+    ...baseTeamLeadPending,
+    decision: "APPROVED",
+    decidedAt: now,
+    approverUserId: "delegate1",
+    approvalAuthorityType: "DELEGATE",
+    approvalDelegationId: "ad2",
+    delegatedFromUserId: "lead1",
+    // approverTeamId 沿用 baseTeamLeadPending 的 "team1"：技術代理核准後仍須保留，代表核准責任團隊。
+  };
+  check(
+    "checkApprovalRecordConsistency：技術代理核准後完整正確組合通過（approverTeamId 仍保留＋approvalDelegationId 正確）",
+    checkApprovalRecordConsistency(decidedTeamDelegate).ok,
   );
 
   check(
     "checkApprovalRecordConsistency：INVALIDATED 但 decision 非 APPROVED 視為不一致",
     !checkApprovalRecordConsistency({
+      ...decidedTeamLead,
       decision: "REJECTED",
       recordStatus: "INVALIDATED",
-      decidedAt: now,
-      approverUserId: "u2",
-      approvalAuthorityType: "TEAM_LEAD",
-      supervisorAssignmentId: null,
-      approvalDelegationId: null,
-      revisionNo: 1,
-      supersedesApprovalRecordId: null,
       invalidatedAt: now,
       invalidationReason: "reason",
     }).ok,
@@ -445,70 +520,22 @@ function runPureLogicTests() {
 
   check(
     "checkApprovalRecordConsistency：SUPERSEDED 但 decision=APPROVED 視為不一致",
-    !checkApprovalRecordConsistency({
-      decision: "APPROVED",
-      recordStatus: "SUPERSEDED",
-      decidedAt: now,
-      approverUserId: "u2",
-      approvalAuthorityType: "TEAM_LEAD",
-      supervisorAssignmentId: null,
-      approvalDelegationId: null,
-      revisionNo: 1,
-      supersedesApprovalRecordId: null,
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    !checkApprovalRecordConsistency({ ...decidedTeamLead, recordStatus: "SUPERSEDED" }).ok,
   );
 
   console.log("\n=== M1.5-A1 驗證：revision 取代鏈（src/lib/approvalService.ts） ===");
 
   check(
     "checkApprovalRecordConsistency：無 supersedesApprovalRecordId 時 revisionNo 必須為 1",
-    !checkApprovalRecordConsistency({
-      decision: "PENDING",
-      recordStatus: "ACTIVE",
-      decidedAt: null,
-      approverUserId: null,
-      approvalAuthorityType: "TEAM_LEAD",
-      supervisorAssignmentId: null,
-      approvalDelegationId: null,
-      revisionNo: 2,
-      supersedesApprovalRecordId: null,
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    !checkApprovalRecordConsistency({ ...baseTeamLeadPending, revisionNo: 2, supersedesApprovalRecordId: null }).ok,
   );
   check(
     "checkApprovalRecordConsistency：有 supersedesApprovalRecordId 時 revisionNo 必須 >1",
-    !checkApprovalRecordConsistency({
-      decision: "PENDING",
-      recordStatus: "ACTIVE",
-      decidedAt: null,
-      approverUserId: null,
-      approvalAuthorityType: "TEAM_LEAD",
-      supervisorAssignmentId: null,
-      approvalDelegationId: null,
-      revisionNo: 1,
-      supersedesApprovalRecordId: "prev-id",
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    !checkApprovalRecordConsistency({ ...baseTeamLeadPending, revisionNo: 1, supersedesApprovalRecordId: "prev-id" }).ok,
   );
   check(
     "checkApprovalRecordConsistency：正確的 revision 取代鏈組合通過",
-    checkApprovalRecordConsistency({
-      decision: "PENDING",
-      recordStatus: "ACTIVE",
-      decidedAt: null,
-      approverUserId: null,
-      approvalAuthorityType: "TEAM_LEAD",
-      supervisorAssignmentId: null,
-      approvalDelegationId: null,
-      revisionNo: 2,
-      supersedesApprovalRecordId: "prev-id",
-      invalidatedAt: null,
-      invalidationReason: null,
-    }).ok,
+    checkApprovalRecordConsistency({ ...baseTeamLeadPending, revisionNo: 2, supersedesApprovalRecordId: "prev-id" }).ok,
   );
 
   console.log("\n=== M1.5-A1 驗證：null／UNKNOWN 規則（src/lib/approvalService.ts + riskCheckTemplates.ts） ===");
@@ -802,15 +829,17 @@ async function runDbDependentTests(fx: Fixtures) {
   });
   fx.approvalRecordIdsNewestFirst.unshift(record1.id);
   check(
-    "createPendingApprovalRecord：成功建立第一筆 ACTIVE+PENDING，資格類別由服務層解析為 DIRECT_SUPERVISOR",
-    record1.decision === "PENDING" &&
-      record1.recordStatus === "ACTIVE" &&
-      record1.approvalAuthorityType === "DIRECT_SUPERVISOR" &&
-      record1.supervisorAssignmentId === assignment1.id,
+    "createPendingApprovalRecord：成功建立第一筆 ACTIVE+PENDING，supervisorAssignmentId（核准責任目標）已寫入",
+    record1.decision === "PENDING" && record1.recordStatus === "ACTIVE" && record1.supervisorAssignmentId === assignment1.id,
   );
   check(
-    "createPendingApprovalRecord：reporter 的主管本人＋其有效代理人（delegate）同時合格，兩位以上候選人時 expectedApproverUserId 必須為 null",
-    record1.expectedApproverUserId === null,
+    "PENDING 業務核准：approvalAuthorityType／approvalDelegationId／delegatedFromUserId 必須為 null（實際核准途徑尚未發生，即使唯一直屬主管已可解析）",
+    record1.approvalAuthorityType === null && record1.approvalDelegationId === null && record1.delegatedFromUserId === null,
+  );
+  check("PENDING 業務核准：approverTeamId 必須為 null", record1.approverTeamId === null);
+  check(
+    "createPendingApprovalRecord：reporter 的主管本人＋其有效代理人（delegate）同時合格，兩位以上候選人時 expectedApproverUserId 必須為 null；不得預先寫入任一代表 delegation 或實際 authority type",
+    record1.expectedApproverUserId === null && record1.approvalDelegationId === null && record1.approvalAuthorityType === null,
   );
 
   await expectError(
@@ -955,13 +984,18 @@ async function runDbDependentTests(fx: Fixtures) {
   check(
     "checkApprovalRecordConsistency：實際寫入 DB 的第二個 revision 通過決策欄位一致性檢查",
     checkApprovalRecordConsistency({
+      approvalType: decided2.approvalType,
       decision: decided2.decision,
       recordStatus: decided2.recordStatus,
       decidedAt: decided2.decidedAt,
       approverUserId: decided2.approverUserId,
+      approverTeamId: decided2.approverTeamId,
       approvalAuthorityType: decided2.approvalAuthorityType,
       supervisorAssignmentId: decided2.supervisorAssignmentId,
       approvalDelegationId: decided2.approvalDelegationId,
+      delegatedFromUserId: decided2.delegatedFromUserId,
+      decisionReasonCode: decided2.decisionReasonCode,
+      decisionComment: decided2.decisionComment,
       revisionNo: decided2.revisionNo,
       supersedesApprovalRecordId: decided2.supersedesApprovalRecordId,
       invalidatedAt: decided2.invalidatedAt,
@@ -1054,12 +1088,17 @@ async function runDbDependentTests(fx: Fixtures) {
   });
   fx.approvalRecordIdsNewestFirst.unshift(record3.id);
   check(
-    "createPendingApprovalRecord：RD_LEAD_APPROVAL 全部已填答（含 UNKNOWN）後可成功建立，approverTeamId 取自 Issue.assignedTeamId",
-    record3.decision === "PENDING" && record3.approverTeamId === teamRd.id && record3.approvalAuthorityType === "TEAM_LEAD",
+    "createPendingApprovalRecord：RD_LEAD_APPROVAL 全部已填答（含 UNKNOWN）後可成功建立，approverTeamId（核准責任目標）取自 Issue.assignedTeamId",
+    record3.decision === "PENDING" && record3.approverTeamId === teamRd.id,
   );
   check(
-    "LEAD 加代理人形成多候選時 expectedApproverUserId 為 null（rdLead 本人＋其有效代理人 rdDelegate 同時合格）",
-    record3.expectedApproverUserId === null,
+    "PENDING 技術核准：approverTeamId 可存在，approvalAuthorityType 必須為 null（實際核准途徑尚未發生，即使已有 LEAD 可解析）",
+    record3.approverTeamId !== null && record3.approvalAuthorityType === null,
+  );
+  check("PENDING 技術核准：supervisorAssignmentId 必須為 null", record3.supervisorAssignmentId === null);
+  check(
+    "LEAD 加代理人形成多候選時 expectedApproverUserId 為 null（rdLead 本人＋其有效代理人 rdDelegate 同時合格）；不得預先寫入任一代表 delegation 或實際 authority type",
+    record3.expectedApproverUserId === null && record3.approvalDelegationId === null && record3.approvalAuthorityType === null,
   );
   await prisma.stageRiskCheck.updateMany({ where: { id: { in: riskCheckIds } }, data: { approvalRecordId: record3.id } });
 
@@ -1123,6 +1162,10 @@ async function runDbDependentTests(fx: Fixtures) {
       decided4.approvalDelegationId === rdDelegation.id &&
       decided4.delegatedFromUserId === rdLead.id,
   );
+  check(
+    "技術代理核准後：approverTeamId（核准責任目標）仍保留為 teamRd，未因代理途徑被清空或改動",
+    decided4.approverTeamId === teamRd.id,
+  );
 
   for (const item of rdTemplate2) {
     await prisma.stageRiskCheck.create({
@@ -1162,6 +1205,13 @@ async function runDbDependentTests(fx: Fixtures) {
     const r = await prisma.approvalRecord.findUnique({ where: { id: record6.id } });
     return r?.decision === "APPROVED" && r.approvalAuthorityType === "DELEGATE" && r.approvalDelegationId === delegation1.id;
   });
+  await checkAsync(
+    "業務代理核准後：supervisorAssignmentId（核准責任目標）仍保留為原始業務主管責任來源，delegatedFromUserId 正確",
+    async () => {
+      const r = await prisma.approvalRecord.findUnique({ where: { id: record6.id } });
+      return r?.supervisorAssignmentId === assignment1.id && r.delegatedFromUserId === supervisor.id;
+    },
+  );
 
   console.log("\n=== M1.5-A1 驗證：expectedApproverUserId 多候選人語意（DB 版本：唯一候選人 vs 多位候選人） ===");
 
@@ -1186,6 +1236,10 @@ async function runDbDependentTests(fx: Fixtures) {
   check(
     "唯一合格核准人時 expectedApproverUserId 正確填入（BUSINESS_APPROVAL，reporterSingle 的主管無任何代理人）",
     recordSingle.expectedApproverUserId === supervisorSingle.id,
+  );
+  check(
+    "唯一合格核准人存在時，approvalAuthorityType 仍必須為 null（expectedApproverUserId 僅為顯示值，不代表核准已發生）",
+    recordSingle.approvalAuthorityType === null,
   );
 
   const rdLeadSolo = await createUser("rdLeadSolo", "RD");
@@ -1213,6 +1267,7 @@ async function runDbDependentTests(fx: Fixtures) {
     "唯一合格核准人時 expectedApproverUserId 正確填入（RD_LEAD_APPROVAL，團隊只有單一 LEAD 且無代理人）",
     recordSolo.expectedApproverUserId === rdLeadSolo.id,
   );
+  check("唯一合格核准人存在時，approvalAuthorityType 仍必須為 null", recordSolo.approvalAuthorityType === null);
 
   const rdLeadDual1 = await createUser("rdLeadDual1", "RD");
   const rdLeadDual2 = await createUser("rdLeadDual2", "RD");
@@ -1238,13 +1293,52 @@ async function runDbDependentTests(fx: Fixtures) {
   });
   fx.approvalRecordIdsNewestFirst.unshift(recordDual.id);
   check(
-    "多位 TEAM_LEAD 時 expectedApproverUserId 為 null（團隊有兩位有效 LEAD、無代理人）",
-    recordDual.expectedApproverUserId === null && recordDual.approvalAuthorityType === "TEAM_LEAD",
+    "多候選人時：expectedApproverUserId 為 null（團隊有兩位有效 LEAD、無代理人），不得預先寫入任一實際 authority type",
+    recordDual.expectedApproverUserId === null && recordDual.approvalAuthorityType === null && recordDual.approvalDelegationId === null,
   );
   const decidedDual = await decideApprovalRecord({ approvalRecordId: recordDual.id, actorUserId: rdLeadDual2.id, decision: "APPROVED" });
   check(
     "expectedApproverUserId 為 null 不影響任何一位合法候選人完成核准（兩位 LEAD 中的 rdLeadDual2 仍可成功 APPROVED）",
     decidedDual.decision === "APPROVED" && decidedDual.approverUserId === rdLeadDual2.id,
+  );
+
+  console.log("\n=== M1.5-A3 驗證：呼叫端偽造核准責任目標／實際核准途徑欄位仍被忽略 ===");
+
+  const reporterForge = await createUser("reporterForge", "PM");
+  const supervisorForge = await createUser("supervisorForge", "DMS主管");
+  fx.userIds.push(reporterForge.id, supervisorForge.id);
+  const assignmentForge = await prisma.userSupervisorAssignment.create({
+    data: { userId: reporterForge.id, supervisorUserId: supervisorForge.id, validFrom: new Date(Date.now() - DAY), isPrimary: true, createdByUserId: supervisorForge.id },
+  });
+  fx.assignmentIds.push(assignmentForge.id);
+  const issueForge = await prisma.issue.create({
+    data: { issueKey: `${RUN_TAG}-HOTFIX-9`, issueType: "Hotfix", title: "verify issue forged create input", workflowStatus: "pendingBusinessApproval" },
+  });
+  fx.issueIds.push(issueForge.id);
+  const forgedCreateInput = {
+    issueId: issueForge.id,
+    approvalType: "BUSINESS_APPROVAL",
+    relatedStageKey: "pendingBusinessApproval",
+    requestedByUserId: reporterForge.id,
+    // 型別上 CreatePendingApprovalInput 根本不存在這些欄位，以 as any 模擬惡意呼叫端夾帶，
+    // 驗證服務層完全忽略並自行以 Issue.assignedTeamId／現場查詢重新解析。
+    approvalAuthorityType: "TEAM_LEAD",
+    supervisorAssignmentId: "forged-assignment-id",
+    approverTeamId: "forged-team-id",
+    approvalDelegationId: "forged-delegation-id",
+    delegatedFromUserId: "forged-user-id",
+    expectedApproverUserId: "forged-expected-id",
+  } as unknown as CreatePendingApprovalInput;
+  const recordForged = await createPendingApprovalRecord(forgedCreateInput);
+  fx.approvalRecordIdsNewestFirst.unshift(recordForged.id);
+  check(
+    "createPendingApprovalRecord：呼叫端偽造 approvalAuthorityType／approverTeamId／approvalDelegationId／delegatedFromUserId／expectedApproverUserId 皆被忽略，改由服務層現場正確解析",
+    recordForged.approvalAuthorityType === null &&
+      recordForged.approverTeamId === null &&
+      recordForged.approvalDelegationId === null &&
+      recordForged.delegatedFromUserId === null &&
+      recordForged.supervisorAssignmentId === assignmentForge.id &&
+      recordForged.expectedApproverUserId === supervisorForge.id,
   );
 
   console.log("\n=== M1.5-A1 驗證：半開區間邊界（真實 DB 資料 + 指定 now） ===");

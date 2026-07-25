@@ -104,16 +104,25 @@ export class UnresolvedUnknownRiskError extends Error {
 
 // ---------------------------------------------------------------------------
 // 決策欄位一致性（純邏輯，不依賴 Prisma，可在 Migration 套用前單元測試）
+//
+// M1.5-A3：「核准責任目標」（supervisorAssignmentId／approverTeamId，依 approvalType 決定，
+// 全生命週期不變）與「實際核准途徑」（approvalAuthorityType／approvalDelegationId／
+// delegatedFromUserId，PENDING 時恆為 null，只有決策完成後才寫入）語意分離。
 // ---------------------------------------------------------------------------
 
 export interface ApprovalRecordConsistencyInput {
+  approvalType: string;
   decision: string;
   recordStatus: string;
   decidedAt: Date | null;
   approverUserId: string | null;
-  approvalAuthorityType: string;
+  approverTeamId: string | null;
+  approvalAuthorityType: string | null;
   supervisorAssignmentId: string | null;
   approvalDelegationId: string | null;
+  delegatedFromUserId: string | null;
+  decisionReasonCode: string | null;
+  decisionComment: string | null;
   revisionNo: number;
   supersedesApprovalRecordId: string | null;
   invalidatedAt: Date | null;
@@ -126,17 +135,38 @@ export type ConsistencyCheckResult = { ok: true } | { ok: false; issues: string[
 export function checkApprovalRecordConsistency(r: ApprovalRecordConsistencyInput): ConsistencyCheckResult {
   const issues: string[] = [];
 
+  if (!isApprovalType(r.approvalType)) issues.push("approvalType 不在合法值域");
   if (!isApprovalDecision(r.decision)) issues.push("decision 不在合法值域");
   if (!isApprovalRecordStatus(r.recordStatus)) issues.push("recordStatus 不在合法值域");
-  if (!isApprovalAuthorityType(r.approvalAuthorityType)) issues.push("approvalAuthorityType 不在合法值域");
+  if (r.approvalAuthorityType !== null && !isApprovalAuthorityType(r.approvalAuthorityType)) {
+    issues.push("approvalAuthorityType 非 null 時必須在合法值域內");
+  }
+
+  // 核准責任目標：由 approvalType 決定，PENDING 與已決策皆須維持，不隨實際核准途徑改變。
+  const isTeamLeadType = r.approvalType === "RD_LEAD_APPROVAL" || r.approvalType === "QA_LEAD_APPROVAL" || r.approvalType === "DEPLOYMENT_APPROVAL";
+  const isBusinessType = r.approvalType === "BUSINESS_APPROVAL";
+  if (isBusinessType) {
+    if (!r.supervisorAssignmentId) issues.push("approvalType=BUSINESS_APPROVAL 時 supervisorAssignmentId（核准責任目標）不得為空");
+    if (r.approverTeamId !== null) issues.push("approvalType=BUSINESS_APPROVAL 時 approverTeamId 必須為 null");
+  }
+  if (isTeamLeadType) {
+    if (!r.approverTeamId) issues.push(`approvalType=${r.approvalType} 時 approverTeamId（核准責任目標）不得為空`);
+    if (r.supervisorAssignmentId !== null) issues.push(`approvalType=${r.approvalType} 時 supervisorAssignmentId 必須為 null`);
+  }
 
   if (r.decision === "PENDING") {
     if (r.decidedAt !== null) issues.push("decision=PENDING 時 decidedAt 必須為 null");
     if (r.approverUserId !== null) issues.push("decision=PENDING 時 approverUserId 必須為 null");
+    if (r.approvalAuthorityType !== null) issues.push("decision=PENDING 時 approvalAuthorityType 必須為 null（實際核准途徑尚未發生）");
+    if (r.approvalDelegationId !== null) issues.push("decision=PENDING 時 approvalDelegationId 必須為 null");
+    if (r.delegatedFromUserId !== null) issues.push("decision=PENDING 時 delegatedFromUserId 必須為 null");
+    if (r.decisionReasonCode !== null) issues.push("decision=PENDING 時 decisionReasonCode 必須為 null");
+    if (r.decisionComment !== null) issues.push("decision=PENDING 時 decisionComment 必須為 null");
   }
   if (r.decision === "APPROVED" || r.decision === "REJECTED") {
     if (r.decidedAt === null) issues.push(`decision=${r.decision} 時 decidedAt 不得為 null`);
     if (r.approverUserId === null) issues.push(`decision=${r.decision} 時 approverUserId 不得為 null`);
+    if (r.approvalAuthorityType === null) issues.push(`decision=${r.decision} 時 approvalAuthorityType 不得為 null（實際核准途徑必須已解析）`);
   }
   if (r.decision === "CANCELLED" && r.decidedAt === null) {
     issues.push("decision=CANCELLED 時 decidedAt 不得為 null");
@@ -153,17 +183,19 @@ export function checkApprovalRecordConsistency(r: ApprovalRecordConsistencyInput
     }
   }
 
+  // 實際核准途徑三種類型彼此互斥的欄位組合（僅在 approvalAuthorityType 非 null 時適用）。
   if (r.approvalAuthorityType === "DIRECT_SUPERVISOR") {
     if (!r.supervisorAssignmentId) issues.push("approvalAuthorityType=DIRECT_SUPERVISOR 時 supervisorAssignmentId 不得為空");
     if (r.approvalDelegationId) issues.push("approvalAuthorityType=DIRECT_SUPERVISOR 時 approvalDelegationId 必須為 null");
+    if (r.delegatedFromUserId) issues.push("approvalAuthorityType=DIRECT_SUPERVISOR 時 delegatedFromUserId 必須為 null");
   }
   if (r.approvalAuthorityType === "DELEGATE") {
     if (!r.approvalDelegationId) issues.push("approvalAuthorityType=DELEGATE 時 approvalDelegationId 不得為空");
-    if (r.supervisorAssignmentId) issues.push("approvalAuthorityType=DELEGATE 時 supervisorAssignmentId 必須為 null");
+    if (!r.delegatedFromUserId) issues.push("approvalAuthorityType=DELEGATE 時 delegatedFromUserId 不得為空");
   }
   if (r.approvalAuthorityType === "TEAM_LEAD") {
-    if (r.supervisorAssignmentId) issues.push("approvalAuthorityType=TEAM_LEAD 時 supervisorAssignmentId 必須為 null");
     if (r.approvalDelegationId) issues.push("approvalAuthorityType=TEAM_LEAD 時 approvalDelegationId 必須為 null");
+    if (r.delegatedFromUserId) issues.push("approvalAuthorityType=TEAM_LEAD 時 delegatedFromUserId 必須為 null");
   }
 
   if (r.supersedesApprovalRecordId === null && r.revisionNo !== 1) {
@@ -320,13 +352,17 @@ export function pickExpectedApproverUserId(eligible: readonly ApprovalAuthorityS
   return eligible.length === 1 ? eligible[0].userId : null;
 }
 
-// 建立階段（尚無決策）：解析「資格類別」（DIRECT_SUPERVISOR／TEAM_LEAD，決定
-// approvalAuthorityType／supervisorAssignmentId／approvalDelegationId／delegatedFromUserId
-// 等欄位）與「預期核准人顯示值」（expectedApproverUserId，見 pickExpectedApproverUserId）。
-// 兩者分開計算：資格類別在結構上恆為單一類別（同一使用者至多一筆有效 primary 主管指派；
-// 同一團隊可能有多位 LEAD，但類別皆為 TEAM_LEAD，選哪一筆不影響要寫入的欄位值，因此
-// 「優先取非 DELEGATE 的第一筆」在此僅用於決定類別代表、不構成「任選核准人」問題）；
-// expectedApproverUserId 則嚴格採計數規則，不得沿用相同的啟發式。
+// 建立階段（尚無決策）：只解析「核准責任目標」（supervisorAssignmentId／approverTeamId，
+// 由 approvalType 決定、與哪位候選人最終核准無關）與「預期核准人顯示值」
+// （expectedApproverUserId，見 pickExpectedApproverUserId）。
+//
+// M1.5-A3：PENDING 階段絕不解析或預先任選「實際核准途徑」（approvalAuthorityType／
+// approvalDelegationId／delegatedFromUserId）——核准尚未發生時，可能同時存在直屬主管、
+// 其代理人、多位 Team LEAD 或其代理人，任選一種當作實際途徑會誤導稽核紀錄。
+// supervisorAssignmentId 對 BUSINESS_APPROVAL 是結構上單一值（同一使用者至多一筆有效
+// primary 主管指派，且僅在該主管已解析時 eligible 才可能非空），因此直接取該筆 assignment id，
+// 不需要在多位「候選人」之間任選；approverTeamId 則單純等於 Issue.assignedTeamId，與候選人
+// 完全無關。兩者皆非「任選核准途徑」，而是決定性的責任目標。
 // TEAM_LEAD 類型的目標團隊一律取自 Issue.assignedTeamId（現有 DB 權威來源），
 // 不接受呼叫端自行指定 teamId，避免呼叫端指定任意團隊使自己成為該團隊 LEAD 而取得資格。
 async function resolveExpectedAuthorityForCreation(
@@ -335,7 +371,7 @@ async function resolveExpectedAuthorityForCreation(
   approvalType: ApprovalType,
   requestedByUserId: string,
   now: Date,
-): Promise<{ baseAuthority: ApprovalAuthoritySource; expectedApproverUserId: string | null; teamId: string | null }> {
+): Promise<{ expectedApproverUserId: string | null; teamId: string | null; supervisorAssignmentId: string | null }> {
   const issue = await tx.issue.findUnique({ where: { id: issueId } });
   if (!issue) throw new ApprovalValidationError(["issueId 對應的 Issue 不存在"]);
 
@@ -351,12 +387,16 @@ async function resolveExpectedAuthorityForCreation(
   }
 
   const expectedApproverUserId = pickExpectedApproverUserId(eligible);
-  const baseAuthority = eligible.find((e) => e.authorityType !== "DELEGATE") ?? eligible[0];
-
   if (expectedApproverUserId !== null && expectedApproverUserId === requestedByUserId) {
     throw new ApprovalValidationError(["預期核准人與送核人相同，不得建立此核准紀錄"]);
   }
-  return { baseAuthority, expectedApproverUserId, teamId };
+
+  const directSupervisorEntry = eligible.find(
+    (e): e is Extract<ApprovalAuthoritySource, { authorityType: "DIRECT_SUPERVISOR" }> => e.authorityType === "DIRECT_SUPERVISOR",
+  );
+  const supervisorAssignmentId = isTeamLeadType ? null : (directSupervisorEntry?.supervisorAssignmentId ?? null);
+
+  return { expectedApproverUserId, teamId, supervisorAssignmentId };
 }
 
 // 決策階段（信任邊界核心）：現場重新解析「實際」核准來源，僅接受 actorUserId 是否
@@ -381,34 +421,35 @@ async function resolveActualAuthorityForDecision(
   return actual;
 }
 
-function authoritySourceToRecordFields(source: ApprovalAuthoritySource): {
+// 決策階段專用：只計算「實際核准途徑」欄位（approvalAuthorityType／approvalDelegationId／
+// delegatedFromUserId）。核准責任目標欄位（supervisorAssignmentId／approverTeamId）建立時
+// 即已寫入且全生命週期不變，決策一律不得清空或改動——DELEGATE／TEAM_LEAD 途徑時完全不觸碰
+// supervisorAssignmentId（回傳物件不含此鍵，Prisma update 不會更動該欄位）；唯一例外是
+// DIRECT_SUPERVISOR 途徑：此時重新以決策當下現場解析出的 assignment id 覆寫，確保
+// 「approverUserId 必須等於該 Assignment 的 supervisorUserId」在組織異動後仍保持一致
+// （多數情況下與建立時寫入的值相同，僅在決策前主管異動的極端情況才會不同）。
+function decisionAuthorityFields(source: ApprovalAuthoritySource): {
   approvalAuthorityType: ApprovalAuthoritySource["authorityType"];
-  supervisorAssignmentId: string | null;
   approvalDelegationId: string | null;
   delegatedFromUserId: string | null;
+  supervisorAssignmentId?: string;
 } {
   if (source.authorityType === "DIRECT_SUPERVISOR") {
     return {
       approvalAuthorityType: "DIRECT_SUPERVISOR",
-      supervisorAssignmentId: source.supervisorAssignmentId,
       approvalDelegationId: null,
       delegatedFromUserId: null,
+      supervisorAssignmentId: source.supervisorAssignmentId,
     };
   }
   if (source.authorityType === "DELEGATE") {
     return {
       approvalAuthorityType: "DELEGATE",
-      supervisorAssignmentId: null,
       approvalDelegationId: source.approvalDelegationId,
       delegatedFromUserId: source.onBehalfOfUserId,
     };
   }
-  return {
-    approvalAuthorityType: "TEAM_LEAD",
-    supervisorAssignmentId: null,
-    approvalDelegationId: null,
-    delegatedFromUserId: null,
-  };
+  return { approvalAuthorityType: "TEAM_LEAD", approvalDelegationId: null, delegatedFromUserId: null };
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -448,7 +489,7 @@ export async function createPendingApprovalRecord(input: CreatePendingApprovalIn
         await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
       }
 
-      const { baseAuthority, expectedApproverUserId, teamId } = await resolveExpectedAuthorityForCreation(
+      const { expectedApproverUserId, teamId, supervisorAssignmentId } = await resolveExpectedAuthorityForCreation(
         tx,
         input.issueId,
         input.approvalType,
@@ -469,7 +510,8 @@ export async function createPendingApprovalRecord(input: CreatePendingApprovalIn
         throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
       }
 
-      const fields = authoritySourceToRecordFields(baseAuthority);
+      // PENDING 建立時只寫入「核准責任目標」，「實際核准途徑」三欄位一律維持 null，
+      // 待決策完成後才由 decideApprovalRecord 現場解析寫入。
       return tx.approvalRecord.create({
         data: {
           issueId: input.issueId,
@@ -477,9 +519,12 @@ export async function createPendingApprovalRecord(input: CreatePendingApprovalIn
           relatedStageKey: input.relatedStageKey,
           requestedByUserId: input.requestedByUserId,
           approverTeamId: teamId,
+          supervisorAssignmentId,
           expectedApproverUserId,
+          approvalAuthorityType: null,
+          approvalDelegationId: null,
+          delegatedFromUserId: null,
           dueAt: input.dueAt ?? null,
-          ...fields,
         },
       });
     });
@@ -524,7 +569,7 @@ export async function decideApprovalRecord(input: DecideApprovalInput) {
       assertNoUnresolvedUnknownRisks(riskChecks);
     }
 
-    const fields = authoritySourceToRecordFields(actualAuthority);
+    const fields = decisionAuthorityFields(actualAuthority);
 
     return tx.approvalRecord.update({
       where: { id: record.id },
@@ -619,7 +664,7 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
         await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
       }
 
-      const { baseAuthority, expectedApproverUserId, teamId } = await resolveExpectedAuthorityForCreation(
+      const { expectedApproverUserId, teamId, supervisorAssignmentId } = await resolveExpectedAuthorityForCreation(
         tx,
         input.issueId,
         input.approvalType,
@@ -640,7 +685,8 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
         throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
       }
 
-      const fields = authoritySourceToRecordFields(baseAuthority);
+      // 新 revision 一律以全新 PENDING 狀態建立：只寫入核准責任目標，實際核准途徑三欄位維持 null，
+      // 不得沿用舊 revision 決策時解析出的途徑。
       const created = await tx.approvalRecord.create({
         data: {
           issueId: input.issueId,
@@ -648,11 +694,14 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
           relatedStageKey: input.relatedStageKey,
           requestedByUserId: input.requestedByUserId,
           approverTeamId: teamId,
+          supervisorAssignmentId,
           expectedApproverUserId,
+          approvalAuthorityType: null,
+          approvalDelegationId: null,
+          delegatedFromUserId: null,
           dueAt: input.dueAt ?? null,
           revisionNo: previous.revisionNo + 1,
           supersedesApprovalRecordId: previous.id,
-          ...fields,
         },
       });
       await tx.approvalRecord.update({ where: { id: previous.id }, data: { recordStatus: "SUPERSEDED" } });

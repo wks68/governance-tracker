@@ -365,7 +365,7 @@ model ApprovalDelegation {
   @@index([delegatorUserId])
 }
 
-// 通用核准紀錄（M1.5-A 新增）。
+// 通用核准紀錄（M1.5-A 新增；M1.5-A3 修正「核准目標」與「實際核准途徑」語意分離）。
 // decision：PENDING / APPROVED / REJECTED / CANCELLED（不使用 INVALIDATED）。
 // recordStatus：ACTIVE / INVALIDATED / SUPERSEDED。
 //   - 原 APPROVED 紀錄因內容變更而失效：decision 保留 APPROVED，recordStatus 改 INVALIDATED。
@@ -374,6 +374,11 @@ model ApprovalDelegation {
 // 實際「同一 issueId+approvalType+relatedStageKey 僅一筆 ACTIVE+PENDING」的唯一性，
 // 另由 migration 內手動追加的 partial unique index 於 DB 層保護（schema 語法無法表達條件式唯一索引），
 // 變更本 model 時務必同步檢查該 index 是否仍需調整。
+//
+// M1.5-A3：supervisorAssignmentId／approverTeamId 是「核准責任目標」（依 approvalType 決定，
+// PENDING 建立時即寫入、決策後仍保留、全生命週期不變），approvalAuthorityType／approvalDelegationId／
+// delegatedFromUserId 是「實際核准途徑」（PENDING 時尚未發生，一律為 null；只有 APPROVED／REJECTED
+// 決策完成時才由 src/lib/approvalService.ts 依決策當下的 DB 狀態現場解析寫入，不得預先任選一種途徑）。
 model ApprovalRecord {
   id                         String    @id @default(cuid())
   issueId                    String
@@ -382,12 +387,12 @@ model ApprovalRecord {
   requestedByUserId          String // 將該階段成果正式送交核准的人（見 src/lib/approvalService.ts 對各 approvalType 的定義）
   requestedAt                DateTime  @default(now())
   approverUserId             String? // 實際完成核准/退回者，決定時才填入
-  approverTeamId             String?
-  expectedApproverUserId     String? // 預先解析出的應核准人，供 UI 顯示與稽核比對
-  delegatedFromUserId        String? // 代理核准時記錄被代理人
-  approvalAuthorityType      String // DIRECT_SUPERVISOR / TEAM_LEAD / DELEGATE；建立時先填預期資格來源，決策時更新為實際來源
-  supervisorAssignmentId     String? // approvalAuthorityType=DIRECT_SUPERVISOR 時必填，且與 approvalDelegationId 互斥
-  approvalDelegationId       String? // approvalAuthorityType=DELEGATE 時必填，且與 supervisorAssignmentId 互斥
+  approverTeamId             String? // 核准責任目標（技術主管核准：應核准團隊）；BUSINESS_APPROVAL 恆為 null
+  expectedApproverUserId     String? // 唯一合格核准人時才填入，供 UI 顯示與稽核比對；多位候選人時為 null，不得任選其一
+  delegatedFromUserId        String? // 實際核准途徑：僅 approvalAuthorityType=DELEGATE 決策完成後填入，記錄被代理人
+  approvalAuthorityType      String? // 實際核准途徑：DIRECT_SUPERVISOR / TEAM_LEAD / DELEGATE；PENDING 時恆為 null，僅決策完成後才寫入
+  supervisorAssignmentId     String? // 核准責任目標（BUSINESS_APPROVAL：唯一有效 primary 主管關係）；RD/QA/OP 恆為 null
+  approvalDelegationId       String? // 實際核准途徑：僅 approvalAuthorityType=DELEGATE 決策完成後填入
   decision                   String    @default("PENDING") // PENDING / APPROVED / REJECTED / CANCELLED
   recordStatus               String    @default("ACTIVE") // ACTIVE / INVALIDATED / SUPERSEDED
   decisionReasonCode         String?
