@@ -593,6 +593,34 @@ const seedUsers: SeedUser[] = [
   { name: "系統管理員", email: "admin@example.com", department: "資訊部", role: "Admin" },
 ];
 
+// M1.5-C1-A 新增：建立 User 的同時同步建立對應 active UserRole 與 UserRoleHistory（SYSTEM_SEED／C1_SEED_INITIAL_ROLE）。
+// 這是「全新建立」路徑（seed 全新執行時的正常路徑），與既有資料庫的回填（migration 內的 C1_ROLE_BACKFILL）
+// 是兩條不同路徑，reasonCode 刻意不同，避免稽核時混淆「這是回填舊資料還是全新建立」。
+async function createSeedUserWithRole(u: SeedUser) {
+  const effectiveAt = new Date();
+  const user = await prisma.user.create({
+    data: { name: u.name, email: u.email, department: u.department, role: u.role, isActive: true },
+  });
+  const userRole = await prisma.userRole.create({
+    data: { userId: user.id, role: u.role, isActive: true },
+  });
+  await prisma.userRoleHistory.create({
+    data: {
+      userRoleId: userRole.id,
+      userId: user.id,
+      role: u.role,
+      eventType: "ASSIGNED",
+      fromValue: null,
+      toValue: u.role,
+      actorUserId: null,
+      eventSource: "SYSTEM_SEED",
+      reasonCode: "C1_SEED_INITIAL_ROLE",
+      effectiveAt,
+    },
+  });
+  return user;
+}
+
 async function main() {
   console.log("清除既有資料...");
   await prisma.aiSuggestion.deleteMany();
@@ -603,17 +631,31 @@ async function main() {
   await prisma.issue.deleteMany();
   await prisma.workflowStatus.deleteMany();
   await prisma.issueType.deleteMany();
+  await prisma.userRoleHistory.deleteMany();
+  await prisma.userRole.deleteMany();
   await prisma.user.deleteMany();
 
   console.log("建立使用者主檔...");
   const userByName = new Map<string, { id: string; role: string }>();
   for (const u of seedUsers) {
-    const created = await prisma.user.create({
-      data: { name: u.name, email: u.email, department: u.department, role: u.role, isActive: true },
-    });
+    const created = await createSeedUserWithRole(u);
     userByName.set(u.name, { id: created.id, role: created.role });
   }
   const adminUser = userByName.get("系統管理員")!;
+
+  console.log("標記唯一有效 Admin 為 Break-glass...");
+  const activeAdmins = await prisma.user.findMany({
+    where: { isActive: true, userRoles: { some: { role: "Admin", isActive: true } } },
+  });
+  if (activeAdmins.length !== 1) {
+    throw new Error(
+      `C1 Break-glass 初始標記失敗：預期恰好 1 位有效 Admin（isActive=true 且擁有 active UserRole role="Admin"），實際偵測到 ${activeAdmins.length} 位，不得任意挑選，seed 中止。`,
+    );
+  }
+  await prisma.user.update({
+    where: { id: activeAdmins[0].id },
+    data: { isBreakGlassAdmin: true },
+  });
 
   console.log("建立工單類型主檔...");
   const { ISSUE_TYPES } = await import("../src/lib/constants");

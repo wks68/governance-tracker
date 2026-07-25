@@ -24,6 +24,15 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  // ---- M1.5-C1-A 新增：人員生命週期欄位（見 Plan 檔案 M1.5-C1 Superseding Amendment 章節四） ----
+  // loginIdentifier：本階段只建立欄位，不修改登入流程，不回填、不猜測既有帳號的值。
+  // isBreakGlassAdmin：僅代表資料標記與防誤停用，不代表真正 Break-glass 登入機制已完成。
+  loginIdentifier    String?   @unique
+  isBreakGlassAdmin  Boolean   @default(false)
+  disabledAt         DateTime?
+  disabledByUserId   String?
+  disabledReasonCode String?
+
   ownedIssues     Issue[]      @relation("IssueOwner")
   reportedIssues  Issue[]      @relation("IssueReporter")
   auditLogs       AuditLog[]
@@ -46,21 +55,65 @@ model User {
   delegationsRevoked           ApprovalDelegation[]       @relation("DelegationRevokedBy")
   delegationsCreated           ApprovalDelegation[]       @relation("DelegationCreatedBy")
 
+  // ---- M1.5-C1-A 新增：人員停用 self-relation 與角色/Team 歷程反向關聯 ----
+  disabledBy    User?  @relation("UserDisabledBy", fields: [disabledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  disabledUsers User[] @relation("UserDisabledBy")
+
+  userRoleHistoryAsUser        UserRoleHistory[]       @relation("UserRoleHistoryUser")
+  userRoleHistoryAsActor       UserRoleHistory[]       @relation("UserRoleHistoryActor")
+  teamMembershipHistoryAsUser  TeamMembershipHistory[] @relation("TeamMembershipHistoryUser")
+  teamMembershipHistoryAsActor TeamMembershipHistory[] @relation("TeamMembershipHistoryActor")
+
   @@index([role])
   @@index([isActive])
 }
 
 // 使用者多角色關聯（M1 新增：帳號可同時擁有多個角色；User.role 保留作為既有相容欄位，不刪除、不改名）
+// M1.5-C1-A 新增 isActive／updatedAt：自本次 Superseding Amendment 起，
+// active（isActive=true）UserRole 為唯一正式系統角色授權來源，User.role 僅作 primary role 顯示快取
+// （角色授權來源切換本身屬 C1-B 範圍，本次 C1-A 僅新增欄位與安全回填，不切換服務層查詢邏輯）。
 model UserRole {
   id        String   @id @default(cuid())
   userId    String
   role      String // 沿用既有 RoleKey 值域字串（含既有角色與未來新增角色），不另開 DB enum
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id])
+  user    User              @relation(fields: [userId], references: [id])
+  history UserRoleHistory[]
 
   @@unique([userId, role])
   @@index([userId])
+  @@index([isActive])
+}
+
+// 使用者角色歷程（M1.5-C1-A 新增）：append-only，僅 INSERT，服務層不得提供 update/delete。
+// eventType：ASSIGNED / REMOVED / PRIMARY_CHANGED。eventSource：USER_ACTION / SYSTEM_MIGRATION / SYSTEM_SEED。
+// USER_ACTION 時 actorUserId 必填且 reasonCode 必填；SYSTEM_MIGRATION／SYSTEM_SEED 時 actorUserId 可為 null，
+// reasonCode 使用固定明確值（如 C1_ROLE_BACKFILL／C1_SEED_INITIAL_ROLE）。
+model UserRoleHistory {
+  id          String   @id @default(cuid())
+  userRoleId  String
+  userId      String
+  role        String
+  eventType   String
+  fromValue   String?
+  toValue     String?
+  actorUserId String?
+  eventSource String
+  reasonCode  String
+  effectiveAt DateTime
+  createdAt   DateTime @default(now())
+
+  userRole UserRole @relation(fields: [userRoleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user     User     @relation("UserRoleHistoryUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor    User?    @relation("UserRoleHistoryActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([userRoleId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([eventSource])
 }
 
 // 團隊主檔（M1 新增）
@@ -78,6 +131,9 @@ model Team {
   // ---- M1.5-A 新增 ----
   approvalRecords     ApprovalRecord[]
   approvalDelegations ApprovalDelegation[]
+
+  // ---- M1.5-C1-A 新增 ----
+  teamMembershipHistory TeamMembershipHistory[]
 }
 
 // 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分
@@ -94,8 +150,41 @@ model TeamMember {
   team Team @relation(fields: [teamId], references: [id])
   user User @relation(fields: [userId], references: [id])
 
+  // ---- M1.5-C1-A 新增 ----
+  history TeamMembershipHistory[]
+
   @@unique([teamId, userId])
   @@index([userId])
+}
+
+// Team 成員歷程（M1.5-C1-A 新增）：append-only，僅 INSERT，服務層不得提供 update/delete。
+// eventType：JOINED / REMOVED / ROLE_CHANGED。eventSource：USER_ACTION / SYSTEM_MIGRATION / SYSTEM_SEED。
+// JOINED：fromMembershipRole=null、toMembershipRole=加入角色；REMOVED：fromMembershipRole=移除前角色、toMembershipRole=null；
+// ROLE_CHANGED：fromMembershipRole／toMembershipRole 均必填且不得相同（MEMBER↔LEAD 切換，供 teamLeadService 使用）。
+model TeamMembershipHistory {
+  id                 String   @id @default(cuid())
+  teamMemberId       String
+  teamId             String
+  userId             String
+  eventType          String
+  fromMembershipRole String?
+  toMembershipRole   String?
+  actorUserId        String?
+  eventSource        String
+  reasonCode         String
+  effectiveAt        DateTime
+  createdAt          DateTime @default(now())
+
+  teamMember TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user       User       @relation("TeamMembershipHistoryUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User?      @relation("TeamMembershipHistoryActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([teamMemberId])
+  @@index([teamId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([eventSource])
 }
 
 // 系統主檔（M1 新增）：與既有 Issue.systemName（自由文字）暫不自動關聯，僅作為受控清單基準，供 M3 起漸進導入
