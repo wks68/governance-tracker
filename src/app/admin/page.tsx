@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 
 const ADMIN_SECTIONS = [
-  { href: "/admin/users", label: "使用者與角色", desc: "管理使用者帳號、指派角色、啟用 / 停用帳號" },
+  // M1.5-C1-C：舊 /admin/users 已淘汰（重導至 /admin/people），入口改指向新頁面。
+  { href: "/admin/people", label: "人員與角色", desc: "管理人員帳號、指派系統角色、啟用 / 停用帳號" },
+  { href: "/admin/teams", label: "Team 與成員", desc: "管理 Team 成員與 Team LEAD" },
   { href: "/admin/workflows", label: "流程設定", desc: "檢視各工單類型的流程關卡設定" },
   { href: "/admin/form-templates", label: "表單範本", desc: "檢視各工單類型的動態欄位範本與卡控說明" },
 ];

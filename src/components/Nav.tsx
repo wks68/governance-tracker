@@ -9,6 +9,13 @@ const NAV_ITEMS = [
   { href: "/issues", label: "工單清單" },
   { href: "/issues/new", label: "建立工單" },
   { href: "/settings/approval-governance", label: "核准治理設定" },
+  // M1.5-C1-C 新增：人員／Team 清單。可見範圍一律由 listPeopleForActor／
+  // listTeamsForActor 於服務層依 actorId 現場解析（Admin／資安推動小組看全部，
+  // Team LEAD 看自己所屬 Team，一般使用者只看自己），因此對所有已登入使用者顯示同一
+  // 個入口即可，不需要在 Nav 額外判斷 Capability——顯示入口本身不等於授權，實際範圍
+  // 仍由頁面內的服務層查詢決定。
+  { href: "/admin/people", label: "人員" },
+  { href: "/admin/teams", label: "Team" },
 ];
 
 export default async function Nav() {
