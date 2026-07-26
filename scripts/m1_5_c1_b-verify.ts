@@ -130,6 +130,14 @@ interface Fixtures {
   assignmentIds: string[];
   delegationIds: string[];
   approvalRecordIdsNewestFirst: string[];
+  // [D6]／[D6b] 測試隔離修復：暫時中性化的既存（非本次 fixture 建立的）
+  // isBreakGlassAdmin=true 使用者 id，測試結束後必須在 cleanupFixtures 內還原為 true，
+  // 不得假設 cleanup 刪除 fixture 就會自動還原既有 seed User 的狀態。
+  neutralizedBreakGlassAdminUserIds: string[];
+  // [P10]／[D5] 既有中性化邏輯同樣會影響既存（非本次 fixture）使用者的 active Admin
+  // UserRole（例如 admin@example.com），同樣必須記錄受影響的 UserRole id 並在
+  // cleanupFixtures 內還原，確保執行前後基準 DB 的穩定資料不受影響。
+  neutralizedAdminUserRoleIds: string[];
 }
 
 // C1-B2：Active UserRole 是唯一授權來源，測試 fixture 建立 User 時同步建立對應的
@@ -779,9 +787,20 @@ async function runPeopleServiceTests(fx: Fixtures) {
   // 變成「非主要角色」，藉此單獨驗證「最後一位有效 Admin」規則（而非先被主要角色規則擋下）。
   // 上方 runDbDependentTests（C1-B2 情境 [8b]/[8c-3] 等）已在同一份 scratch DB 建立其他
   // active Admin UserRole 的測試使用者；為了讓本測試組真正隔離驗證「最後一位有效 Admin」，
-  // 先將這些「與本測試組無關」的其他 active Admin UserRole 全部中性化（isActive=false，
-  // 僅限本次 scratch DB，測試結束會整批清除），確保 admin 是當下唯一有效 Admin。
-  await prisma.userRole.updateMany({ where: { role: "Admin", isActive: true, userId: { not: admin.id } }, data: { isActive: false } });
+  // 先將這些「與本測試組無關」的其他 active Admin UserRole 全部中性化（isActive=false）。
+  // 這可能包含既存（非本次 fixture）使用者的 UserRole（例如 admin@example.com），
+  // 因此明確記錄受影響的 UserRole id，於 cleanupFixtures 內還原為 isActive=true，
+  // 不得讓既有 seed 資料的授權狀態永久遺失。
+  {
+    const toNeutralize = await prisma.userRole.findMany({
+      where: { role: "Admin", isActive: true, userId: { not: admin.id } },
+      select: { id: true },
+    });
+    fx.neutralizedAdminUserRoleIds.push(...toNeutralize.map((r) => r.id));
+    if (toNeutralize.length > 0) {
+      await prisma.userRole.updateMany({ where: { id: { in: toNeutralize.map((r) => r.id) } }, data: { isActive: false } });
+    }
+  }
   await assignSystemRole({ userId: admin.id, role: "PM", actorId: admin.id, reasonCode: "TEST_SETUP_SECOND_ROLE" });
   await updatePrimaryRole({ userId: admin.id, role: "PM", actorId: admin.id, reasonCode: "TEST_SETUP_PRIMARY_SWITCH" });
   await expectError(
@@ -789,6 +808,25 @@ async function runPeopleServiceTests(fx: Fixtures) {
     () => removeSystemRole({ userId: admin.id, role: "Admin", actorId: admin.id, reasonCode: "TEST_LAST_ADMIN" }),
     (e) => e instanceof PeopleStateError,
   );
+
+  // 測試隔離修復（原 [D6]／[D6b] 根因）：D6／D6b 驗證「唯一 active Break-glass Admin」時
+  // blocking／deactivatePerson 行為，此前提不得依賴 scratch DB 是否已 seed——若 scratch DB
+  // 複製自已 seed 過的 dev.db（或本身執行過 prisma/seed.ts），會已經存在一位既存的
+  // isBreakGlassAdmin=true 使用者（例如 admin@example.com），導致下方建立的 breakGlassUser
+  // 並非真正唯一。比照上方 [P10]／[D5] 已經採用的「暫時中性化＋不還原個別欄位」模式，但這裡
+  // 明確記錄受影響的既存 User id 並於 cleanupFixtures 內還原，不得讓既存 seed 資料的
+  // isBreakGlassAdmin 標記永久遺失。
+  const preExistingBreakGlassUsers = await prisma.user.findMany({
+    where: { isBreakGlassAdmin: true },
+    select: { id: true },
+  });
+  fx.neutralizedBreakGlassAdminUserIds.push(...preExistingBreakGlassUsers.map((u) => u.id));
+  if (preExistingBreakGlassUsers.length > 0) {
+    await prisma.user.updateMany({
+      where: { id: { in: preExistingBreakGlassUsers.map((u) => u.id) } },
+      data: { isBreakGlassAdmin: false },
+    });
+  }
 
   // Break-glass Admin 的 Admin 角色不得移除（縱使還有其他有效 Admin，例如上方的 admin 本身）。
   const breakGlassUser = await createUser("breakGlassAdminUser", "Admin");
@@ -1028,7 +1066,17 @@ async function runPeopleServiceTests(fx: Fixtures) {
   // breakGlassUser（[P11]）建立時也持有 active 的 Admin UserRole，必須再次中性化其他
   // active Admin UserRole（不影響 breakGlassUser 的 isBreakGlassAdmin 標記本身，[D6]／[D6b]
   // 測試的是獨立的 User.isBreakGlassAdmin 規則，不受此處影響），才能真正孤立驗證本規則。
-  await prisma.userRole.updateMany({ where: { role: "Admin", isActive: true, userId: { not: admin.id } }, data: { isActive: false } });
+  // 同樣記錄受影響的既存 UserRole id，供 cleanupFixtures 還原。
+  {
+    const toNeutralize = await prisma.userRole.findMany({
+      where: { role: "Admin", isActive: true, userId: { not: admin.id } },
+      select: { id: true },
+    });
+    fx.neutralizedAdminUserRoleIds.push(...toNeutralize.map((r) => r.id));
+    if (toNeutralize.length > 0) {
+      await prisma.userRole.updateMany({ where: { id: { in: toNeutralize.map((r) => r.id) } }, data: { isActive: false } });
+    }
+  }
   await expectError(
     "[D5] deactivatePerson：不得停用最後一位有效 Admin",
     () => deactivatePerson({ userId: admin.id, actorId: admin.id, reasonCode: "TEST_DEACTIVATE_LAST_ADMIN" }),
@@ -1044,6 +1092,42 @@ async function runPeopleServiceTests(fx: Fixtures) {
     "[D6b] deactivatePerson：不得停用唯一 active 的 Break-glass Admin",
     () => deactivatePerson({ userId: breakGlassUser.id, actorId: admin.id, reasonCode: "TEST_DEACTIVATE" }),
     (e) => e instanceof PeopleStateError,
+  );
+
+  // 雙重有效 Break-glass Admin 情境：確認「唯一」規則不會誤傷「非唯一」情況——
+  // 存在兩位 active Break-glass Admin 時，停用其中一位不應被 lastBreakGlassAdmin 規則
+  // 擋下（因為停用後仍有另一位）。避免只驗證單一情境、未來被誤解成「一律 blocking」。
+  const breakGlassDual1 = await createUser("breakGlassDualOne", "Admin");
+  const breakGlassDual2 = await createUser("breakGlassDualTwo", "Admin");
+  fx.userIds.push(breakGlassDual1.id, breakGlassDual2.id);
+  await prisma.user.updateMany({
+    where: { id: { in: [breakGlassDual1.id, breakGlassDual2.id] } },
+    data: { isBreakGlassAdmin: true },
+  });
+  await checkAsync(
+    "[D6c] getUserDeactivationImpact：存在兩位 active Break-glass Admin 時，任一位皆不產生 lastBreakGlassAdmin blocking",
+    async () => {
+      const impact = await getUserDeactivationImpact({ userId: breakGlassDual1.id, actorId: admin.id });
+      return !impact.some((i) => i.category === "lastBreakGlassAdmin" && i.blocking);
+    },
+  );
+  await checkAsync(
+    "[D6d] deactivatePerson：存在兩位 active Break-glass Admin 時，停用其中一位成功執行（不被 lastBreakGlassAdmin 擋下）",
+    async () => {
+      const deactivated = await deactivatePerson({
+        userId: breakGlassDual1.id,
+        actorId: admin.id,
+        reasonCode: "TEST_DEACTIVATE_DUAL_BREAK_GLASS",
+      });
+      return deactivated.isActive === false;
+    },
+  );
+  await checkAsync(
+    "[D6e] 停用其中一位 Break-glass Admin 後，另一位仍為有效 Break-glass Admin（isActive=true 且 isBreakGlassAdmin=true）",
+    async () => {
+      const remaining = await prisma.user.findUniqueOrThrow({ where: { id: breakGlassDual2.id } });
+      return remaining.isActive === true && remaining.isBreakGlassAdmin === true;
+    },
   );
 
   // pending ApprovalRecord 候選人模擬：leadForDeactivation 同時也是某筆待核准紀錄目前唯一
@@ -1235,6 +1319,31 @@ async function runPeopleServiceTests(fx: Fixtures) {
 
 async function cleanupFixtures(fx: Fixtures) {
   try {
+    // [D6]／[D6b] 測試隔離修復：還原測試前被暫時中性化的既存 isBreakGlassAdmin=true
+    // 使用者（例如 admin@example.com），無論上方測試成功或中途拋錯都必須執行，
+    // 不得讓既有 seed 資料的 isBreakGlassAdmin 標記永久遺失。
+    if (fx.neutralizedBreakGlassAdminUserIds.length > 0) {
+      await prisma.user.updateMany({
+        where: { id: { in: fx.neutralizedBreakGlassAdminUserIds } },
+        data: { isBreakGlassAdmin: true },
+      });
+    }
+  } catch (e) {
+    console.warn("cleanup 還原 isBreakGlassAdmin 失敗：", e);
+  }
+  try {
+    // [P10]／[D5] 中性化還原：還原測試前被暫時中性化的既存 active Admin UserRole
+    // （例如 admin@example.com 的 UserRole），確保執行前後基準 DB 的穩定資料不受影響。
+    if (fx.neutralizedAdminUserRoleIds.length > 0) {
+      await prisma.userRole.updateMany({
+        where: { id: { in: fx.neutralizedAdminUserRoleIds } },
+        data: { isActive: true },
+      });
+    }
+  } catch (e) {
+    console.warn("cleanup 還原 Admin UserRole 中性化失敗：", e);
+  }
+  try {
     await prisma.userRoleHistory.deleteMany({ where: { userId: { in: fx.userIds } } });
   } catch (e) {
     console.warn("cleanup UserRoleHistory 失敗：", e);
@@ -1370,7 +1479,16 @@ async function main() {
       "資料表尚未建立，等待 Migration 套用至測試資料庫後才能驗證，本輪不對任何資料庫套用 Migration",
     );
   } else {
-    const fx: Fixtures = { userIds: [], teamIds: [], issueIds: [], assignmentIds: [], delegationIds: [], approvalRecordIdsNewestFirst: [] };
+    const fx: Fixtures = {
+      userIds: [],
+      teamIds: [],
+      issueIds: [],
+      assignmentIds: [],
+      delegationIds: [],
+      approvalRecordIdsNewestFirst: [],
+      neutralizedBreakGlassAdminUserIds: [],
+      neutralizedAdminUserRoleIds: [],
+    };
     try {
       await runDbDependentTests(fx);
       await runPeopleServiceTests(fx);
