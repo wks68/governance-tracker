@@ -542,15 +542,17 @@ function resolveScopeHeadRef(baseRefCommit: string): { ref: string; isExplicitOv
 }
 
 // C2-A 自己的範圍：src/lib/auth-providers/** 與 scripts/c2_a-verify.ts。
-// 額外允許 scripts/m1_5_c1_a-verify.ts：這是另一條獨立授權、獨立以 20 次連續穩定驗證過
-// 的修復（fix/c1-a-verify-temp-table-connection，修正 TEMP TABLE 連線競態），依整合計畫
-// 本就會與 C2-A cherry-pick 一起存在於同一個整合 branch，不是 C2-A cherry-pick 自己
-// 帶入的範圍外變動——B10 檢查的目的是攔截「C2-A cherry-pick 造成的」範圍外差異，不是
-// 攔截整合 branch 上其他已授權、已驗證的獨立修復。
+//
+// 先前這裡額外允許過 scripts/m1_5_c1_a-verify.ts（C1-A 的 TEMP TABLE 連線競態修復，
+// commit 976f7f5）。B10 現在已改為只檢查 BASE_REF..SCOPE_HEAD_REF 這個封閉區間
+// （見 resolveScopeHeadRef），而 976f7f5 本身排在 SCOPE_HEAD_REF（55cee0f）之後、
+// 不在這個區間內——`git diff m2-a-complete..55cee0f -- scripts/m1_5_c1_a-verify.ts`
+// 本來就是空的，這條例外從未在目前的區間模型下被實際用到過，純屬舊模型
+// （BASE_REF..HEAD）留下的殘留白名單，移除不影響任何現有通過的檢查。
+// C2-A 的允許範圍收斂回它真正該有的樣子：只有自己的原始碼與自己的 verify 腳本。
 const ALLOWED_INTEGRATION_PATH_PATTERNS = [
   /^src\/lib\/auth-providers\//,
   /^scripts\/c2_a-verify\.ts$/,
-  /^scripts\/m1_5_c1_a-verify\.ts$/,
 ];
 
 function listChangedFilesBetween(baseRef: string, scopeHeadRef: string): string[] {
