@@ -453,9 +453,12 @@ function listModuleFiles(): string[] {
   return results;
 }
 
-function gitDiffEmpty(baseRef: string, relPath: string): boolean {
+// 兩個 ref 之間的 diff（而非「ref 對比目前工作目錄／HEAD」）：B8／B8b／B10 一律只檢查
+// BASE_REF..SCOPE_HEAD_REF 這個固定區間，不隨著後續（C2-A 之後）的其他已授權階段
+// 在同一個 branch 上繼續往前推進而跟著把新 commit 也算進「C2-A 的變動」裡。
+function gitDiffEmptyBetween(baseRef: string, scopeHeadRef: string, relPath: string): boolean {
   try {
-    const out = execFileSync("git", ["diff", baseRef, "--", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+    const out = execFileSync("git", ["diff", baseRef, scopeHeadRef, "--", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
     return out.trim().length === 0;
   } catch (err) {
     throw new Error(`git diff 檢查失敗（${relPath}）：${err instanceof Error ? err.message : String(err)}`);
@@ -498,6 +501,46 @@ function resolveBaseRef(): { ref: string; isExplicitOverride: boolean } {
   return { ref: resolvedCommit, isExplicitOverride };
 }
 
+// C2_A_SCOPE_HEAD_REF：C2-A 實際整合完成的最後一筆 commit（例如 55cee0f，"test: complete
+// C2-A provider abstraction verification"）。B8／B8b／B10 只檢查 BASE_REF..SCOPE_HEAD_REF
+// 這個封閉區間，不看 SCOPE_HEAD_REF 之後、同一個 branch 上繼續發生的其他已授權階段
+// （例如 C1-A 溫度修復、C2-A 自身 verify 腳本的整合感知調整、C2-B1 等）。
+// - 未設定時預設為 HEAD，與修改前的既有語意完全相同（獨立 C2-A branch 不受影響）。
+// - 設定時必須能解析為有效 commit；BASE_REF 必須是它的祖先；它本身也必須是目前 HEAD
+//   的祖先。任一條件不成立一律 fail closed，不得靜默 fallback。
+function resolveScopeHeadRef(baseRefCommit: string): { ref: string; isExplicitOverride: boolean } {
+  const envRef = process.env.C2_A_SCOPE_HEAD_REF;
+  const isExplicitOverride = !!(envRef && envRef.trim());
+  const requestedRef = isExplicitOverride ? envRef.trim() : "HEAD";
+
+  let resolvedCommit: string;
+  try {
+    resolvedCommit = execFileSync("git", ["rev-parse", "--verify", `${requestedRef}^{commit}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    console.error(`拒絕執行：C2_A_SCOPE_HEAD_REF="${requestedRef}" 無法解析為有效 commit。`);
+    process.exit(1);
+  }
+
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", baseRefCommit, resolvedCommit], { cwd: REPO_ROOT });
+  } catch {
+    console.error(`拒絕執行：BASE_REF（${baseRefCommit}）不是 C2_A_SCOPE_HEAD_REF="${requestedRef}"（解析為 ${resolvedCommit}）的祖先，無法構成合法區間。`);
+    process.exit(1);
+  }
+
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", resolvedCommit, "HEAD"], { cwd: REPO_ROOT });
+  } catch {
+    console.error(`拒絕執行：C2_A_SCOPE_HEAD_REF="${requestedRef}"（解析為 ${resolvedCommit}）不是目前 HEAD 的祖先。`);
+    process.exit(1);
+  }
+
+  return { ref: resolvedCommit, isExplicitOverride };
+}
+
 // C2-A 自己的範圍：src/lib/auth-providers/** 與 scripts/c2_a-verify.ts。
 // 額外允許 scripts/m1_5_c1_a-verify.ts：這是另一條獨立授權、獨立以 20 次連續穩定驗證過
 // 的修復（fix/c1-a-verify-temp-table-connection，修正 TEMP TABLE 連線競態），依整合計畫
@@ -510,9 +553,9 @@ const ALLOWED_INTEGRATION_PATH_PATTERNS = [
   /^scripts\/m1_5_c1_a-verify\.ts$/,
 ];
 
-function listChangedFiles(baseRef: string): string[] {
+function listChangedFilesBetween(baseRef: string, scopeHeadRef: string): string[] {
   try {
-    const out = execFileSync("git", ["diff", "--name-only", baseRef], { cwd: REPO_ROOT, encoding: "utf8" });
+    const out = execFileSync("git", ["diff", "--name-only", baseRef, scopeHeadRef], { cwd: REPO_ROOT, encoding: "utf8" });
     return out
       .split("\n")
       .map((s) => s.trim())
@@ -573,6 +616,7 @@ function runBoundaryChecks() {
   );
 
   const { ref: BASE_REF, isExplicitOverride } = resolveBaseRef();
+  const { ref: SCOPE_HEAD_REF } = resolveScopeHeadRef(BASE_REF);
   const protectedFiles = [
     "prisma/schema.prisma",
     "prisma/seed.ts",
@@ -583,26 +627,31 @@ function runBoundaryChecks() {
     "package-lock.json",
   ];
   for (const relPath of protectedFiles) {
-    check(`[B8] ${relPath} 相對於指定比對基準（${BASE_REF}）完全未變動`, gitDiffEmpty(BASE_REF, relPath));
+    check(`[B8] ${relPath} 相對於 C2-A 整合區間（${BASE_REF}..${SCOPE_HEAD_REF}）完全未變動`, gitDiffEmptyBetween(BASE_REF, SCOPE_HEAD_REF, relPath));
   }
   check(
-    "[B8b] prisma/migrations 目錄相對於指定比對基準完全未變動（C2-A 沒有新增 Migration）",
-    gitDiffEmpty(BASE_REF, "prisma/migrations"),
+    "[B8b] prisma/migrations 目錄相對於 C2-A 整合區間完全未變動（C2-A 沒有新增 Migration）",
+    gitDiffEmptyBetween(BASE_REF, SCOPE_HEAD_REF, "prisma/migrations"),
   );
 
-  const packageJsonDiffEmpty = gitDiffEmpty(BASE_REF, "package.json");
-  check("[B9] package.json 未新增任何套件（與指定比對基準逐字相同）", packageJsonDiffEmpty);
+  const packageJsonDiffEmpty = gitDiffEmptyBetween(BASE_REF, SCOPE_HEAD_REF, "package.json");
+  check("[B9] package.json 未新增任何套件（與 C2-A 整合區間起點逐字相同）", packageJsonDiffEmpty);
 
   // 整合場景下的白名單檢查：只在明確以 C2_A_BASE_REF 覆寫比對基準時才啟用（例如整合腳本傳入
   // C2_A_BASE_REF=m2-a-complete），不影響獨立 C2-A branch 用預設基準時的既有斷言總數。
-  // 相對於指定比對基準的「所有」變動檔案，都必須落在 C2-A 自己的範圍
+  // 「BASE_REF..SCOPE_HEAD_REF」這個封閉區間內的所有變動檔案，都必須落在 C2-A 自己的範圍
   // （src/lib/auth-providers/** 或 scripts/c2_a-verify.ts）內；整合場景下若出現任何
   // C2-A cherry-pick 之外造成的額外檔案差異（不論來源），這裡會立即攔截。
+  //
+  // SCOPE_HEAD_REF 之後（同一 branch 上繼續發生的後續已授權階段，例如 C1-A 溫度修復、
+  // 本檔案自己的整合感知調整、C2-B1 等）刻意不在這個區間內——B10 檢查的是「C2-A 自己
+  // 的整合內容」，不是「這個 branch 從此以後所有東西」，後續階段各自有自己的驗證腳本
+  // 負責檢查自己的範圍。
   if (isExplicitOverride) {
-    const changedFiles = listChangedFiles(BASE_REF);
+    const changedFiles = listChangedFilesBetween(BASE_REF, SCOPE_HEAD_REF);
     const outOfScope = changedFiles.filter((f) => !ALLOWED_INTEGRATION_PATH_PATTERNS.some((p) => p.test(f)));
     check(
-      `[B10] 相對於指定整合基準（${BASE_REF}）的所有變動檔案皆限於 src/lib/auth-providers/** 或 scripts/c2_a-verify.ts`,
+      `[B10] C2-A 整合區間（${BASE_REF}..${SCOPE_HEAD_REF}）內的所有變動檔案皆限於 src/lib/auth-providers/** 或 scripts/c2_a-verify.ts`,
       outOfScope.length === 0,
     );
     if (outOfScope.length > 0) {
