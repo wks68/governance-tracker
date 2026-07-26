@@ -137,6 +137,10 @@ model Team {
 
   // ---- M2-A 新增 ----
   workflowStages WorkflowStage[]
+
+  // ---- M2-B 新增：Issue 轉移前後 assignedTeamId 快照歷程 ----
+  stageHistoryAssignedBefore IssueWorkflowStageHistory[] @relation("AssignedTeamBeforeHistory")
+  stageHistoryAssignedAfter  IssueWorkflowStageHistory[] @relation("AssignedTeamAfterHistory")
 }
 
 // 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分
@@ -639,7 +643,10 @@ model WorkflowStage {
   outgoingTransitions WorkflowTransition[]        @relation("FromStage")
   incomingTransitions WorkflowTransition[]        @relation("ToStage")
   issuesCurrentlyHere Issue[]                     @relation("IssueCurrentStage")
-  stageHistory        IssueWorkflowStageHistory[]
+  // ---- M2-B 新增：IssueWorkflowStageHistory 對 WorkflowStage 有兩條 FK（fromStageId／toStageId），
+  // Prisma 要求以具名 relation 區分兩個反向關聯 ----
+  stageHistoryAsTo   IssueWorkflowStageHistory[] @relation("ToStageHistory")
+  stageHistoryAsFrom IssueWorkflowStageHistory[] @relation("FromStageHistory")
 
   @@unique([workflowVersionId, stageKey])
 }
@@ -659,6 +666,8 @@ model WorkflowTransition {
   workflowVersion WorkflowVersion @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   fromStage       WorkflowStage   @relation("FromStage", fields: [fromStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   toStage         WorkflowStage   @relation("ToStage", fields: [toStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // ---- M2-B 新增：執行歷程須記錄實際執行的 Transition ----
+  issueStageHistory IssueWorkflowStageHistory[]
 
   @@unique([fromStageId, actionKey])
   @@index([toStageId])
@@ -676,18 +685,46 @@ model WorkflowStageRequirement {
   workflowStage WorkflowStage @relation(fields: [workflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 }
 
+// M2-B 新增欄位（原 M2-A 版本僅有 issueId／workflowStageId／transitionType／actorUserId／
+// reason／enteredAt／exitedAt，不足以在單一列內完整重建一次轉移事件的稽核事實，必須查詢
+// 「前一列」才能推出 fromStageId，脆弱且違反「不得只更新 currentWorkflowStageId 而不留
+// 歷史」的完整性要求）：
+//   - fromStageId／transitionId：完整記錄本次轉移的來源關卡與實際執行的 Transition，
+//     取代原本需靠「上一列 workflowStageId」反推的脆弱作法；ENTERED（流程啟動）無來源
+//     關卡與可執行的 Transition，兩者皆為 null，其餘 transitionType 皆非 null。
+//   - assignedTeamIdBefore／assignedTeamIdAfter：完整記錄本次轉移前後 Issue.assignedTeamId
+//     快照（尤其 TRIAGE 指派），不得只看目前 Issue 資料反推歷史某一刻的指派。
+//   - terminalOutcome：toStage.isEnd=true 時快照該結束關卡的 terminalOutcome，供稽核與
+//     M2-C 報表不需再 join WorkflowStage 判斥 COMPLETED／CANCELLED。
+//   - executedAt：取代 enteredAt 命名（語意相同：本次事件執行／進入 toStage 的時間），
+//     與 exitedAt（僅在下一次事件發生、本列被查出為目前開放列時回填）搭配使用。
+// 原 workflowStageId 欄位更名為 toStageId（語意更精確：本列描述「進入哪個關卡」）；
+// 本表自 M2-A 建立以來一直是 0 筆（M2-A 尚未實作執行引擎），無既有資料需要遷移，
+// 重新命名／新增欄位不影響任何既有正式資料。
 model IssueWorkflowStageHistory {
-  id              String    @id @default(cuid())
-  issueId         String
-  workflowStageId String
-  transitionType  String // ENTERED / FORWARDED / RETURNED / CANCELLED
-  actorUserId     String
-  reason          String?
-  enteredAt       DateTime  @default(now())
-  exitedAt        DateTime?
+  id                    String    @id @default(cuid())
+  issueId               String
+  fromStageId           String? // null 僅用於 ENTERED（流程啟動，無來源關卡）
+  toStageId             String // 本次事件進入的關卡
+  transitionId          String? // 實際執行的 WorkflowTransition；null 僅用於 ENTERED
+  transitionType        String // ENTERED / FORWARDED / RETURNED / CANCELLED
+  actorUserId           String
+  reasonCode            String?
+  assignedTeamIdBefore  String?
+  assignedTeamIdAfter   String?
+  terminalOutcome       String? // COMPLETED / CANCELLED；僅 toStage.isEnd=true 時填入
+  executedAt            DateTime  @default(now())
+  exitedAt              DateTime?
 
-  issue         Issue         @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  workflowStage WorkflowStage @relation(fields: [workflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  issue              Issue               @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toStage            WorkflowStage       @relation("ToStageHistory", fields: [toStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromStage          WorkflowStage?      @relation("FromStageHistory", fields: [fromStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  transition         WorkflowTransition? @relation(fields: [transitionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTeamBefore Team?                @relation("AssignedTeamBeforeHistory", fields: [assignedTeamIdBefore], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTeamAfter  Team?                @relation("AssignedTeamAfterHistory", fields: [assignedTeamIdAfter], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([issueId])
+  @@index([toStageId])
+  @@index([fromStageId])
+  @@index([transitionId])
 }
