@@ -5,6 +5,13 @@ import { requireCurrentUser } from "@/lib/auth";
 import { issueTypeLabel } from "@/lib/constants";
 import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, statusLabel } from "@/lib/workflow";
 import { evaluateGateRules } from "@/lib/gateRules";
+import {
+  isIssueOnVersionedWorkflow,
+  getIssueWorkflowRuntime,
+  getIssueWorkflowHistory,
+  hasExecutionCapability,
+  listSelectablePublishedVersionsForIssueType,
+} from "@/lib/workflowExecutionService";
 import StatusBadge from "@/components/StatusBadge";
 import WorkflowProgress from "@/components/WorkflowProgress";
 import DynamicFieldsEditForm from "@/components/DynamicFieldsEditForm";
@@ -15,11 +22,19 @@ import EvidenceList from "@/components/EvidenceList";
 import CommentList from "@/components/CommentList";
 import AuditLogList from "@/components/AuditLogList";
 import AiAssistantPanel from "@/components/AiAssistantPanel";
+import WorkflowRuntimeSummary from "@/components/workflow-execution/WorkflowRuntimeSummary";
+import CurrentStagePanel from "@/components/workflow-execution/CurrentStagePanel";
+import StageRequirementsPanel from "@/components/workflow-execution/StageRequirementsPanel";
+import AvailableTransitionList from "@/components/workflow-execution/AvailableTransitionList";
+import ReturnActionPanel from "@/components/workflow-execution/ReturnActionPanel";
+import CancelActionPanel from "@/components/workflow-execution/CancelActionPanel";
+import WorkflowHistoryTimeline from "@/components/workflow-execution/WorkflowHistoryTimeline";
+import StartWorkflowPanel from "@/components/workflow-execution/StartWorkflowPanel";
 
 export const dynamic = "force-dynamic";
 
 export default async function IssueDetailPage({ params }: { params: { id: string } }) {
-  await requireCurrentUser();
+  const currentUser = await requireCurrentUser();
   const issue = await prisma.issue.findUnique({
     where: { id: params.id },
     include: {
@@ -37,6 +52,65 @@ export default async function IssueDetailPage({ params }: { params: { id: string
     orderBy: { createdAt: "desc" },
     include: { actor: true },
   });
+
+  const onVersionedWorkflow = isIssueOnVersionedWorkflow(issue);
+
+  // ---------------------------------------------------------------------------
+  // M2-B：新流程 Issue 一律走 workflowExecutionService（Server Component 讀取 ViewModel，
+  // 見 Plan 第九節）；舊流程 Issue 完全維持原本 workflow.ts／gateRules.ts 行為，兩者互斥，
+  // 不混用同一套資料。
+  // ---------------------------------------------------------------------------
+
+  let runtime: Awaited<ReturnType<typeof getIssueWorkflowRuntime>> | null = null;
+  let historyItems: Array<{
+    id: string;
+    transitionType: string;
+    fromStageLabel: string | null;
+    toStageLabel: string;
+    transitionLabel: string | null;
+    actorName: string;
+    reasonCode: string | null;
+    terminalOutcome: string | null;
+    executedAt: string;
+  }> = [];
+  let canAssignTeam = false;
+  let teamOptions: Array<{ id: string; name: string }> = [];
+  let assignedTeamName: string | null = null;
+  let startableVersions: Array<{ id: string; versionNo: number; definitionName: string }> = [];
+  let canStartWorkflow = false;
+
+  if (onVersionedWorkflow) {
+    runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
+    const historyRows = await getIssueWorkflowHistory(issue.id, currentUser.id);
+    const actorIds = Array.from(new Set(historyRows.map((h) => h.actorUserId)));
+    const actors = actorIds.length > 0 ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } }) : [];
+    const actorNameById = new Map(actors.map((a) => [a.id, a.name]));
+    historyItems = historyRows.map((h) => ({
+      id: h.id,
+      transitionType: h.transitionType,
+      fromStageLabel: h.fromStage?.label ?? null,
+      toStageLabel: h.toStage.label,
+      transitionLabel: h.transition?.label ?? null,
+      actorName: actorNameById.get(h.actorUserId) ?? "（未知使用者）",
+      reasonCode: h.reasonCode,
+      terminalOutcome: h.terminalOutcome,
+      executedAt: h.executedAt.toISOString(),
+    }));
+    canAssignTeam = await hasExecutionCapability(currentUser.id, "issue.assignTeam");
+    if (runtime.onVersionedWorkflow && runtime.currentStage.stageType === "TRIAGE") {
+      teamOptions = await prisma.team.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    }
+    if (issue.assignedTeamId) {
+      const assignedTeam = await prisma.team.findUnique({ where: { id: issue.assignedTeamId }, select: { name: true } });
+      assignedTeamName = assignedTeam?.name ?? null;
+    }
+  } else {
+    canStartWorkflow = await hasExecutionCapability(currentUser.id, "admin.full");
+    if (canStartWorkflow) {
+      const selectable = await listSelectablePublishedVersionsForIssueType(issue.issueType);
+      startableVersions = selectable.map((v) => ({ id: v.id, versionNo: v.versionNo, definitionName: v.workflowDefinition.name }));
+    }
+  }
 
   const fieldsMap: Record<string, string> = {};
   for (const f of issue.fieldValues) fieldsMap[f.fieldKey] = f.fieldValue;
@@ -165,41 +239,136 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             </div>
           </section>
 
-          {/* 6.3 流程進度條 */}
-          <section className="rounded-lg border border-gray-200 bg-white p-5">
-            <h2 className="mb-3 text-sm font-semibold text-gray-700">流程進度</h2>
-            <WorkflowProgress issueType={issue.issueType} currentStatus={issue.workflowStatus} />
-            <div className="mt-4">
-              <WorkflowActions
+          {onVersionedWorkflow && runtime && runtime.onVersionedWorkflow ? (
+            <>
+              {/* 6.3 流程執行（新版 Workflow 執行引擎） */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">流程執行</h2>
+                <WorkflowRuntimeSummary
+                  definitionName={runtime.version.workflowDefinition.name}
+                  versionNo={runtime.version.versionNo}
+                  versionStatus={runtime.version.status}
+                  currentStageLabel={runtime.currentStage.label}
+                  currentStageType={runtime.currentStage.stageType}
+                  assignedTeamName={assignedTeamName}
+                />
+                <div className="mt-4">
+                  <CurrentStagePanel
+                    issueId={issue.id}
+                    stageKey={runtime.currentStage.stageKey}
+                    stageLabel={runtime.currentStage.label}
+                    stageType={runtime.currentStage.stageType}
+                    requiredExecutionRole={runtime.currentStage.requiredExecutionRole}
+                    requiredMembershipRole={runtime.currentStage.requiredMembershipRole}
+                    assignedTeamId={issue.assignedTeamId}
+                    assignedTeamName={assignedTeamName}
+                    canAssignTeam={canAssignTeam}
+                    teamOptions={teamOptions}
+                  />
+                </div>
+              </section>
+
+              {/* 關卡完成條件 */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">關卡完成條件</h2>
+                <StageRequirementsPanel issueId={issue.id} requirements={runtime.stageRequirements} />
+              </section>
+
+              {/* 前進動作 */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">前進動作</h2>
+                <AvailableTransitionList
+                  issueId={issue.id}
+                  transitions={runtime.availableTransitions
+                    .filter((t) => t.transition.transitionType === "FORWARD")
+                    .map((t) => ({
+                      id: t.transition.id,
+                      label: t.transition.label,
+                      requireReason: t.transition.requireReason,
+                      targetLabel: t.transition.toStage.label,
+                      targetIsCompleted: t.transition.toStage.isEnd && t.transition.toStage.terminalOutcome === "COMPLETED",
+                      allowed: t.allowed,
+                      blockedReasons: t.blockedReasons.map((r) => r.message),
+                    }))}
+                />
+              </section>
+
+              <ReturnActionPanel
                 issueId={issue.id}
-                nextStatus={next}
-                nextStatusLabel={next ? statusLabel(issue.issueType, next) : null}
-                prevStatus={prev}
-                gatePassed={gate.passed}
-                canSendBackToRd={
-                  issue.issueType === "Hotfix" && ["qaVerify", "qaRelease"].includes(issue.workflowStatus)
-                }
+                transitions={runtime.availableTransitions
+                  .filter((t) => t.transition.transitionType === "RETURN")
+                  .map((t) => ({
+                    id: t.transition.id,
+                    label: t.transition.label,
+                    targetLabel: t.transition.toStage.label,
+                    allowed: t.allowed,
+                    blockedReasons: t.blockedReasons.map((r) => r.message),
+                  }))}
               />
-            </div>
-          </section>
 
-          {/* 6.5 關卡卡控檢查區 */}
-          <section>
-            <GateCheckPanel gate={gate} nextStatusLabel={next ? statusLabel(issue.issueType, next) : null} />
-          </section>
+              <CancelActionPanel
+                issueId={issue.id}
+                transitions={runtime.availableTransitions
+                  .filter((t) => t.transition.transitionType === "CANCEL")
+                  .map((t) => ({
+                    id: t.transition.id,
+                    label: t.transition.label,
+                    allowed: t.allowed,
+                    blockedReasons: t.blockedReasons.map((r) => r.message),
+                  }))}
+              />
 
-          {/* 6.4 動態欄位區：直接在本頁填寫目前關卡的動態欄位，不需跳轉 */}
-          <section id="dynamic-fields-section" className="rounded-lg border border-gray-200 bg-white p-5">
-            <h2 className="mb-3 text-sm font-semibold text-gray-700">
-              {issueTypeLabel(issue.issueType)} 專屬欄位（{statusLabel(issue.issueType, issue.workflowStatus)}）
-            </h2>
-            <DynamicFieldsEditForm
-              issueId={issue.id}
-              template={template}
-              values={fieldsMap}
-              dynamicOptions={dynamicOptions}
-            />
-          </section>
+              {/* 執行歷程 */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">Workflow 執行歷程</h2>
+                <WorkflowHistoryTimeline items={historyItems} />
+              </section>
+            </>
+          ) : (
+            <>
+              {/* 6.3 流程進度條（舊版線性流程） */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">流程進度</h2>
+                <WorkflowProgress issueType={issue.issueType} currentStatus={issue.workflowStatus} />
+                <div className="mt-4">
+                  <WorkflowActions
+                    issueId={issue.id}
+                    nextStatus={next}
+                    nextStatusLabel={next ? statusLabel(issue.issueType, next) : null}
+                    prevStatus={prev}
+                    gatePassed={gate.passed}
+                    canSendBackToRd={
+                      issue.issueType === "Hotfix" && ["qaVerify", "qaRelease"].includes(issue.workflowStatus)
+                    }
+                  />
+                </div>
+                {canStartWorkflow && startableVersions.length > 0 && (
+                  <div className="mt-4 border-t border-gray-100 pt-4">
+                    <p className="mb-2 text-xs text-gray-500">此工單類型已有可選用的新版 Workflow 執行引擎版本：</p>
+                    <StartWorkflowPanel issueId={issue.id} options={startableVersions} />
+                  </div>
+                )}
+              </section>
+
+              {/* 6.5 關卡卡控檢查區 */}
+              <section>
+                <GateCheckPanel gate={gate} nextStatusLabel={next ? statusLabel(issue.issueType, next) : null} />
+              </section>
+
+              {/* 6.4 動態欄位區：直接在本頁填寫目前關卡的動態欄位，不需跳轉 */}
+              <section id="dynamic-fields-section" className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">
+                  {issueTypeLabel(issue.issueType)} 專屬欄位（{statusLabel(issue.issueType, issue.workflowStatus)}）
+                </h2>
+                <DynamicFieldsEditForm
+                  issueId={issue.id}
+                  template={template}
+                  values={fieldsMap}
+                  dynamicOptions={dynamicOptions}
+                />
+              </section>
+            </>
+          )}
 
           {/* 6.6 佐證資料區 */}
           <section className="rounded-lg border border-gray-200 bg-white p-5">
