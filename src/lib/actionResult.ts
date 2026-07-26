@@ -19,6 +19,13 @@ import {
   GovernanceAccessDeniedError,
   GovernanceNotFoundError,
 } from "./supervisorAssignmentService";
+import {
+  WorkflowValidationError,
+  WorkflowStateError,
+  WorkflowAccessDeniedError,
+  WorkflowNotFoundError,
+  WorkflowPublishValidationError,
+} from "./workflowService";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T; message: string }
@@ -37,6 +44,11 @@ const KNOWN_DOMAIN_ERRORS = [
   GovernanceStateError,
   GovernanceAccessDeniedError,
   GovernanceNotFoundError,
+  WorkflowValidationError,
+  WorkflowStateError,
+  WorkflowAccessDeniedError,
+  WorkflowNotFoundError,
+  WorkflowPublishValidationError,
 ] as const;
 
 export function toActionResult(err: unknown, fallbackMessage = "操作失敗，請稍後再試"): ActionResult<never> {
