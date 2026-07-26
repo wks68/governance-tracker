@@ -43,11 +43,29 @@ async function checkAsync(name: string, fn: () => Promise<boolean>) {
 
 // 供 5/6/10/11 guard 案例使用：CREATE TEMP TABLE 與 INSERT 必須拆成兩次 $executeRawUnsafe，
 // 因為 Prisma 的 $executeRawUnsafe 一次只執行單一陳述式，合併在同一字串內只會執行第一句。
+//
+// 穩定性修正：SQLite 的 TEMP TABLE 是「連線 (connection) 綁定」的——若 CREATE 與 INSERT
+// 這兩次獨立呼叫被 Prisma 內部路由到不同底層連線，INSERT 當下就會看不到剛建立的暫存表
+// （曾實際重現為間歇性 `no such table: verify_guard2` 等錯誤，非每次發生）。改用
+// `client.$transaction(async (tx) => {...})`（interactive transaction）確保這兩句、
+// 以及下方防禦性的 DROP，全部在同一個底層連線／同一個 transaction 內依序執行，不再假設
+// 兩次獨立 $executeRawUnsafe 會落在同一條連線上。
+//
+// 清理語意：
+// - 預期失敗（INSERT 因 CHECK constraint 中止）：整個 transaction 自動 ROLLBACK，
+//   連 CREATE TEMP TABLE 都會一併復原，不需要、也不能再對同一個（已失敗的）transaction
+//   額外送出 DROP（那會用一個新錯誤蓋掉真正要驗證的 CHECK constraint 錯誤）。
+// - 非預期成功（INSERT 未被擋下）：顯式 DROP 後再讓 transaction 正常 COMMIT，避免暫存表
+//   殘留影響同一連線後續其他判斷。
 async function runGuard(client: PrismaClient, tableName: string, insertSql: string) {
-  await client.$executeRawUnsafe(
-    `CREATE TEMP TABLE "${tableName}" ("guard_key" TEXT NOT NULL PRIMARY KEY, "detail" TEXT NOT NULL CHECK (1 = 0))`,
-  );
-  await client.$executeRawUnsafe(insertSql);
+  await client.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(
+      `CREATE TEMP TABLE "${tableName}" ("guard_key" TEXT NOT NULL PRIMARY KEY, "detail" TEXT NOT NULL CHECK (1 = 0))`,
+    );
+    await tx.$executeRawUnsafe(insertSql);
+    // 只有在上一行沒有拋錯（INSERT 非預期成功）時才會執行到這裡。
+    await tx.$executeRawUnsafe(`DROP TABLE "${tableName}"`);
+  });
 }
 
 // 供 5/6/10/11 guard 案例使用：預期一定會拋出「CHECK constraint failed」類錯誤。
