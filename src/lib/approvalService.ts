@@ -482,57 +482,71 @@ function validateBasicCreateInput(input: CreatePendingApprovalInput): void {
   if (issues.length > 0) throw new ApprovalValidationError(issues);
 }
 
-// 以 transaction 檢查同一 issueId+approvalType+relatedStageKey 是否已存在 ACTIVE+PENDING 紀錄，
-// 資料庫層另有 partial unique index（見 migration.sql）作為最終防線。
-export async function createPendingApprovalRecord(input: CreatePendingApprovalInput) {
-  validateBasicCreateInput(input);
+async function createPendingApprovalRecordTx(tx: Tx, input: CreatePendingApprovalInput) {
   const now = new Date();
 
+  if (RISK_CHECK_GATED_TYPES.has(input.approvalType)) {
+    await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
+  }
+
+  const { expectedApproverUserId, teamId, supervisorAssignmentId } = await resolveExpectedAuthorityForCreation(
+    tx,
+    input.issueId,
+    input.approvalType,
+    input.requestedByUserId,
+    now,
+  );
+
+  const existing = await tx.approvalRecord.findFirst({
+    where: {
+      issueId: input.issueId,
+      approvalType: input.approvalType,
+      relatedStageKey: input.relatedStageKey,
+      recordStatus: "ACTIVE",
+      decision: "PENDING",
+    },
+  });
+  if (existing) {
+    throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
+  }
+
+  // PENDING 建立時只寫入「核准責任目標」，「實際核准途徑」三欄位一律維持 null，
+  // 待決策完成後才由 decideApprovalRecord 現場解析寫入。
+  return tx.approvalRecord.create({
+    data: {
+      issueId: input.issueId,
+      approvalType: input.approvalType,
+      relatedStageKey: input.relatedStageKey,
+      requestedByUserId: input.requestedByUserId,
+      approverTeamId: teamId,
+      supervisorAssignmentId,
+      expectedApproverUserId,
+      approvalAuthorityType: null,
+      approvalDelegationId: null,
+      delegatedFromUserId: null,
+      dueAt: input.dueAt ?? null,
+    },
+  });
+}
+
+// 以 transaction 檢查同一 issueId+approvalType+relatedStageKey 是否已存在 ACTIVE+PENDING 紀錄，
+// 資料庫層另有 partial unique index（見 migration.sql）作為最終防線。
+//
+// M2-B1 新增：可選的外部 transaction client（比照 writeAuditLog(params, client?) 既有慣例）。
+// Issue Workflow 執行引擎（src/lib/workflow-execution/）進入 APPROVAL 關卡時，必須在同一
+// transaction 內同時寫入 Issue runtime 欄位、IssueWorkflowStageHistory 與本筆 ApprovalRecord，
+// 三者要嘛全部成功、要嘛全部回滾——因此本函式不得永遠自行開啟新的 transaction。呼叫端不傳入
+// client 時（既有呼叫端，例如未來直接測試本服務）行為與過去完全相同：自行開啟並提交
+// transaction。本函式本身不寫 AuditLog——PENDING 建立事件的 AuditLog（"ApprovalRequested"）
+// 由呼叫端（例如 workflow-execution 的 requirementService.createRequiredApprovalRecord）
+// 在同一 transaction 內、緊接著呼叫本函式之後補寫，因為只有呼叫端知道「這筆核准是因為哪個
+// WorkflowStage 而觸發」等上下文摘要內容。
+export async function createPendingApprovalRecord(input: CreatePendingApprovalInput, client?: Tx) {
+  validateBasicCreateInput(input);
+
   try {
-    return await prisma.$transaction(async (tx) => {
-      if (RISK_CHECK_GATED_TYPES.has(input.approvalType)) {
-        await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
-      }
-
-      const { expectedApproverUserId, teamId, supervisorAssignmentId } = await resolveExpectedAuthorityForCreation(
-        tx,
-        input.issueId,
-        input.approvalType,
-        input.requestedByUserId,
-        now,
-      );
-
-      const existing = await tx.approvalRecord.findFirst({
-        where: {
-          issueId: input.issueId,
-          approvalType: input.approvalType,
-          relatedStageKey: input.relatedStageKey,
-          recordStatus: "ACTIVE",
-          decision: "PENDING",
-        },
-      });
-      if (existing) {
-        throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
-      }
-
-      // PENDING 建立時只寫入「核准責任目標」，「實際核准途徑」三欄位一律維持 null，
-      // 待決策完成後才由 decideApprovalRecord 現場解析寫入。
-      return tx.approvalRecord.create({
-        data: {
-          issueId: input.issueId,
-          approvalType: input.approvalType,
-          relatedStageKey: input.relatedStageKey,
-          requestedByUserId: input.requestedByUserId,
-          approverTeamId: teamId,
-          supervisorAssignmentId,
-          expectedApproverUserId,
-          approvalAuthorityType: null,
-          approvalDelegationId: null,
-          delegatedFromUserId: null,
-          dueAt: input.dueAt ?? null,
-        },
-      });
-    });
+    if (client) return await createPendingApprovalRecordTx(client, input);
+    return await prisma.$transaction((tx) => createPendingApprovalRecordTx(tx, input));
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
@@ -646,72 +660,81 @@ export interface ResubmitApprovalInput extends CreatePendingApprovalInput {
   previousApprovalRecordId: string;
 }
 
+async function resubmitApprovalRecordTx(tx: Tx, input: ResubmitApprovalInput) {
+  const now = new Date();
+
+  const previous = await tx.approvalRecord.findUnique({ where: { id: input.previousApprovalRecordId } });
+  if (!previous) throw new ApprovalNotFoundError(input.previousApprovalRecordId);
+  if (previous.recordStatus !== "ACTIVE") {
+    throw new ApprovalStateError("僅 recordStatus=ACTIVE 的核准紀錄可被重新送核取代");
+  }
+  if (!RESUBMITTABLE_DECISIONS.includes(previous.decision as (typeof RESUBMITTABLE_DECISIONS)[number])) {
+    throw new ApprovalStateError("僅 decision=REJECTED／CANCELLED 的核准紀錄可被重新送核取代");
+  }
+
+  if (RISK_CHECK_GATED_TYPES.has(input.approvalType)) {
+    await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
+  }
+
+  const { expectedApproverUserId, teamId, supervisorAssignmentId } = await resolveExpectedAuthorityForCreation(
+    tx,
+    input.issueId,
+    input.approvalType,
+    input.requestedByUserId,
+    now,
+  );
+
+  const existing = await tx.approvalRecord.findFirst({
+    where: {
+      issueId: input.issueId,
+      approvalType: input.approvalType,
+      relatedStageKey: input.relatedStageKey,
+      recordStatus: "ACTIVE",
+      decision: "PENDING",
+    },
+  });
+  if (existing) {
+    throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
+  }
+
+  // 新 revision 一律以全新 PENDING 狀態建立：只寫入核准責任目標，實際核准途徑三欄位維持 null，
+  // 不得沿用舊 revision 決策時解析出的途徑。
+  const created = await tx.approvalRecord.create({
+    data: {
+      issueId: input.issueId,
+      approvalType: input.approvalType,
+      relatedStageKey: input.relatedStageKey,
+      requestedByUserId: input.requestedByUserId,
+      approverTeamId: teamId,
+      supervisorAssignmentId,
+      expectedApproverUserId,
+      approvalAuthorityType: null,
+      approvalDelegationId: null,
+      delegatedFromUserId: null,
+      dueAt: input.dueAt ?? null,
+      revisionNo: previous.revisionNo + 1,
+      supersedesApprovalRecordId: previous.id,
+    },
+  });
+  await tx.approvalRecord.update({ where: { id: previous.id }, data: { recordStatus: "SUPERSEDED" } });
+  return created;
+}
+
 // 將 REJECTED／CANCELLED 的舊紀錄標記為 SUPERSEDED，並建立 revisionNo+1 的新 PENDING 紀錄，
 // supersedesApprovalRecordId 指向舊紀錄 id（DB 層 @unique 保證每筆舊紀錄至多被取代一次，
 // 形成單一鏈，不得分岔）。核准資格來源解析規則與 createPendingApprovalRecord 相同，
 // 同樣不接受呼叫端指定 teamId／authorityType 等欄位。
-export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
+//
+// M2-B1 新增：可選的外部 transaction client，理由與 createPendingApprovalRecord 相同——
+// Issue 從 RETURN 目標關卡（例如 rdInProgress）重新 FORWARD 回到同一個 APPROVAL 關卡時，
+// 執行引擎需要在同一個 stage-transition transaction 內判斷「這個 approvalType+relatedStageKey
+// 是否已有可重新送核的舊紀錄」並建立新 revision，不得另開 transaction。
+export async function resubmitApprovalRecord(input: ResubmitApprovalInput, client?: Tx) {
   validateBasicCreateInput(input);
-  const now = new Date();
 
   try {
-    return await prisma.$transaction(async (tx) => {
-      const previous = await tx.approvalRecord.findUnique({ where: { id: input.previousApprovalRecordId } });
-      if (!previous) throw new ApprovalNotFoundError(input.previousApprovalRecordId);
-      if (previous.recordStatus !== "ACTIVE") {
-        throw new ApprovalStateError("僅 recordStatus=ACTIVE 的核准紀錄可被重新送核取代");
-      }
-      if (!RESUBMITTABLE_DECISIONS.includes(previous.decision as (typeof RESUBMITTABLE_DECISIONS)[number])) {
-        throw new ApprovalStateError("僅 decision=REJECTED／CANCELLED 的核准紀錄可被重新送核取代");
-      }
-
-      if (RISK_CHECK_GATED_TYPES.has(input.approvalType)) {
-        await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
-      }
-
-      const { expectedApproverUserId, teamId, supervisorAssignmentId } = await resolveExpectedAuthorityForCreation(
-        tx,
-        input.issueId,
-        input.approvalType,
-        input.requestedByUserId,
-        now,
-      );
-
-      const existing = await tx.approvalRecord.findFirst({
-        where: {
-          issueId: input.issueId,
-          approvalType: input.approvalType,
-          relatedStageKey: input.relatedStageKey,
-          recordStatus: "ACTIVE",
-          decision: "PENDING",
-        },
-      });
-      if (existing) {
-        throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);
-      }
-
-      // 新 revision 一律以全新 PENDING 狀態建立：只寫入核准責任目標，實際核准途徑三欄位維持 null，
-      // 不得沿用舊 revision 決策時解析出的途徑。
-      const created = await tx.approvalRecord.create({
-        data: {
-          issueId: input.issueId,
-          approvalType: input.approvalType,
-          relatedStageKey: input.relatedStageKey,
-          requestedByUserId: input.requestedByUserId,
-          approverTeamId: teamId,
-          supervisorAssignmentId,
-          expectedApproverUserId,
-          approvalAuthorityType: null,
-          approvalDelegationId: null,
-          delegatedFromUserId: null,
-          dueAt: input.dueAt ?? null,
-          revisionNo: previous.revisionNo + 1,
-          supersedesApprovalRecordId: previous.id,
-        },
-      });
-      await tx.approvalRecord.update({ where: { id: previous.id }, data: { recordStatus: "SUPERSEDED" } });
-      return created;
-    });
+    if (client) return await resubmitApprovalRecordTx(client, input);
+    return await prisma.$transaction((tx) => resubmitApprovalRecordTx(tx, input));
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       throw new DuplicateActivePendingApprovalError(input.issueId, input.approvalType, input.relatedStageKey);

@@ -10,6 +10,11 @@ import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, isClo
 import { ISSUE_TYPE_PREFIX } from "./constants";
 import { generateAiSuggestion, AiSuggestionType, AiContext } from "./mockAi";
 import { requireCurrentUser } from "./auth";
+import {
+  isIssueOnVersionedWorkflow,
+  listSelectablePublishedVersionsForIssueType,
+  startWorkflowForIssueSystemTx,
+} from "./workflowExecutionService";
 
 // ---------------------------------------------------------------------------
 // 共用工具
@@ -144,30 +149,50 @@ export async function createIssueAction(formData: FormData) {
   const initialStatus = workflow[0].key;
   const waitingRole = suggestWaitingRole(issueType, initialStatus);
 
-  const issue = await prisma.issue.create({
-    data: {
-      issueKey,
-      issueType,
-      title: title || `未命名${issueType}工單`,
-      description,
-      systemName,
-      environment,
-      riskLevel,
-      priority,
-      ownerUserId: owner?.id ?? null,
-      ownerName: owner?.name ?? "",
-      ownerRole: owner?.role ?? "",
-      reporterUserId: reporterUser?.id ?? null,
-      reporter: reporterUser?.name ?? "",
-      workflowStatus: initialStatus,
-      statusLight: "Green",
-      dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
-      needRca,
-      needRiskException,
-      impactProduction,
-      alertLevel,
-      waitingRole,
-    },
+  // M2-B：逐 issueType opt-in（Plan 第八節第 4 點）——若此 issueType 已有可供選用的 Published
+  // WorkflowVersion（所屬 Definition 必須 isActive=true），新 Issue 於建立當下即自動啟動該
+  // 版本的執行引擎（固定使用此版本，不隨日後新版本發布改變）；否則行為與今天完全一致，
+  // 純粹沿用舊有 workflowStatus 線性流程，不受影響。有多個 Published 版本時取版號最大者。
+  const selectableVersions = await listSelectablePublishedVersionsForIssueType(issueType);
+  const versionToStart = selectableVersions[0] ?? null;
+
+  const issue = await prisma.$transaction(async (tx) => {
+    const created = await tx.issue.create({
+      data: {
+        issueKey,
+        issueType,
+        title: title || `未命名${issueType}工單`,
+        description,
+        systemName,
+        environment,
+        riskLevel,
+        priority,
+        ownerUserId: owner?.id ?? null,
+        ownerName: owner?.name ?? "",
+        ownerRole: owner?.role ?? "",
+        reporterUserId: reporterUser?.id ?? null,
+        reporter: reporterUser?.name ?? "",
+        workflowStatus: initialStatus,
+        statusLight: "Green",
+        dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+        needRca,
+        needRiskException,
+        impactProduction,
+        alertLevel,
+        waitingRole,
+      },
+    });
+
+    if (versionToStart) {
+      await startWorkflowForIssueSystemTx(tx, {
+        issueId: created.id,
+        workflowVersionId: versionToStart.id,
+        actorId: currentUser.id,
+        reasonCode: "ISSUE_CREATED_AUTO_START",
+      });
+      return tx.issue.findUniqueOrThrow({ where: { id: created.id } });
+    }
+    return created;
   });
 
   // 動態欄位（建立工單時只處理建單當下就已顯示的欄位，後續關卡欄位待推進至該關卡才會出現在表單上）
@@ -363,6 +388,14 @@ export async function transitionStatusAction(issueId: string, direction: "next" 
   const currentUser = await requireCurrentUser();
   const issue = await prisma.issue.findUniqueOrThrow({ where: { id: issueId } });
 
+  // M2-B：新流程 Issue 一律只能透過 workflowExecutionService 的 FORWARD／RETURN／CANCEL
+  // 執行，不得再被這個舊有的線性 workflowStatus 推進/退回動作觸碰，否則會繞過關卡資格、
+  // Requirement、Approval 等所有執行期驗證，直接破壞 currentWorkflowStageId 與
+  // workflowStatus 的一致性。
+  if (isIssueOnVersionedWorkflow(issue)) {
+    throw new Error("此工單已採用新版 Workflow 執行引擎，請於工單詳情頁的「流程執行」區塊操作");
+  }
+
   if (direction === "back") {
     const prev = prevStatusOf(issue.issueType, issue.workflowStatus);
     if (!prev) return;
@@ -433,6 +466,10 @@ const SEND_BACK_TARGET_STATUS = "rdFix";
 export async function sendBackToRdAction(issueId: string, formData: FormData) {
   const currentUser = await requireCurrentUser();
   const issue = await prisma.issue.findUniqueOrThrow({ where: { id: issueId } });
+
+  if (isIssueOnVersionedWorkflow(issue)) {
+    throw new Error("此工單已採用新版 Workflow 執行引擎，請於工單詳情頁的「流程執行」區塊使用 RETURN 操作");
+  }
 
   const message = String(formData.get("message") || "").trim();
   if (!message) {

@@ -60,7 +60,13 @@ export type ActionType =
   | "WorkflowRequirementRemoved"
   | "WorkflowVersionValidated"
   | "WorkflowVersionPublished"
-  | "WorkflowVersionArchived";
+  | "WorkflowVersionArchived"
+  // ---- M2-B 新增：Issue Workflow 執行引擎事件（EntityType 沿用既有 "Issue"，不新增） ----
+  | "IssueWorkflowStarted"
+  | "IssueWorkflowAdvanced"
+  | "IssueWorkflowReturned"
+  | "IssueWorkflowCancelled"
+  | "IssueWorkflowStageCompleted";
 
 // M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation；
 // C1-B3 新增：UserRole；M2-A 新增：WorkflowDefinition／WorkflowVersion／WorkflowStage／

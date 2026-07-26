@@ -1,0 +1,215 @@
+// M2-B 新增：Stage Requirement 評估與 APPROVAL 關卡自動送核。
+//
+// evaluateWorkflowStageRequirements 與 M1 既有 src/lib/gateRules.ts 並行實作，不重用、
+// 不包裝（見 Plan 第七節既有研究結論）：gateRules.ts 是「針對每個 (issueType, targetStatus)
+// 組合寫死 if/else」的舊模型，本檔案改吃 WorkflowStageRequirement 資料表，兩套邏輯完全分流，
+// 舊模型 Issue（workflowVersionId=null）永遠只走 gateRules.ts，新模型 Issue 永遠只走本檔案。
+
+import type { Prisma, PrismaClient } from "@prisma/client";
+import { prisma } from "../prisma";
+import { writeAuditLog } from "../audit";
+import { createPendingApprovalRecord, resubmitApprovalRecord } from "../approvalService";
+import { isApprovalType } from "../constants";
+import { hasExecutionCapability } from "./access";
+import { getIssueOrThrow } from "./validation";
+import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError, WorkflowExecutionValidationError } from "./types";
+import type { BlockedReason, StageRequirementStatus } from "./types";
+
+type Tx = Prisma.TransactionClient;
+type Client = PrismaClient | Tx;
+
+// ---------------------------------------------------------------------------
+// WorkflowStageRequirement 評估（REQUIRE_FIELD／REQUIRE_EVIDENCE／REQUIRE_COMMENT）
+// ---------------------------------------------------------------------------
+
+export async function evaluateWorkflowStageRequirements(client: Client, issueId: string, workflowStageId: string): Promise<StageRequirementStatus[]> {
+  const requirements = await client.workflowStageRequirement.findMany({
+    where: { workflowStageId, isActive: true },
+  });
+  if (requirements.length === 0) return [];
+
+  const results: StageRequirementStatus[] = [];
+  for (const req of requirements) {
+    let satisfied = false;
+    let message = "";
+    if (req.requirementType === "REQUIRE_FIELD") {
+      const field = await client.issueFieldValue.findUnique({
+        where: { issueId_fieldKey: { issueId, fieldKey: req.targetKey } },
+      });
+      satisfied = !!field && field.fieldValue.trim() !== "";
+      message = satisfied ? `欄位「${req.targetKey}」已填寫` : `欄位「${req.targetKey}」尚未填寫`;
+    } else if (req.requirementType === "REQUIRE_EVIDENCE") {
+      // targetKey="ANY" 是慣例值，代表「不限類型，任一筆佐證即可」——
+      // WorkflowStageRequirement.targetKey 依 M2-A 既有驗證規則不得為空字串
+      // （見 src/lib/workflow/stageService.ts），因此不能直接用空字串表達「無限制」。
+      const isAny = req.targetKey === "ANY";
+      const count = await client.evidence.count({
+        where: { issueId, ...(isAny ? {} : { type: req.targetKey }) },
+      });
+      satisfied = count > 0;
+      message = satisfied
+        ? `已有${isAny ? "" : `「${req.targetKey}」類型的`}佐證資料`
+        : `尚缺${isAny ? "" : `「${req.targetKey}」類型的`}佐證資料`;
+    } else if (req.requirementType === "REQUIRE_COMMENT") {
+      const count = await client.comment.count({ where: { issueId } });
+      satisfied = count > 0;
+      message = satisfied ? "已有留言" : "尚無任何留言";
+    } else {
+      // deny-by-default：不在白名單內的 requirementType 視為永遠不滿足（發布前驗證應已擋下，
+      // 這裡是執行期防禦性重查）。
+      satisfied = false;
+      message = `requirementType「${req.requirementType}」不在白名單內`;
+    }
+    results.push({ requirementId: req.id, requirementType: req.requirementType, targetKey: req.targetKey, satisfied, message });
+  }
+  return results;
+}
+
+export function requirementBlockedReasons(statuses: readonly StageRequirementStatus[]): BlockedReason[] {
+  return statuses
+    .filter((s) => !s.satisfied)
+    .map((s) => ({ code: "STAGE_REQUIREMENT_NOT_MET" as const, message: s.message }));
+}
+
+// ---------------------------------------------------------------------------
+// REQUIRE_FIELD 資料填寫入口：新模型 Issue 目前關卡的欄位鍵（targetKey）是由
+// WorkflowStageRequirement 動態定義的，與舊模型 src/lib/workflow.ts 的靜態
+// FieldTemplate（依 issueType+workflowStatus 查表）完全是兩套不相干的鍵空間——
+// 既有 updateDynamicFieldsAction 內部會重新以 issue.workflowStatus 現場查詢舊模型
+// 樣板（不信任呼叫端傳入的欄位清單），對新模型的 stageKey 查不到任何對應樣板，
+// 等同無法用來寫入新模型的欄位需求，因此需要這個新的、只服務於「目前關卡已宣告的
+// REQUIRE_FIELD 需求」的最小寫入入口，不重建一整套動態欄位系統。
+//
+// 授權比照既有 addCommentAction／addEvidenceAction（僅要求已登入使用者，不額外要求
+// issue.edit 之外的能力，因為這與「執行 Transition」是不同層級的動作——填寫佐證資料
+// 本身不移動 Issue 的關卡）；額外限制：fieldKey 必須是目前關卡實際宣告的 REQUIRE_FIELD
+// targetKey 之一，不接受任意鍵值，避免此入口被當成繞過既有動態欄位系統的任意寫入後門。
+export async function submitStageFieldValue(input: { issueId: string; fieldKey: string; fieldValue: string; actorId: string }) {
+  const canEdit = await hasExecutionCapability(input.actorId, "issue.edit");
+  if (!canEdit) throw new WorkflowExecutionAccessDeniedError('僅具備 "issue.edit" 能力者可填寫關卡欄位');
+
+  const issue = await getIssueOrThrow(prisma, input.issueId);
+  if (!issue.currentWorkflowStageId) {
+    throw new WorkflowExecutionStateError("Issue 尚未啟動 Workflow，無法填寫關卡欄位");
+  }
+
+  const requirement = await prisma.workflowStageRequirement.findFirst({
+    where: { workflowStageId: issue.currentWorkflowStageId, requirementType: "REQUIRE_FIELD", targetKey: input.fieldKey, isActive: true },
+  });
+  if (!requirement) {
+    throw new WorkflowExecutionValidationError([`目前關卡沒有宣告 REQUIRE_FIELD 需求「${input.fieldKey}」，拒絕寫入`]);
+  }
+
+  const existing = await prisma.issueFieldValue.findUnique({ where: { issueId_fieldKey: { issueId: issue.id, fieldKey: input.fieldKey } } });
+  const oldValue = existing?.fieldValue ?? "";
+
+  const updated = await prisma.issueFieldValue.upsert({
+    where: { issueId_fieldKey: { issueId: issue.id, fieldKey: input.fieldKey } },
+    create: { issueId: issue.id, fieldKey: input.fieldKey, fieldLabel: input.fieldKey, fieldValue: input.fieldValue },
+    update: { fieldValue: input.fieldValue },
+  });
+
+  if (oldValue !== input.fieldValue) {
+    await writeAuditLog({
+      entityType: "Issue",
+      entityId: issue.id,
+      actionType: "FieldChange",
+      summary: `填寫關卡欄位「${input.fieldKey}」：「${oldValue || "（空白）"}」→「${input.fieldValue || "（空白）"}」`,
+      actorUserId: input.actorId,
+    });
+  }
+
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// APPROVAL 關卡：離開前必須「已核准」（FORWARD）或「已駁回」（RETURN）
+// ---------------------------------------------------------------------------
+
+export async function findLatestActiveApprovalRecord(client: Client, issueId: string, approvalType: string, relatedStageKey: string) {
+  return client.approvalRecord.findFirst({
+    where: { issueId, approvalType, relatedStageKey, recordStatus: "ACTIVE" },
+    orderBy: { revisionNo: "desc" },
+  });
+}
+
+export async function checkApprovalGateForLeaving(
+  client: Client,
+  issueId: string,
+  fromStage: { stageType: string; approvalType: string | null; stageKey: string },
+  transitionType: "FORWARD" | "RETURN",
+): Promise<BlockedReason[]> {
+  if (fromStage.stageType !== "APPROVAL" || !fromStage.approvalType) return [];
+
+  const record = await findLatestActiveApprovalRecord(client, issueId, fromStage.approvalType, fromStage.stageKey);
+
+  if (transitionType === "FORWARD") {
+    if (!record || record.decision !== "APPROVED") {
+      return [{ code: "APPROVAL_NOT_GRANTED", message: `關卡「${fromStage.stageKey}」尚未取得核准（APPROVED），不得前進` }];
+    }
+    return [];
+  }
+
+  // RETURN：只有在核准已被明確駁回（REJECTED）時才允許退回，避免呼叫端繞過核准直接退回。
+  if (!record || record.decision !== "REJECTED") {
+    return [{ code: "APPROVAL_NOT_REJECTED", message: `關卡「${fromStage.stageKey}」尚未有核准駁回（REJECTED）紀錄，不得退回` }];
+  }
+  return [];
+}
+
+// ---------------------------------------------------------------------------
+// 進入 APPROVAL 關卡：自動建立（或重新送核）對應的 PENDING ApprovalRecord
+// ---------------------------------------------------------------------------
+
+// 若目標關卡是 APPROVAL 類型，於同一 transaction 內自動建立待核准紀錄——這是「TRIAGE 可依模板
+// 提示，但實際結果必須寫入 Issue」相同精神在 APPROVAL 關卡的體現：送核這件事本身是關卡轉移的
+// 自然結果，不需要使用者另外按一次「送出核准」。若該 (issueId, approvalType, relatedStageKey)
+// 已存在 REJECTED／CANCELLED 的 ACTIVE 舊紀錄（RETURN 後重新 FORWARD 回到同一關卡），改用
+// resubmitApprovalRecord 形成 revision 鏈，不建立互不相關的第二筆獨立紀錄。
+export async function createRequiredApprovalRecordIfNeeded(
+  tx: Tx,
+  issueId: string,
+  targetStage: { stageType: string; approvalType: string | null; stageKey: string },
+  actorId: string,
+): Promise<void> {
+  if (targetStage.stageType !== "APPROVAL") return;
+  if (!targetStage.approvalType || !isApprovalType(targetStage.approvalType)) {
+    throw new WorkflowExecutionStateError(`WorkflowStage「${targetStage.stageKey}」為 APPROVAL 類型但 approvalType 不合法，資料異常`);
+  }
+
+  const previous = await tx.approvalRecord.findFirst({
+    where: { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, recordStatus: "ACTIVE" },
+    orderBy: { revisionNo: "desc" },
+  });
+
+  const created =
+    previous && (previous.decision === "REJECTED" || previous.decision === "CANCELLED")
+      ? await resubmitApprovalRecord(
+          {
+            issueId,
+            approvalType: targetStage.approvalType,
+            relatedStageKey: targetStage.stageKey,
+            requestedByUserId: actorId,
+            previousApprovalRecordId: previous.id,
+          },
+          tx,
+        )
+      : await createPendingApprovalRecord(
+          { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, requestedByUserId: actorId },
+          tx,
+        );
+
+  await writeAuditLog(
+    {
+      entityType: "Issue",
+      entityId: issueId,
+      actionType: "ApprovalRequested",
+      summary: `進入關卡「${targetStage.stageKey}」，自動建立待核准紀錄（${targetStage.approvalType}）`,
+      actorUserId: actorId,
+      reasonCode: "WORKFLOW_STAGE_ENTRY",
+    },
+    tx,
+  );
+
+  void created;
+}

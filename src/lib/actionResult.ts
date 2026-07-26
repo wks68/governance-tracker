@@ -26,6 +26,13 @@ import {
   WorkflowNotFoundError,
   WorkflowPublishValidationError,
 } from "./workflowService";
+import {
+  WorkflowExecutionValidationError,
+  WorkflowExecutionNotFoundError,
+  WorkflowExecutionStateError,
+  WorkflowExecutionAccessDeniedError,
+  WorkflowExecutionBlockedError,
+} from "./workflowExecutionService";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T; message: string }
@@ -49,6 +56,11 @@ const KNOWN_DOMAIN_ERRORS = [
   WorkflowAccessDeniedError,
   WorkflowNotFoundError,
   WorkflowPublishValidationError,
+  WorkflowExecutionValidationError,
+  WorkflowExecutionNotFoundError,
+  WorkflowExecutionStateError,
+  WorkflowExecutionAccessDeniedError,
+  WorkflowExecutionBlockedError,
 ] as const;
 
 export function toActionResult(err: unknown, fallbackMessage = "操作失敗，請稍後再試"): ActionResult<never> {
