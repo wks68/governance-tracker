@@ -134,6 +134,9 @@ model Team {
 
   // ---- M1.5-C1-A 新增 ----
   teamMembershipHistory TeamMembershipHistory[]
+
+  // ---- M2-A 新增 ----
+  workflowStages WorkflowStage[]
 }
 
 // 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分
@@ -263,6 +266,10 @@ model Issue {
   stageEnteredAt DateTime? // 進入目前關卡的時間；既有資料維持 null，新工單於建立時設定，M3 起每次合法關卡轉換更新
   changeSubType  String? // QUARTERLY_RELEASE / GENERAL_CHANGE；僅 ChangeRelease 使用，其餘工單類型必須為 null
 
+  // ---- M2-A 新增（皆為 nullable，既有 19 筆正式基準 Issue 不遷移，維持 null） ----
+  workflowVersionId      String? // 實際執行版本來源；新流程授權與 transition 判斷一律以此為準，不讀 workflowStatus
+  currentWorkflowStageId String? // 目前階段來源；workflowStatus 僅為相容顯示快取
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   closedAt  DateTime?
@@ -279,12 +286,19 @@ model Issue {
   approvalRecords ApprovalRecord[]
   stageRiskChecks StageRiskCheck[]
 
+  // ---- M2-A 新增：Workflow 版本化資料不得因 Issue 刪除而連動刪除，反之亦然，一律 Restrict ----
+  workflowVersion      WorkflowVersion?            @relation("IssueWorkflowVersion", fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currentWorkflowStage WorkflowStage?              @relation("IssueCurrentStage", fields: [currentWorkflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  workflowStageHistory IssueWorkflowStageHistory[]
+
   @@index([issueType])
   @@index([workflowStatus])
   @@index([statusLight])
   @@index([ownerUserId])
   @@index([reporterUserId])
   @@index([assignedTeamId])
+  @@index([workflowVersionId])
+  @@index([currentWorkflowStageId])
 }
 
 // 工作單類型主檔（MVP 以靜態常數搭配此表展示用途）
@@ -548,4 +562,132 @@ model StageRiskCheck {
   @@unique([issueId, stageKey, assessmentRound, checkKey])
   @@index([issueId])
   @@index([answer])
+}
+
+// ============================================================================
+// M2-A 新增：版本化 Workflow 定義基礎（WorkflowDefinition／WorkflowVersion／
+// WorkflowStage／WorkflowTransition／WorkflowStageRequirement／
+// IssueWorkflowStageHistory）。本輪僅新增獨立資料表＋Issue/Team 關聯欄位，純新增，
+// onDelete: Restrict／onUpdate: Restrict 貫穿，不使用 Cascade、不使用 SetNull。
+//
+// WorkflowDefinition 是流程身份；WorkflowVersion 是不可變版本快照（DRAFT 可編輯，
+// PUBLISHED／ARCHIVED 之後 Stage／Transition／Requirement 不可修改，由服務層
+// assertDraftVersion 守門，非本 schema 職責）。M2-A 只建立定義與版本基礎，
+// 不實作完整工單執行引擎（見 M2-B）。
+// ============================================================================
+
+model WorkflowDefinition {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  name            String
+  description     String   @default("")
+  issueType       String
+  isActive        Boolean  @default(true)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  versions WorkflowVersion[]
+
+  @@index([issueType])
+}
+
+model WorkflowVersion {
+  id                   String    @id @default(cuid())
+  workflowDefinitionId String
+  versionNo            Int
+  status               String    @default("DRAFT") // DRAFT / PUBLISHED / ARCHIVED
+  clonedFromVersionId  String?
+  publishedAt          DateTime?
+  publishedByUserId    String?
+  archivedAt           DateTime?
+  archivedByUserId     String?
+  createdByUserId      String
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  workflowDefinition WorkflowDefinition   @relation(fields: [workflowDefinitionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  stages             WorkflowStage[]
+  transitions        WorkflowTransition[]
+  issues             Issue[]              @relation("IssueWorkflowVersion")
+
+  @@unique([workflowDefinitionId, versionNo])
+  @@index([status])
+}
+
+model WorkflowStage {
+  id                     String   @id @default(cuid())
+  workflowVersionId      String
+  stageKey               String
+  label                  String
+  stageType              String // SUBMISSION/TRIAGE/CLAIM/WORK/REVIEW/APPROVAL/DEPLOYMENT/CONFIRMATION/CLOSURE
+  sortOrder              Int
+  isStart                Boolean  @default(false)
+  isEnd                  Boolean  @default(false)
+  terminalOutcome        String? // COMPLETED / CANCELLED；isEnd=false 時必須為 null，isEnd=true 時必填
+  assignedTeamId         String? // 範本預設負責 Team
+  requiredExecutionRole  String?
+  requiredMembershipRole String?
+  approvalType           String?
+  requireReason          Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  workflowVersion     WorkflowVersion             @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTeam        Team?                       @relation(fields: [assignedTeamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requirements        WorkflowStageRequirement[]
+  outgoingTransitions WorkflowTransition[]        @relation("FromStage")
+  incomingTransitions WorkflowTransition[]        @relation("ToStage")
+  issuesCurrentlyHere Issue[]                     @relation("IssueCurrentStage")
+  stageHistory        IssueWorkflowStageHistory[]
+
+  @@unique([workflowVersionId, stageKey])
+}
+
+model WorkflowTransition {
+  id                String   @id @default(cuid())
+  workflowVersionId String
+  fromStageId       String
+  toStageId         String
+  transitionType    String // FORWARD / RETURN / CANCEL
+  actionKey         String
+  label             String
+  requireReason     Boolean  @default(false) // RETURN/CANCEL 無論此值為何，執行服務層一律強制要求 reason
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workflowVersion WorkflowVersion @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromStage       WorkflowStage   @relation("FromStage", fields: [fromStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toStage         WorkflowStage   @relation("ToStage", fields: [toStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([fromStageId, actionKey])
+  @@index([toStageId])
+}
+
+model WorkflowStageRequirement {
+  id              String   @id @default(cuid())
+  workflowStageId String
+  requirementType String // REQUIRE_FIELD / REQUIRE_EVIDENCE / REQUIRE_COMMENT（白名單）
+  targetKey       String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workflowStage WorkflowStage @relation(fields: [workflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+}
+
+model IssueWorkflowStageHistory {
+  id              String    @id @default(cuid())
+  issueId         String
+  workflowStageId String
+  transitionType  String // ENTERED / FORWARDED / RETURNED / CANCELLED
+  actorUserId     String
+  reason          String?
+  enteredAt       DateTime  @default(now())
+  exitedAt        DateTime?
+
+  issue         Issue         @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  workflowStage WorkflowStage @relation(fields: [workflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([issueId])
 }
