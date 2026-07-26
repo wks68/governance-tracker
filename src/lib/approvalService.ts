@@ -279,7 +279,8 @@ async function assertRiskChecksReadyForSubmission(tx: Tx, issueId: string, stage
 // ---------------------------------------------------------------------------
 
 async function fetchTeamMembershipsLike(tx: Tx, teamId: string): Promise<TeamMembershipLike[]> {
-  const rows = await tx.teamMember.findMany({ where: { teamId } });
+  // C1-B：已停用（User.isActive=false）成員不得因仍保留 TeamMember／LEAD 紀錄而成為核准候選人。
+  const rows = await tx.teamMember.findMany({ where: { teamId, user: { isActive: true } } });
   const result: TeamMembershipLike[] = [];
   for (const m of rows) {
     if (!isTeamMembershipRole(m.membershipRole)) continue; // deny-by-default：非法值域資料視為無有效成員身分
@@ -294,7 +295,8 @@ async function fetchTeamMembershipsLike(tx: Tx, teamId: string): Promise<TeamMem
 }
 
 async function fetchSupervisorAssignmentsLike(tx: Tx, userId: string): Promise<SupervisorAssignmentLike[]> {
-  const rows = await tx.userSupervisorAssignment.findMany({ where: { userId } });
+  // C1-B：已停用主管不得繼續成為合法核准候選人來源。
+  const rows = await tx.userSupervisorAssignment.findMany({ where: { userId, supervisor: { isActive: true } } });
   return rows.map((a) => ({
     id: a.id,
     userId: a.userId,
@@ -307,7 +309,10 @@ async function fetchSupervisorAssignmentsLike(tx: Tx, userId: string): Promise<S
 }
 
 async function fetchDelegationsLike(tx: Tx, approvalType: string): Promise<ApprovalDelegationLike[]> {
-  const rows = await tx.approvalDelegation.findMany({ where: { approvalType } });
+  // C1-B：委任來源（delegator）或代理人（delegate）任一方已停用時，該筆代理一律不得生效。
+  const rows = await tx.approvalDelegation.findMany({
+    where: { approvalType, delegator: { isActive: true }, delegate: { isActive: true } },
+  });
   return rows.map((d) => ({
     id: d.id,
     delegatorUserId: d.delegatorUserId,
@@ -717,4 +722,26 @@ export async function resubmitApprovalRecord(input: ResubmitApprovalInput) {
 
 export function isKnownApprovalType(value: string): value is ApprovalType {
   return (APPROVAL_TYPES as readonly string[]).includes(value);
+}
+
+// ---------------------------------------------------------------------------
+// C1-B4 新增：供 People／Team／Deactivation 等其他領域判斷「排除某人後核准候選人是否
+// 歸零」使用。其他領域一律呼叫本函式取得目前合法候選人名單，不得另行複製
+// fetchTeamMembershipsLike／fetchSupervisorAssignmentsLike／fetchDelegationsLike 等
+// 私有查詢邏輯——全系統只有這一套 eligibility 判斷路徑。
+// ---------------------------------------------------------------------------
+
+export async function getEligibleApproverUserIdsInTx(
+  tx: Tx,
+  record: { approvalType: string; requestedByUserId: string; approverTeamId: string | null },
+  now: Date = new Date(),
+): Promise<string[]> {
+  if (!isApprovalType(record.approvalType)) return [];
+  const eligible = await fetchEligibleApproversInTx(tx, {
+    approvalType: record.approvalType,
+    requestedByUserId: record.requestedByUserId,
+    teamId: record.approverTeamId,
+    now,
+  });
+  return eligible.map((e) => e.userId);
 }

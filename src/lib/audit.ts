@@ -29,10 +29,21 @@ export type ActionType =
   | "TeamLeadAssigned"
   | "TeamLeadRemoved"
   | "ApprovalDelegationCreated"
-  | "ApprovalDelegationRevoked";
+  | "ApprovalDelegationRevoked"
+  // ---- C1-B3／C1-B4 新增：People 領域生命週期事件 ----
+  | "UserCreated"
+  | "UserUpdated"
+  | "UserActivated"
+  | "UserDeactivated"
+  | "UserRoleAssigned"
+  | "UserRoleRemoved"
+  | "TeamMemberAdded"
+  | "TeamMemberRemoved"
+  | "UserDeactivationImpactChecked";
 
-// M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation
-export type EntityType = "Issue" | "User" | "ApprovalRecord" | "UserSupervisorAssignment" | "TeamMember" | "ApprovalDelegation";
+// M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation；
+// C1-B3 新增：UserRole
+export type EntityType = "Issue" | "User" | "ApprovalRecord" | "UserSupervisorAssignment" | "TeamMember" | "ApprovalDelegation" | "UserRole";
 
 export async function writeAuditLog(
   params: {

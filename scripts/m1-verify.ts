@@ -71,28 +71,46 @@ async function main() {
   );
 
   // hasCapability / requireCapabilitySync（deny-by-default + 多角色聯集）
-  const pmUser = { role: "PM" };
-  check("hasCapability：PM 單獨無 issue.approve", !hasCapability(pmUser, "issue.approve"));
+  //
+  // C1-B2：active UserRole 是唯一系統角色授權來源，全域只有一套角色解析語意。這兩個純邏輯
+  // 函式的介面因此改為直接接受呼叫端明確持有的「角色字串陣列」，不再接受 User 物件、
+  // 不再有 User.role + extraRoles 這種舊介面——僅有 User.role="Admin" 但沒有明確提供
+  // 對應角色字串時，一律視為不具有該角色的任何能力（下方 DB 版本 getUserHasCapability 對
+  // 「User.role=Admin 但沒有 active Admin UserRole」的等價情境有更直接的 DB 層測試，
+  // 見 scripts/m1_5_c1_b-verify.ts [8a]）。
   check(
-    "hasCapability：PM + extraRoles=[QA] 聯集後有 issue.approve",
-    hasCapability(pmUser, "issue.approve", ["QA"]),
+    "hasCapability：僅傳入空角色集合（相當於「User.role=Admin 但沒有明確 active role 集合」）不具有 admin.full",
+    !hasCapability([], "admin.full"),
+  );
+  check("hasCapability：明確角色集合 [PM] 單獨無 issue.approve", !hasCapability(["PM"], "issue.approve"));
+  check(
+    "hasCapability：明確角色集合 [PM, QA] 聯集後有 issue.approve（來自 QA）",
+    hasCapability(["PM", "QA"], "issue.approve"),
+  );
+  check(
+    "hasCapability：明確角色集合 [PM, QA] 不包含 Admin，不具有 admin.full",
+    !hasCapability(["PM", "QA"], "admin.full"),
+  );
+  check(
+    "hasCapability：明確角色集合 [PM, Admin] 包含 Admin，具有 admin.full（多角色聯集）",
+    hasCapability(["PM", "Admin"], "admin.full"),
   );
 
   let threw = false;
   try {
-    requireCapabilitySync(pmUser, "admin.full");
+    requireCapabilitySync(["PM"], "admin.full");
   } catch (e) {
     threw = e instanceof PermissionDeniedError;
   }
-  check("requireCapabilitySync：無能力時拋出 PermissionDeniedError（deny-by-default）", threw);
+  check("requireCapabilitySync：角色集合不含 Admin 時拋出 PermissionDeniedError（deny-by-default）", threw);
 
   let notThrew = true;
   try {
-    requireCapabilitySync({ role: "Admin" }, "admin.full");
+    requireCapabilitySync(["Admin"], "admin.full");
   } catch {
     notThrew = false;
   }
-  check("requireCapabilitySync：有能力時不拋出", notThrew);
+  check("requireCapabilitySync：角色集合明確包含 Admin 時不拋出", notThrew);
 
   console.log("\n=== M1-A 驗證：Team MEMBER／LEAD 判斷（純邏輯） ===");
   const memberships: TeamMembershipLike[] = [

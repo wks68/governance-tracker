@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { getUserHasCapability } from "@/lib/permissions";
 import { roleLabel } from "@/lib/constants";
 import LogoutButton from "./LogoutButton";
 
@@ -26,7 +27,10 @@ export default async function Nav() {
     );
   }
 
-  const navItems = user.role === "Admin" ? [...NAV_ITEMS, { href: "/admin", label: "管理中心" }] : NAV_ITEMS;
+  // C1-B2：管理入口改用 admin.full Capability（與 requireAdmin 同一授權來源），
+  // 不再用 user.role === "Admin" 判斷；primary role 顯示（下方 roleLabel）仍讀 User.role。
+  const isAdmin = await getUserHasCapability(user, "admin.full");
+  const navItems = isAdmin ? [...NAV_ITEMS, { href: "/admin", label: "管理中心" }] : NAV_ITEMS;
 
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">

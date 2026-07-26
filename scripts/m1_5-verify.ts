@@ -10,8 +10,14 @@
 //   不觸碰既有 User／Issue 業務資料），測試結束後於 finally 區塊清除。
 //
 // 執行方式：
-//   node_modules/.bin/tsx scripts/m1_5-verify.ts                                    （對 .env 指定的資料庫，DB 區塊通常 SKIP）
-//   DATABASE_URL="file:./dev-m1-5-test.db" node_modules/.bin/tsx scripts/m1_5-verify.ts （對測試資料庫，Migration 套用後 DB 區塊應完整執行）
+//   DATABASE_URL="file:./<測試 scratch DB>" node_modules/.bin/tsx scripts/m1_5-verify.ts
+//
+// Fail-closed（C1-B 新增）：本檔第一行 import 為 assertSafeTestDatabase，若呼叫端未顯式
+// 設定 DATABASE_URL，或其解析後（含 symlink／device+inode 比對）指向正式 prisma/dev.db，
+// 一律立即 process.exit(1)，不建立 Prisma Client、不寫入任何資料。不再支援「不帶
+// DATABASE_URL 執行、DB 區塊自動 SKIP」的舊用法。
+
+import "./lib/assertSafeTestDatabase";
 
 import {
   APPROVAL_TYPES,
@@ -665,8 +671,14 @@ interface Fixtures {
   approvalRecordIdsNewestFirst: string[];
 }
 
+// C1-B2：Active UserRole 是唯一授權來源，測試 fixture 建立 User 時同步建立對應的
+// active UserRole（role 與 User.role 相同），確保既有以 role 字串驅動的測試情境在
+// 授權來源切換後仍能通過。inactive User（本檔目前無此情境）仍可保留 active UserRole，
+// 用來驗證「User 停用後即使角色仍 active，也不得通過 getCurrentUser／實際授權入口」。
 async function createUser(name: string, role: string): Promise<{ id: string }> {
-  return prisma.user.create({ data: { name, email: `${RUN_TAG}-${name}@example.invalid`, role } });
+  const user = await prisma.user.create({ data: { name, email: `${RUN_TAG}-${name}@example.invalid`, role } });
+  await prisma.userRole.create({ data: { userId: user.id, role, isActive: true } });
+  return user;
 }
 
 async function runDbDependentTests(fx: Fixtures) {
@@ -1436,6 +1448,16 @@ async function runDbDependentTests(fx: Fixtures) {
 }
 
 async function cleanupFixtures(fx: Fixtures) {
+  try {
+    await prisma.userRoleHistory.deleteMany({ where: { userId: { in: fx.userIds } } });
+  } catch (e) {
+    console.warn("cleanup UserRoleHistory 失敗：", e);
+  }
+  try {
+    await prisma.userRole.deleteMany({ where: { userId: { in: fx.userIds } } });
+  } catch (e) {
+    console.warn("cleanup UserRole 失敗：", e);
+  }
   try {
     await prisma.stageRiskCheck.deleteMany({ where: { issueId: { in: fx.issueIds } } });
   } catch (e) {

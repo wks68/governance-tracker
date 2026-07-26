@@ -47,6 +47,10 @@ export function roleLabel(key: string): string {
   return ROLES.find((r) => r.key === key)?.label ?? key;
 }
 
+export function isRoleKey(value: string): value is RoleKey {
+  return ROLES.some((r) => r.key === value);
+}
+
 export type StatusLight = "Red" | "Yellow" | "Blue" | "Green" | "Gray";
 
 export const STATUS_LIGHT_META: Record<StatusLight, { label: string; desc: string; badgeClass: string; dotClass: string }> = {

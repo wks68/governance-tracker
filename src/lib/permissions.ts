@@ -32,7 +32,16 @@ export type Capability =
   | "governance.manageSupervisors"
   | "governance.manageTeamLeads"
   | "governance.manageAnyDelegation"
-  | "governance.viewAllGovernance";
+  | "governance.viewAllGovernance"
+  // ---- C1-B2 新增：人員管理細粒度能力（供 C1-B3 peopleService 使用；本輪僅定義與角色映射） ----
+  | "user.view"
+  | "user.create"
+  | "user.update"
+  | "user.activate"
+  | "user.deactivate"
+  | "user.assignRole"
+  | "user.removeRole"
+  | "team.view";
 
 const VALID_ROLE_KEYS: ReadonlySet<string> = new Set(ROLES.map((r) => r.key));
 
@@ -42,7 +51,8 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
   RD: ["issue.view", "issue.edit"],
   QA: ["issue.view", "issue.edit", "issue.approve"],
   OP: ["issue.view", "issue.edit"],
-  資安推動小組: ["issue.view", "issue.approve", "governance.viewAllGovernance"],
+  // C1-B2：新增 user.view／team.view（唯讀查看），不得取得新增、修改、角色、啟停或 Team 成員管理能力。
+  資安推動小組: ["issue.view", "issue.approve", "governance.viewAllGovernance", "user.view", "team.view"],
   DMS主管: ["issue.view", "issue.edit", "issue.approve", "issue.assignTeam"],
   Admin: [
     "issue.view",
@@ -56,6 +66,15 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
     "governance.manageTeamLeads",
     "governance.manageAnyDelegation",
     "governance.viewAllGovernance",
+    // ---- C1-B2 新增：人員／Team 管理細粒度能力，Admin 取得全部 ----
+    "user.view",
+    "user.create",
+    "user.update",
+    "user.activate",
+    "user.deactivate",
+    "user.assignRole",
+    "user.removeRole",
+    "team.view",
   ],
 };
 
@@ -78,21 +97,19 @@ export function unionCapabilities(roles: readonly string[]): ReadonlySet<Capabil
   return result;
 }
 
-// 使用者目前所有有效角色（legacy User.role 與 UserRole 多角色聯集，並去重）
-export function effectiveRoles(user: Pick<User, "role">, extraRoles: readonly string[] = []): string[] {
-  const roles = new Set<string>();
-  if (user.role) roles.add(user.role);
-  for (const r of extraRoles) roles.add(r);
-  return [...roles];
+// 純邏輯角色去重工具。
+//
+// C1-B2：active UserRole 是唯一系統角色授權來源，全域只有這一套角色解析語意——不論
+// 同步或 DB-backed，一律只依呼叫端明確提供的 active UserRole 角色集合，不得從 User.role
+// 推導能力。本函式與 hasCapability／requireCapabilitySync 因此不接受 User 物件、
+// 不接受「User.role + extraRoles」的舊介面，只接受呼叫端已經明確持有的角色字串陣列
+// （DB 版本見下方 getUserEffectiveRoles，內部同樣呼叫本函式，確保語意單一）。
+export function effectiveRoles(roleKeys: readonly string[]): string[] {
+  return [...new Set(roleKeys)];
 }
 
-// 純邏輯版本：已知使用者角色（legacy + 多角色）時，是否擁有指定能力
-export function hasCapability(
-  user: Pick<User, "role">,
-  capability: Capability,
-  extraRoles: readonly string[] = [],
-): boolean {
-  const caps = unionCapabilities(effectiveRoles(user, extraRoles));
+export function hasCapability(roleKeys: readonly string[], capability: Capability): boolean {
+  const caps = unionCapabilities(effectiveRoles(roleKeys));
   return caps.has(capability);
 }
 
@@ -103,13 +120,9 @@ export class PermissionDeniedError extends Error {
   }
 }
 
-// 純邏輯版本：deny-by-default，未擁有能力時拋出 PermissionDeniedError
-export function requireCapabilitySync(
-  user: Pick<User, "role">,
-  capability: Capability,
-  extraRoles: readonly string[] = [],
-): void {
-  if (!hasCapability(user, capability, extraRoles)) {
+// deny-by-default，未擁有能力時拋出 PermissionDeniedError
+export function requireCapabilitySync(roleKeys: readonly string[], capability: Capability): void {
+  if (!hasCapability(roleKeys, capability)) {
     throw new PermissionDeniedError(capability);
   }
 }
@@ -141,21 +154,42 @@ export function isTeamLead(memberships: readonly TeamMembershipLike[], teamId: s
 // DB 查詢便利函式（需 UserRole / TeamMember 資料表已存在，等 M1-B 套用 Migration 後才可執行）
 // ---------------------------------------------------------------------------
 
-// 查詢使用者目前所有有效角色（legacy User.role + UserRole 多角色資料表）
-export async function getUserEffectiveRoles(user: Pick<User, "id" | "role">): Promise<string[]> {
-  const userRoles = await prisma.userRole.findMany({ where: { userId: user.id } });
-  return effectiveRoles(user, userRoles.map((r) => r.role));
+// C1-B2：查詢使用者目前所有有效角色，只讀 active UserRole，完全不回退到 User.role
+// （User.role 自本次起只作 primary role 顯示快取／歷史快照，不再是任何真實授權入口的
+// 角色來源）。以 `user: { isActive: true }` relation filter 現場查 DB，deny-by-default：
+// 不信任呼叫端傳入物件的 isActive 快照（可能過期或被偽造）——即使呼叫端跳過
+// getCurrentUser／requireCurrentUser 直接呼叫本函式，inactive User 一律解析出空角色集合，
+// fail closed。回傳前呼叫 effectiveRoles 去重，確保與純邏輯版本同一套語意實作。
+// 可選 client：寫入服務在自己的 transaction 內解析權限時，應傳入該 transaction 的 tx，
+// 避免另開連線在 SQLite 上跟持有寫鎖的 transaction 互相干擾。
+export async function getUserEffectiveRoles(
+  user: Pick<User, "id">,
+  client: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<string[]> {
+  const userRoles = await client.userRole.findMany({
+    where: { userId: user.id, isActive: true, user: { isActive: true } },
+  });
+  return effectiveRoles(userRoles.map((r) => r.role));
 }
 
-// 查詢使用者目前是否擁有指定能力（DB 版本）
-export async function getUserHasCapability(user: Pick<User, "id" | "role">, capability: Capability): Promise<boolean> {
-  const roles = await getUserEffectiveRoles(user);
-  return unionCapabilities(roles).has(capability);
+// 查詢使用者目前是否擁有指定能力（DB 版本，only active UserRole；inactive User 一律 false）
+export async function getUserHasCapability(
+  user: Pick<User, "id">,
+  capability: Capability,
+  client: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<boolean> {
+  const roles = await getUserEffectiveRoles(user, client);
+  return hasCapability(roles, capability);
 }
 
-// Server-side 強制檢查（DB 版本）：deny-by-default，未擁有能力時拋出 PermissionDeniedError
-export async function requireCapability(user: Pick<User, "id" | "role">, capability: Capability): Promise<void> {
-  const allowed = await getUserHasCapability(user, capability);
+// Server-side 強制檢查（DB 版本）：deny-by-default，未擁有能力時拋出 PermissionDeniedError；
+// inactive User 一律視為無任何能力，不論呼叫端是否已先經過 getCurrentUser。
+export async function requireCapability(
+  user: Pick<User, "id">,
+  capability: Capability,
+  client: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<void> {
+  const allowed = await getUserHasCapability(user, capability, client);
   if (!allowed) {
     throw new PermissionDeniedError(capability);
   }
@@ -645,8 +679,8 @@ export async function resolveGovernanceAccessContext(
       memberTeamIds: [],
     };
   }
-  const userRoles = await client.userRole.findMany({ where: { userId: user.id } });
-  const roles = effectiveRoles(user, userRoles.map((r) => r.role));
+  // C1-B2：只讀 active UserRole 作為角色來源，不再把 User.role 併入角色集合。
+  const roles = await getUserEffectiveRoles(user, client);
   const caps = unionCapabilities(roles);
   const memberships = await client.teamMember.findMany({ where: { userId: actorId, isActive: true } });
   return {

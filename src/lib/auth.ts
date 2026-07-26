@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "./prisma";
+import { getUserHasCapability } from "./permissions";
 import type { RoleKey } from "./constants";
 import type { User } from "@prisma/client";
 
@@ -24,9 +25,12 @@ export async function requireCurrentUser(): Promise<User> {
   return user;
 }
 
+// C1-B2：Admin 判斷改用 admin.full Capability（只讀 active UserRole），不得再用
+// User.role === "Admin" 判斷——User.role 自本次起只作 primary role 顯示快取。
+// getCurrentUser 內的 User.isActive 檢查（見上方 requireCurrentUser）維持不變。
 export async function requireAdmin(): Promise<User> {
   const user = await requireCurrentUser();
-  if (user.role !== "Admin") redirect("/dashboard");
+  if (!(await getUserHasCapability(user, "admin.full"))) redirect("/dashboard");
   return user;
 }
 
