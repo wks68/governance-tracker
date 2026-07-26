@@ -42,6 +42,9 @@ export interface CreatePersonInput {
   name: string;
   email: string;
   department?: string;
+  // C1-C 新增：loginIdentifier 為 C1-A 已建立的既有欄位（唯一，可選），本階段只負責
+  // 讓使用者可自行填寫／留空，不回填、不猜測、不修改登入流程。
+  loginIdentifier?: string | null;
   initialRole: RoleKey; // 必填：createPerson 一律同時建立對應的 active UserRole
   actorId: string;
   reasonCode: string;
@@ -51,6 +54,7 @@ export interface UpdatePersonProfileInput {
   userId: string;
   name?: string;
   department?: string;
+  loginIdentifier?: string | null;
   actorId: string;
   reasonCode: string;
 }

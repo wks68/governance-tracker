@@ -33,10 +33,15 @@ async function createPersonTx(tx: Tx, input: CreatePersonInput) {
   // 一律建立為一般（非 Break-glass）使用者。
   await requirePeopleCapability(input.actorId, "user.create", tx);
 
-  const existing = await tx.user.findUnique({ where: { email: input.email } });
-  if (existing) {
-    throw new PeopleValidationError([`email 已被使用：${input.email}`]);
+  const normalizedLoginIdentifier = input.loginIdentifier?.trim() ? input.loginIdentifier.trim() : null;
+  const conflicts: string[] = [];
+  const existingEmail = await tx.user.findUnique({ where: { email: input.email } });
+  if (existingEmail) conflicts.push(`email 已被使用：${input.email}`);
+  if (normalizedLoginIdentifier) {
+    const existingLogin = await tx.user.findUnique({ where: { loginIdentifier: normalizedLoginIdentifier } });
+    if (existingLogin) conflicts.push(`loginIdentifier 已被使用：${normalizedLoginIdentifier}`);
   }
+  if (conflicts.length > 0) throw new PeopleValidationError(conflicts);
 
   const now = new Date();
   const user = await tx.user.create({
@@ -44,6 +49,7 @@ async function createPersonTx(tx: Tx, input: CreatePersonInput) {
       name: input.name.trim(),
       email: input.email,
       department: input.department ?? "",
+      loginIdentifier: normalizedLoginIdentifier,
       role: input.initialRole,
       isActive: true, // 不允許啟用 User 沒有 active UserRole：下方同一 transaction 立即建立 active UserRole
     },
@@ -101,7 +107,7 @@ export async function createPerson(input: CreatePersonInput) {
     return await prisma.$transaction((tx) => createPersonTx(tx, input));
   } catch (err) {
     if (isUniqueConstraintError(err)) {
-      throw new PeopleValidationError([`email 已被使用：${input.email}`]);
+      throw new PeopleValidationError([`email 或 loginIdentifier 已被使用（email：${input.email}）`]);
     }
     throw err;
   }
@@ -124,14 +130,23 @@ async function updatePersonProfileTx(tx: Tx, input: UpdatePersonProfileInput) {
 
   const nextName = input.name !== undefined ? input.name.trim() : target.name;
   const nextDepartment = input.department !== undefined ? input.department : target.department;
+  const nextLoginIdentifier =
+    input.loginIdentifier !== undefined ? (input.loginIdentifier?.trim() ? input.loginIdentifier.trim() : null) : target.loginIdentifier;
 
-  if (nextName === target.name && nextDepartment === target.department) {
+  if (nextName === target.name && nextDepartment === target.department && nextLoginIdentifier === target.loginIdentifier) {
     return target; // no-op：不寫 AuditLog
+  }
+
+  if (nextLoginIdentifier && nextLoginIdentifier !== target.loginIdentifier) {
+    const existingLogin = await tx.user.findUnique({ where: { loginIdentifier: nextLoginIdentifier } });
+    if (existingLogin && existingLogin.id !== target.id) {
+      throw new PeopleValidationError([`loginIdentifier 已被使用：${nextLoginIdentifier}`]);
+    }
   }
 
   const updated = await tx.user.update({
     where: { id: target.id },
-    data: { name: nextName, department: nextDepartment },
+    data: { name: nextName, department: nextDepartment, loginIdentifier: nextLoginIdentifier },
   });
 
   await writeAuditLog(

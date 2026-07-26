@@ -1,13 +1,4 @@
-const ACTION_LABELS: Record<string, string> = {
-  IssueCreated: "建立工單",
-  StatusChange: "狀態流轉",
-  FieldChange: "欄位異動",
-  CommentAdded: "新增留言",
-  EvidenceAdded: "新增佐證",
-  AiSuggestion: "AI 建議產生",
-  RoleChange: "角色變更",
-  AccountStatusChange: "帳號狀態變更",
-};
+import { actionTypeLabel } from "@/lib/auditLabels";
 
 interface AuditItem {
   id: string;
@@ -26,9 +17,7 @@ export default function AuditLogList({ logs }: { logs: AuditItem[] }) {
         <li key={log.id} className="relative">
           <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-primary-400" />
           <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-600">
-              {ACTION_LABELS[log.actionType] ?? log.actionType}
-            </span>
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-600">{actionTypeLabel(log.actionType)}</span>
             <span>
               {log.actorName}（{log.actorRole}）
             </span>
