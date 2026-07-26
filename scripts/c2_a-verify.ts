@@ -453,12 +453,72 @@ function listModuleFiles(): string[] {
   return results;
 }
 
-function gitDiffEmpty(baseTag: string, relPath: string): boolean {
+function gitDiffEmpty(baseRef: string, relPath: string): boolean {
   try {
-    const out = execFileSync("git", ["diff", baseTag, "--", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+    const out = execFileSync("git", ["diff", baseRef, "--", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
     return out.trim().length === 0;
   } catch (err) {
     throw new Error(`git diff 檢查失敗（${relPath}）：${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// 整合場景（M2-A + C2-A）下，C2-A 自己的封板基準（m1-5-c1-c-complete）已不適用於
+// 「整個 repo 完全零差異」這個假設——M2-A 合法地修改了 schema.prisma／permissions.ts／
+// migrations。C2_A_BASE_REF 讓呼叫端明確指定「這次比對基準應該是什麼」：
+// - 未設定時預設仍為 m1-5-c1-c-complete，維持 C2-A 獨立封板時的原始語意，不影響
+//   獨立 C2-A branch 的既有行為。
+// - 設定時（例如整合腳本傳入 C2_A_BASE_REF=m2-a-complete），必須能解析為有效 commit，
+//   且必須是目前 HEAD 的祖先；任一條件不成立一律 fail closed（直接 process.exit(1)），
+//   不得靜默退回其他 tag 或跳過檢查。
+// 解析結果一律使用完整 commit hash（而非原始 ref 字串），避免同名 tag 未來被移動後
+// 這裡的比對基準跟著漂移。
+function resolveBaseRef(): { ref: string; isExplicitOverride: boolean } {
+  const envRef = process.env.C2_A_BASE_REF;
+  const isExplicitOverride = !!(envRef && envRef.trim());
+  const requestedRef = isExplicitOverride ? envRef.trim() : "m1-5-c1-c-complete";
+
+  let resolvedCommit: string;
+  try {
+    resolvedCommit = execFileSync("git", ["rev-parse", "--verify", `${requestedRef}^{commit}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    console.error(`拒絕執行：C2_A_BASE_REF="${requestedRef}" 無法解析為有效 commit。`);
+    process.exit(1);
+  }
+
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", resolvedCommit, "HEAD"], { cwd: REPO_ROOT });
+  } catch {
+    console.error(`拒絕執行：C2_A_BASE_REF="${requestedRef}"（解析為 ${resolvedCommit}）不是目前 HEAD 的祖先，無法作為比對基準。`);
+    process.exit(1);
+  }
+
+  return { ref: resolvedCommit, isExplicitOverride };
+}
+
+// C2-A 自己的範圍：src/lib/auth-providers/** 與 scripts/c2_a-verify.ts。
+// 額外允許 scripts/m1_5_c1_a-verify.ts：這是另一條獨立授權、獨立以 20 次連續穩定驗證過
+// 的修復（fix/c1-a-verify-temp-table-connection，修正 TEMP TABLE 連線競態），依整合計畫
+// 本就會與 C2-A cherry-pick 一起存在於同一個整合 branch，不是 C2-A cherry-pick 自己
+// 帶入的範圍外變動——B10 檢查的目的是攔截「C2-A cherry-pick 造成的」範圍外差異，不是
+// 攔截整合 branch 上其他已授權、已驗證的獨立修復。
+const ALLOWED_INTEGRATION_PATH_PATTERNS = [
+  /^src\/lib\/auth-providers\//,
+  /^scripts\/c2_a-verify\.ts$/,
+  /^scripts\/m1_5_c1_a-verify\.ts$/,
+];
+
+function listChangedFiles(baseRef: string): string[] {
+  try {
+    const out = execFileSync("git", ["diff", "--name-only", baseRef], { cwd: REPO_ROOT, encoding: "utf8" });
+    return out
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch (err) {
+    throw new Error(`git diff --name-only 檢查失敗：${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -512,7 +572,7 @@ function runBoundaryChecks() {
     secretRefBlockMatch !== null && !/\b(value|secret|password)\s*[?:]/i.test(secretRefBlockMatch[0]),
   );
 
-  const BASE_TAG = "m1-5-c1-c-complete";
+  const { ref: BASE_REF, isExplicitOverride } = resolveBaseRef();
   const protectedFiles = [
     "prisma/schema.prisma",
     "prisma/seed.ts",
@@ -523,15 +583,32 @@ function runBoundaryChecks() {
     "package-lock.json",
   ];
   for (const relPath of protectedFiles) {
-    check(`[B8] ${relPath} 相對於起始基準（${BASE_TAG}）完全未變動`, gitDiffEmpty(BASE_TAG, relPath));
+    check(`[B8] ${relPath} 相對於指定比對基準（${BASE_REF}）完全未變動`, gitDiffEmpty(BASE_REF, relPath));
   }
   check(
-    "[B8b] prisma/migrations 目錄相對於起始基準完全未變動（沒有新增 Migration）",
-    gitDiffEmpty(BASE_TAG, "prisma/migrations"),
+    "[B8b] prisma/migrations 目錄相對於指定比對基準完全未變動（C2-A 沒有新增 Migration）",
+    gitDiffEmpty(BASE_REF, "prisma/migrations"),
   );
 
-  const packageJsonDiffEmpty = gitDiffEmpty(BASE_TAG, "package.json");
-  check("[B9] package.json 未新增任何套件（與起始基準逐字相同）", packageJsonDiffEmpty);
+  const packageJsonDiffEmpty = gitDiffEmpty(BASE_REF, "package.json");
+  check("[B9] package.json 未新增任何套件（與指定比對基準逐字相同）", packageJsonDiffEmpty);
+
+  // 整合場景下的白名單檢查：只在明確以 C2_A_BASE_REF 覆寫比對基準時才啟用（例如整合腳本傳入
+  // C2_A_BASE_REF=m2-a-complete），不影響獨立 C2-A branch 用預設基準時的既有斷言總數。
+  // 相對於指定比對基準的「所有」變動檔案，都必須落在 C2-A 自己的範圍
+  // （src/lib/auth-providers/** 或 scripts/c2_a-verify.ts）內；整合場景下若出現任何
+  // C2-A cherry-pick 之外造成的額外檔案差異（不論來源），這裡會立即攔截。
+  if (isExplicitOverride) {
+    const changedFiles = listChangedFiles(BASE_REF);
+    const outOfScope = changedFiles.filter((f) => !ALLOWED_INTEGRATION_PATH_PATTERNS.some((p) => p.test(f)));
+    check(
+      `[B10] 相對於指定整合基準（${BASE_REF}）的所有變動檔案皆限於 src/lib/auth-providers/** 或 scripts/c2_a-verify.ts`,
+      outOfScope.length === 0,
+    );
+    if (outOfScope.length > 0) {
+      console.log(`    超出範圍的檔案：${outOfScope.join(", ")}`);
+    }
+  }
 }
 
 // ===========================================================================
