@@ -39,11 +39,45 @@ export type ActionType =
   | "UserRoleRemoved"
   | "TeamMemberAdded"
   | "TeamMemberRemoved"
-  | "UserDeactivationImpactChecked";
+  | "UserDeactivationImpactChecked"
+  // ---- M2-A 新增：Workflow 定義／版本管理事件（執行引擎事件如 IssueWorkflowStarted／
+  // IssueWorkflowAdvanced／IssueWorkflowReturned／IssueWorkflowCancelled／
+  // IssueWorkflowStageCompleted 屬 M2-B 範圍，本輪不新增） ----
+  | "WorkflowDefinitionCreated"
+  | "WorkflowDefinitionUpdated"
+  | "WorkflowDefinitionActivated"
+  | "WorkflowDefinitionDeactivated"
+  | "WorkflowVersionCreated"
+  | "WorkflowVersionCloned"
+  | "WorkflowStageCreated"
+  | "WorkflowStageUpdated"
+  | "WorkflowStageRemoved"
+  | "WorkflowTransitionCreated"
+  | "WorkflowTransitionUpdated"
+  | "WorkflowTransitionRemoved"
+  | "WorkflowRequirementCreated"
+  | "WorkflowRequirementUpdated"
+  | "WorkflowRequirementRemoved"
+  | "WorkflowVersionValidated"
+  | "WorkflowVersionPublished"
+  | "WorkflowVersionArchived";
 
 // M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation；
-// C1-B3 新增：UserRole
-export type EntityType = "Issue" | "User" | "ApprovalRecord" | "UserSupervisorAssignment" | "TeamMember" | "ApprovalDelegation" | "UserRole";
+// C1-B3 新增：UserRole；M2-A 新增：WorkflowDefinition／WorkflowVersion／WorkflowStage／
+// WorkflowTransition／WorkflowStageRequirement
+export type EntityType =
+  | "Issue"
+  | "User"
+  | "ApprovalRecord"
+  | "UserSupervisorAssignment"
+  | "TeamMember"
+  | "ApprovalDelegation"
+  | "UserRole"
+  | "WorkflowDefinition"
+  | "WorkflowVersion"
+  | "WorkflowStage"
+  | "WorkflowTransition"
+  | "WorkflowStageRequirement";
 
 export async function writeAuditLog(
   params: {

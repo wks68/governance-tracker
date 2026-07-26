@@ -41,7 +41,14 @@ export type Capability =
   | "user.deactivate"
   | "user.assignRole"
   | "user.removeRole"
-  | "team.view";
+  | "team.view"
+  // ---- M2-A 新增：Workflow 定義／版本管理能力（只管「誰能編輯流程定義」，
+  // 跟「誰能在某張 Issue 上執行某個 transition」（M2-B validateActorForCurrentStage
+  // 現場判斷）是兩層，互不影響） ----
+  | "workflow.view"
+  | "workflow.manageDraft"
+  | "workflow.publish"
+  | "workflow.archive";
 
 const VALID_ROLE_KEYS: ReadonlySet<string> = new Set(ROLES.map((r) => r.key));
 
@@ -52,7 +59,8 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
   QA: ["issue.view", "issue.edit", "issue.approve"],
   OP: ["issue.view", "issue.edit"],
   // C1-B2：新增 user.view／team.view（唯讀查看），不得取得新增、修改、角色、啟停或 Team 成員管理能力。
-  資安推動小組: ["issue.view", "issue.approve", "governance.viewAllGovernance", "user.view", "team.view"],
+  // M2-A：資安推動小組僅 workflow.view（唯讀），不得管理草稿／發布／封存。
+  資安推動小組: ["issue.view", "issue.approve", "governance.viewAllGovernance", "user.view", "team.view", "workflow.view"],
   DMS主管: ["issue.view", "issue.edit", "issue.approve", "issue.assignTeam"],
   Admin: [
     "issue.view",
@@ -75,6 +83,11 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
     "user.assignRole",
     "user.removeRole",
     "team.view",
+    // ---- M2-A 新增：Workflow 定義／版本管理，Admin 全開 ----
+    "workflow.view",
+    "workflow.manageDraft",
+    "workflow.publish",
+    "workflow.archive",
   ],
 };
 
