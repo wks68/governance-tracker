@@ -42,6 +42,23 @@ async function assignTeamLeadTx(tx: Tx, input: AssignTeamLeadInput) {
 
   const updated = await tx.teamMember.update({ where: { id: membership.id }, data: { membershipRole: "LEAD" } });
 
+  // C1-B4 新增：與既有 AuditLog 同一 transaction 內補寫 TeamMembershipHistory（不改變既有
+  // AuditLog 行為、不改變授權、不改變回傳值）。
+  await tx.teamMembershipHistory.create({
+    data: {
+      teamMemberId: updated.id,
+      teamId: input.teamId,
+      userId: input.userId,
+      eventType: "ROLE_CHANGED",
+      fromMembershipRole: "MEMBER",
+      toMembershipRole: "LEAD",
+      actorUserId: input.actorId,
+      eventSource: "ADMIN_ACTION",
+      reasonCode: input.reasonCode,
+      effectiveAt: new Date(),
+    },
+  });
+
   await writeAuditLog(
     {
       entityType: "TeamMember",
@@ -89,6 +106,22 @@ async function removeTeamLeadTx(tx: Tx, input: RemoveTeamLeadInput) {
   }
 
   const updated = await tx.teamMember.update({ where: { id: membership.id }, data: { membershipRole: "MEMBER" } });
+
+  // C1-B4 新增：與既有 AuditLog 同一 transaction 內補寫 TeamMembershipHistory。
+  await tx.teamMembershipHistory.create({
+    data: {
+      teamMemberId: updated.id,
+      teamId: input.teamId,
+      userId: input.userId,
+      eventType: "ROLE_CHANGED",
+      fromMembershipRole: "LEAD",
+      toMembershipRole: "MEMBER",
+      actorUserId: input.actorId,
+      eventSource: "ADMIN_ACTION",
+      reasonCode: input.reasonCode,
+      effectiveAt: new Date(),
+    },
+  });
 
   await writeAuditLog(
     {
