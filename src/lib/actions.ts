@@ -10,6 +10,7 @@ import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, isClo
 import { ISSUE_TYPE_PREFIX, RoleKey, ROLES } from "./constants";
 import { generateAiSuggestion, AiSuggestionType, AiContext } from "./mockAi";
 import { requireCurrentUser, requireAdmin } from "./auth";
+import { assignSystemRole, updatePrimaryRole, activatePerson, deactivatePerson } from "./peopleService";
 
 // ---------------------------------------------------------------------------
 // 共用工具
@@ -594,45 +595,52 @@ export async function runAiAction(issueId: string, suggestionType: AiSuggestionT
 // 管理員：使用者與角色管理
 // ---------------------------------------------------------------------------
 
+// C1-B5：fail-closed 過渡狀態——舊版 UI（UserRoleActions.tsx）尚未提供 reasonCode 欄位
+// （完整介面留待 C1-C），本函式一律要求呼叫端明確提供 reasonCode，並改為呼叫
+// peopleService（assignSystemRole／updatePrimaryRole），不再直接 prisma.user.update 或
+// 在 transaction 外補寫 AuditLog。不得使用空白／固定假 reasonCode 蒙混過關。
 export async function assignUserRoleAction(formData: FormData) {
   const admin = await requireAdmin();
   const targetUserId = String(formData.get("userId") || "");
   const newRole = String(formData.get("role") || "") as RoleKey;
+  const reasonCode = String(formData.get("reasonCode") || "").trim();
 
   if (!ROLES.some((r) => r.key === newRole)) {
     throw new Error("無效的角色");
   }
+  if (!reasonCode) {
+    throw new Error("此操作需要填寫變更原因（reasonCode），目前介面尚未提供此欄位；完整角色管理介面將於 C1-C 提供。");
+  }
 
   const target = await prisma.user.findUniqueOrThrow({ where: { id: targetUserId } });
+  const existingRole = await prisma.userRole.findUnique({
+    where: { userId_role: { userId: targetUserId, role: newRole } },
+  });
+  if (!existingRole || !existingRole.isActive) {
+    await assignSystemRole({ userId: targetUserId, role: newRole, actorId: admin.id, reasonCode });
+  }
   if (target.role !== newRole) {
-    await prisma.user.update({ where: { id: targetUserId }, data: { role: newRole } });
-    await writeAuditLog({
-      entityType: "User",
-      entityId: target.id,
-      actionType: "RoleChange",
-      summary: `將使用者「${target.name}」的角色從「${target.role}」變更為「${newRole}」`,
-      actorUserId: admin.id,
-    });
+    await updatePrimaryRole({ userId: targetUserId, role: newRole, actorId: admin.id, reasonCode });
   }
 
   revalidatePath("/admin/users");
 }
 
+// C1-B5：同上——fail-closed，改為呼叫 peopleService（activatePerson／deactivatePerson）。
 export async function setUserActiveAction(formData: FormData) {
   const admin = await requireAdmin();
   const targetUserId = String(formData.get("userId") || "");
   const nextActive = String(formData.get("isActive") || "") === "true";
+  const reasonCode = String(formData.get("reasonCode") || "").trim();
 
-  const target = await prisma.user.findUniqueOrThrow({ where: { id: targetUserId } });
-  if (target.isActive !== nextActive) {
-    await prisma.user.update({ where: { id: targetUserId }, data: { isActive: nextActive } });
-    await writeAuditLog({
-      entityType: "User",
-      entityId: target.id,
-      actionType: "AccountStatusChange",
-      summary: `將使用者「${target.name}」的帳號狀態變更為「${nextActive ? "啟用" : "停用"}」`,
-      actorUserId: admin.id,
-    });
+  if (!reasonCode) {
+    throw new Error("此操作需要填寫變更原因（reasonCode），目前介面尚未提供此欄位；完整人員啟用／停用介面將於 C1-C 提供。");
+  }
+
+  if (nextActive) {
+    await activatePerson({ userId: targetUserId, actorId: admin.id, reasonCode });
+  } else {
+    await deactivatePerson({ userId: targetUserId, actorId: admin.id, reasonCode });
   }
 
   revalidatePath("/admin/users");

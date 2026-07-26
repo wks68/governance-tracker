@@ -5,6 +5,17 @@ import UserRoleActions from "@/components/UserRoleActions";
 
 export const dynamic = "force-dynamic";
 
+// C1-B5：recentLogs 只篩選 entityType="User"，因此僅涵蓋這幾種 actionType（UserRoleAssigned／
+// UserRoleRemoved／TeamMemberAdded／TeamMemberRemoved 等的 entityType 是 UserRole／TeamMember，
+// 不會出現在這份清單）。
+const ACTION_TYPE_LABELS: Record<string, string> = {
+  RoleChange: "主要角色變更",
+  UserCreated: "建立使用者",
+  UserUpdated: "資料更新",
+  UserActivated: "帳號啟用",
+  UserDeactivated: "帳號停用",
+};
+
 export default async function AdminUsersPage() {
   await requireAdmin();
 
@@ -78,7 +89,7 @@ export default async function AdminUsersPage() {
               <li key={log.id} className="text-sm">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
                   <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-600">
-                    {log.actionType === "RoleChange" ? "角色變更" : "帳號狀態變更"}
+                    {ACTION_TYPE_LABELS[log.actionType] ?? "帳號狀態變更"}
                   </span>
                   <span>操作人：{log.actor?.name ?? "系統"}</span>
                   <span>{new Date(log.createdAt).toLocaleString("zh-TW")}</span>
