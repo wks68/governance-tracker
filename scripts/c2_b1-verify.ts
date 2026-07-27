@@ -784,9 +784,14 @@ function listModuleFiles(): string[] {
   return results;
 }
 
-function gitDiffEmpty(baseRef: string, relPath: string): boolean {
+// scopeHeadRef 預設 "HEAD"，與修改前的既有語意完全相同（獨立 C2-B1 branch 不受影響）。
+// 治理儀表板封板批次自治新增：可用 C2_B1_SCOPE_HEAD_REF 明確指定「C2-B1 實際整合完成
+// 的最後一筆 commit」，讓 B9 系列只檢查 BASE_REF..SCOPE_HEAD_REF 這個封閉區間，不看
+// SCOPE_HEAD_REF 之後、同一個 branch 上繼續發生的其他已授權階段（例如 M2-B、治理
+// 儀表板）——比照 scripts/c2_a-verify.ts 的 C2_A_SCOPE_HEAD_REF 既有慣例。
+function gitDiffEmpty(baseRef: string, scopeHeadRef: string, relPath: string): boolean {
   try {
-    const out = execFileSync("git", ["diff", baseRef, "--", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+    const out = execFileSync("git", ["diff", baseRef, scopeHeadRef, "--", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
     return out.trim().length === 0;
   } catch (err) {
     throw new Error(`git diff 檢查失敗（${relPath}）：${err instanceof Error ? err.message : String(err)}`);
@@ -814,6 +819,35 @@ function resolveBaseRef(): string {
     execFileSync("git", ["merge-base", "--is-ancestor", resolvedCommit, "HEAD"], { cwd: REPO_ROOT });
   } catch {
     console.error(`拒絕執行：C2_B1_BASE_REF="${requestedRef}"（解析為 ${resolvedCommit}）不是目前 HEAD 的祖先，無法作為比對基準。`);
+    process.exit(1);
+  }
+
+  return resolvedCommit;
+}
+
+function resolveScopeHeadRef(baseRefCommit: string): string {
+  const envRef = process.env.C2_B1_SCOPE_HEAD_REF;
+  const requestedRef = envRef && envRef.trim() ? envRef.trim() : "HEAD";
+
+  let resolvedCommit: string;
+  try {
+    resolvedCommit = execFileSync("git", ["rev-parse", "--verify", `${requestedRef}^{commit}`], { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+  } catch {
+    console.error(`拒絕執行：C2_B1_SCOPE_HEAD_REF="${requestedRef}" 無法解析為有效 commit。`);
+    process.exit(1);
+  }
+
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", baseRefCommit, resolvedCommit], { cwd: REPO_ROOT });
+  } catch {
+    console.error(`拒絕執行：BASE_REF（${baseRefCommit}）不是 C2_B1_SCOPE_HEAD_REF="${requestedRef}"（解析為 ${resolvedCommit}）的祖先，無法構成合法區間。`);
+    process.exit(1);
+  }
+
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", resolvedCommit, "HEAD"], { cwd: REPO_ROOT });
+  } catch {
+    console.error(`拒絕執行：C2_B1_SCOPE_HEAD_REF="${requestedRef}"（解析為 ${resolvedCommit}）不是目前 HEAD 的祖先。`);
     process.exit(1);
   }
 
@@ -879,6 +913,8 @@ function runBoundaryChecks() {
   check("[B8] 公開 API 只由 index.ts 匯出：repo 內沒有任何檔案（auth-integration 自身以外）直接 import 內部子路徑", deepImportViolation === null);
 
   const BASE_REF = resolveBaseRef();
+  const SCOPE_HEAD_REF = resolveScopeHeadRef(BASE_REF);
+  const scopeLabel = `${BASE_REF}..${SCOPE_HEAD_REF}`;
   const protectedFiles = [
     "prisma/schema.prisma",
     "prisma/seed.ts",
@@ -892,15 +928,15 @@ function runBoundaryChecks() {
   ];
   for (const relPath of protectedFiles) {
     if (!pathExists(relPath)) {
-      check(`[B9] ${relPath} 相對於指定比對基準（${BASE_REF}）完全未變動`, true);
+      check(`[B9] ${relPath} 相對於 C2-B1 整合區間（${scopeLabel}）完全未變動`, true);
       continue;
     }
-    check(`[B9] ${relPath} 相對於指定比對基準（${BASE_REF}）完全未變動`, gitDiffEmpty(BASE_REF, relPath));
+    check(`[B9] ${relPath} 相對於 C2-B1 整合區間（${scopeLabel}）完全未變動`, gitDiffEmpty(BASE_REF, SCOPE_HEAD_REF, relPath));
   }
-  check("[B9b] prisma/migrations 目錄相對於指定比對基準完全未變動（C2-B1 沒有新增 Migration）", gitDiffEmpty(BASE_REF, "prisma/migrations"));
-  check("[B9c] src/lib/workflow 目錄相對於指定比對基準完全未變動", !pathExists("src/lib/workflow") || gitDiffEmpty(BASE_REF, "src/lib/workflow"));
-  check("[B9d] src/lib/workflow-execution 目錄相對於指定比對基準完全未變動", !pathExists("src/lib/workflow-execution") || gitDiffEmpty(BASE_REF, "src/lib/workflow-execution"));
-  check("[B9e] package.json 未新增任何套件（與指定比對基準逐字相同）", gitDiffEmpty(BASE_REF, "package.json"));
+  check("[B9b] prisma/migrations 目錄相對於 C2-B1 整合區間完全未變動（C2-B1 沒有新增 Migration）", gitDiffEmpty(BASE_REF, SCOPE_HEAD_REF, "prisma/migrations"));
+  check("[B9c] src/lib/workflow 目錄相對於 C2-B1 整合區間完全未變動", !pathExists("src/lib/workflow") || gitDiffEmpty(BASE_REF, SCOPE_HEAD_REF, "src/lib/workflow"));
+  check("[B9d] src/lib/workflow-execution 目錄相對於 C2-B1 整合區間完全未變動", !pathExists("src/lib/workflow-execution") || gitDiffEmpty(BASE_REF, SCOPE_HEAD_REF, "src/lib/workflow-execution"));
+  check("[B9e] package.json 未新增任何套件（與 C2-B1 整合區間起點逐字相同）", gitDiffEmpty(BASE_REF, SCOPE_HEAD_REF, "package.json"));
 }
 
 // ===========================================================================
