@@ -50,6 +50,7 @@ import {
   WorkflowExecutionBlockedError,
 } from "../src/lib/workflowExecutionService";
 import { buildHotfixWorkflowV1 } from "./lib/buildHotfixWorkflowV1";
+import { createIssueForActor, UnauthorizedIssueCreationError } from "../src/lib/issueCreation";
 
 let passCount = 0;
 let failCount = 0;
@@ -693,15 +694,18 @@ async function runStaticSourceChecks() {
   const actionsPath = path.join(repoRoot, "src", "lib", "actions.ts");
   const actionsSrc = fs.readFileSync(actionsPath, "utf8");
   check("[UI3] actions.ts 的 transitionStatusAction／sendBackToRdAction 已改為對新流程 Issue 拒絕執行", /isIssueOnVersionedWorkflow\(issue\)/.test(actionsSrc));
-  check("[UI4] actions.ts 的 createIssueAction 已串接 startWorkflowForIssueSystemTx", /startWorkflowForIssueSystemTx/.test(actionsSrc));
 
-  // [UI5]/[UI6]：未授權時不得建立 Issue。createIssueAction 呼叫 requireCurrentUser()
-  // 需要 next/headers 的 cookies()，離開真實 request 情境無法直接呼叫（比照既有
-  // m1_5_c1_b-verify.ts [9a]-[9d]／m1_5_c1_c-verify.ts 對 Server Action 的既有處理慣例，
-  // 改以靜態原始碼檢查取代執行期呼叫）。這裡驗證的是「requireCurrentUser() 是
-  // createIssueAction 函式體的第一行可執行陳述式，且早於任何 Issue 寫入（prisma.issue.create
-  // 或 prisma.$transaction）」——未登入或已停用帳號會在 requireCurrentUser() 內被
-  // redirect("/login")，函式體會在抵達任何寫入前就中止，因此不會建立孤兒 Issue。
+  // [UI4]/[UI5]/[UI6]：未授權時不得建立 Issue。createIssueAction（"use server" 檔案內的
+  // 真正 Server Action）本身呼叫 requireCurrentUser() 需要 next/headers 的 cookies()，
+  // 離開真實 request 情境無法直接呼叫（比照既有 m1_5_c1_b-verify.ts [9a]-[9d]／
+  // m1_5_c1_c-verify.ts 對 Server Action 的既有處理慣例）。已授權交易核心已抽成
+  // src/lib/issueCreation.ts 的 createIssueForActor（可注入 actor，不對 UI／Client Bundle
+  // 公開），[UNAUTH1]-[UNAUTH3]（見 runUnauthorizedIssueCreationTests）已對它做實際動態
+  // 呼叫、注入 actor=null／已停用帳號，證明未授權時確實 fail closed 且不留下任何半成品
+  // 資料——這裡的靜態檢查只補強一件動態測試無法直接證明的事：createIssueAction 這個
+  // Server Action 本身，在呼叫 createIssueForActor 之前，一定先呼叫了 requireCurrentUser()
+  // （而不是繞過它、自己組一個 actor 傳進去）。
+  check("[UI4] actions.ts 的 createIssueAction 已改為呼叫抽出的 createIssueForActor（不再自行直接組裝 Issue 寫入交易）", /createIssueForActor\(/.test(actionsSrc));
   const createIssueActionMatch = actionsSrc.match(
     /export async function createIssueAction\([^)]*\)\s*\{([\s\S]*?)\n\}/,
   );
@@ -709,17 +713,14 @@ async function runStaticSourceChecks() {
   if (createIssueActionMatch) {
     const body = createIssueActionMatch[1];
     const requireCurrentUserIdx = body.indexOf("requireCurrentUser()");
-    const firstIssueWriteIdx = (() => {
-      const candidates = [body.indexOf("prisma.issue.create"), body.indexOf("prisma.$transaction")].filter((i) => i >= 0);
-      return candidates.length > 0 ? Math.min(...candidates) : -1;
-    })();
+    const createIssueForActorIdx = body.indexOf("createIssueForActor(");
     check(
-      "[UI6] createIssueAction 內 requireCurrentUser() 早於任何 Issue 寫入（未授權會在寫入前以 redirect 中止，不留下孤兒 Issue）",
-      requireCurrentUserIdx >= 0 && firstIssueWriteIdx >= 0 && requireCurrentUserIdx < firstIssueWriteIdx,
-      `requireCurrentUser() at ${requireCurrentUserIdx}, first issue write at ${firstIssueWriteIdx}`,
+      "[UI6] createIssueAction 內 requireCurrentUser() 早於呼叫 createIssueForActor（未授權會在呼叫核心交易前以 redirect 中止，不留下孤兒 Issue）",
+      requireCurrentUserIdx >= 0 && createIssueForActorIdx >= 0 && requireCurrentUserIdx < createIssueForActorIdx,
+      `requireCurrentUser() at ${requireCurrentUserIdx}, createIssueForActor(...) at ${createIssueForActorIdx}`,
     );
   } else {
-    skip("[UI6] createIssueAction 內 requireCurrentUser() 早於任何 Issue 寫入", "找不到 createIssueAction 函式本體");
+    skip("[UI6] createIssueAction 內 requireCurrentUser() 早於呼叫 createIssueForActor", "找不到 createIssueAction 函式本體");
   }
 }
 
@@ -1074,6 +1075,115 @@ async function runAtomicityTests(fx: Fixtures) {
 }
 
 // ---------------------------------------------------------------------------
+// 八、createIssueAction 未授權建立 Issue 動態驗證
+//
+// UI5／UI6（見 runStaticSourceChecks）只證明 requireCurrentUser() 在原始碼順序上早於
+// 任何 Issue 寫入，是靜態證據。本段改為動態實測：直接呼叫 createIssueForActor
+// （src/lib/issueCreation.ts，非 "use server" 檔案，不對 UI／Client Bundle 公開，只由
+// createIssueAction 與本驗證腳本使用）並注入 actor=null／已停用帳號，證明：
+//   1. 呼叫確實被拒絕（拋出 UnauthorizedIssueCreationError）。
+//   2. Issue／IssueWorkflowStageHistory／AuditLog 筆數在呼叫前後完全相同，不存在任何
+//      部分建立的 Issue 或半成品資料。
+// 並以 [UNAUTH3] 正向對照組（合法且已啟用的 actor）證明驗證框架本身確實有能力偵測到
+// 「有寫入資料」——不是因為這個 issueType／情境本來就不會寫入任何東西，兩項「筆數不變」
+// 的斷言才有意義。
+// ---------------------------------------------------------------------------
+
+async function runUnauthorizedIssueCreationTests(fx: Fixtures) {
+  console.log("\n=== 八、createIssueAction 未授權建立 Issue 動態驗證（實際呼叫 createIssueForActor，非僅靜態原始碼檢查） ===");
+
+  // 使用合法的 legacy IssueTypeKey「RCA」（本檔其他測試皆未使用，避免與其他 fixture 的
+  // Published Version 互相干擾造成 resolveUniqueAutoStartVersionForIssueType 誤判為歧義）。
+  const unauthIssueType = "RCA";
+  const setupActor = await createUser(fx, "UnauthWorkflowSetupActor", "Admin");
+  const gen = await buildGenericVersion(fx, setupActor.id, unauthIssueType, "unauth");
+
+  const inactiveUser = await prisma.user.create({
+    data: { name: "UnauthInactiveActor", email: `${RUN_TAG}-UnauthInactiveActor@example.invalid`, role: "PM", isActive: false },
+  });
+  fx.userIds.push(inactiveUser.id);
+
+  function buildFormData(titleSuffix: string): FormData {
+    const fd = new FormData();
+    fd.set("issueType", unauthIssueType);
+    fd.set("title", `未授權動態驗證探針 ${titleSuffix}`);
+    return fd;
+  }
+
+  async function snapshotCounts() {
+    const [issueCount, historyCount, auditCount] = await Promise.all([
+      prisma.issue.count(),
+      prisma.issueWorkflowStageHistory.count(),
+      prisma.auditLog.count(),
+    ]);
+    return { issueCount, historyCount, auditCount };
+  }
+
+  // ---- [UNAUTH1] actor=null（完全未登入） ----
+  {
+    const before = await snapshotCounts();
+    await checkAsync(
+      "[UNAUTH1] createIssueForActor(actor=null, ...) 動態呼叫：拒絕並拋出 UnauthorizedIssueCreationError",
+      async () => {
+        try {
+          await createIssueForActor(null, buildFormData("unauth1-null-actor"));
+          return false;
+        } catch (err) {
+          return err instanceof UnauthorizedIssueCreationError;
+        }
+      },
+    );
+    const after = await snapshotCounts();
+    check(
+      "[UNAUTH1b] actor=null 呼叫前後 Issue／IssueWorkflowStageHistory／AuditLog 筆數完全相同（不存在半成品資料）",
+      after.issueCount === before.issueCount && after.historyCount === before.historyCount && after.auditCount === before.auditCount,
+      `Issue ${before.issueCount}->${after.issueCount}, History ${before.historyCount}->${after.historyCount}, AuditLog ${before.auditCount}->${after.auditCount}`,
+    );
+  }
+
+  // ---- [UNAUTH2] actor=已停用帳號（isActive=false） ----
+  {
+    const before = await snapshotCounts();
+    await checkAsync(
+      "[UNAUTH2] createIssueForActor(actor=已停用帳號, ...) 動態呼叫：拒絕並拋出 UnauthorizedIssueCreationError",
+      async () => {
+        try {
+          await createIssueForActor(inactiveUser, buildFormData("unauth2-inactive-actor"));
+          return false;
+        } catch (err) {
+          return err instanceof UnauthorizedIssueCreationError;
+        }
+      },
+    );
+    const after = await snapshotCounts();
+    check(
+      "[UNAUTH2b] 已停用帳號呼叫前後 Issue／IssueWorkflowStageHistory／AuditLog 筆數完全相同（不存在半成品資料）",
+      after.issueCount === before.issueCount && after.historyCount === before.historyCount && after.auditCount === before.auditCount,
+      `Issue ${before.issueCount}->${after.issueCount}, History ${before.historyCount}->${after.historyCount}, AuditLog ${before.auditCount}->${after.auditCount}`,
+    );
+  }
+
+  // ---- [UNAUTH3] 正向對照組：合法且已啟用 actor，證明驗證框架確實能偵測到「有寫入資料」 ----
+  {
+    const validActorSlim = await createUser(fx, "UnauthPositiveControlActor", "Admin");
+    const validActor = await prisma.user.findUniqueOrThrow({ where: { id: validActorSlim.id } });
+    const before = await snapshotCounts();
+    const issue = await createIssueForActor(validActor, buildFormData("unauth3-valid-actor"));
+    fx.issueIds.push(issue.id);
+    const after = await snapshotCounts();
+    check(
+      "[UNAUTH3] 正向對照組：合法且已啟用 actor 呼叫成功建立 Issue 並自動啟動 Workflow（Issue+1／History+1／AuditLog+2），證明 UNAUTH1/UNAUTH2 的『筆數不變』並非因為此情境本來就不會寫入任何東西",
+      after.issueCount === before.issueCount + 1 &&
+        after.historyCount === before.historyCount + 1 &&
+        after.auditCount === before.auditCount + 2 &&
+        issue.workflowVersionId === gen.version.id &&
+        issue.currentWorkflowStageId === gen.stages.start.id,
+      `Issue ${before.issueCount}->${after.issueCount}, History ${before.historyCount}->${after.historyCount}, AuditLog ${before.auditCount}->${after.auditCount}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 清理
 // ---------------------------------------------------------------------------
 
@@ -1131,6 +1241,7 @@ async function main() {
       await runCancelFlow(fx, hotfix, admin);
       await runGenericEngineTests(fx);
       await runAtomicityTests(fx);
+      await runUnauthorizedIssueCreationTests(fx);
     } finally {
       await cleanupFixtures(fx);
     }
