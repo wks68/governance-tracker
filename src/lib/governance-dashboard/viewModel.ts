@@ -20,6 +20,7 @@ import { applyGovernanceDashboardFilters, type GovernanceDashboardSearchParams, 
 import {
   computeActionNeededList,
   computeBottleneckSummary,
+  computeHotfixBoard,
   computeKpiSummary,
   computePhaseDistribution,
   computeReturnOverview,
@@ -27,6 +28,7 @@ import {
   computeStageDistribution,
   computeTeamWorkload,
   computeTodayOverview,
+  isInProgressIssue,
   isLegacyIssue,
 } from "./metrics";
 import { getVisibleGovernanceIssueRows } from "./queries";
@@ -76,6 +78,13 @@ export async function buildGovernanceDashboardViewModel(
     filterOptions: buildFilterOptions(governedRows),
     kpi: computeKpiSummary(filteredRows, staleDaysThreshold),
     todayOverview: computeTodayOverview(filteredRows, staleDaysThreshold),
+    hotfixBoard: computeHotfixBoard(filteredRows, staleDaysThreshold),
+    rcaEntries: filteredRows.filter((r) => r.issueType === "RCA" && isInProgressIssue(r)),
+    incidentEntries: filteredRows.filter((r) => r.issueType === "Incident" && isInProgressIssue(r)),
+    // 全域事實（是否曾經有任何 ChangeRelease 案件實際套用新版 Workflow），刻意用
+    // governedRows（未套用日期／Team 等篩選）而非 filteredRows，避免使用者調整篩選
+    // 條件時讓 D 區「流程模板尚未啟用」的判斷跟著閃爍。
+    quarterlyReleaseEnabled: governedRows.some((r) => r.workflowDefinition?.issueType === "ChangeRelease"),
     stageDistribution: computeStageDistribution(filteredRows),
     phaseDistribution: computePhaseDistribution(filteredRows),
     riskOverview: computeRiskOverview(filteredRows),

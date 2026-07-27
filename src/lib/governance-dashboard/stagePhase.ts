@@ -51,3 +51,41 @@ export function stagePhaseOf(stage: { stageKey: string; label: string } | null):
   if (!stage) return null;
   return derivePhaseLabel(stage.stageKey, stage.label);
 }
+
+// ---------------------------------------------------------------------------
+// Hotfix 管理看板（四區塊版型 A 區）：5 桶固定管線，比「流程卡點」的細顆粒度更粗——
+// 「待 RD 主管核准」併入「RD 修正」桶、「待 QA 放行」併入「QA 驗證」桶，改以卡片上的
+// badge 呈現核准／放行狀態，不佔用看板桶位。尚未啟動新版 Workflow 但依 legacy 語意
+// 尚未結案的案件（currentStage 為 null）一律落在「開單／待處理」，不得因為沒有
+// WorkflowStage 就漏算（見 queries.ts deriveLifecycleStatus 的根因修正）。
+export const HOTFIX_BOARD_BUCKET_ORDER = ["開單／待處理", "RD 修正", "QA 驗證", "OP 上版", "正式環境確認"] as const;
+export type HotfixBoardBucket = (typeof HOTFIX_BOARD_BUCKET_ORDER)[number];
+
+const PHASE_TO_BOARD_BUCKET: Record<string, HotfixBoardBucket> = {
+  "需求／案件確認": "開單／待處理",
+  "RD 修正": "RD 修正",
+  "RD 主管核准": "RD 修正",
+  "QA 驗證": "QA 驗證",
+  "QA 放行": "QA 驗證",
+  "OP 上版": "OP 上版",
+  "正式環境確認": "正式環境確認",
+};
+
+// stage 為 null（尚未啟動新版 Workflow，但依 legacy 語意尚未結案）一律回傳
+// 「開單／待處理」；有 stage 但落在「已結案」「已取消」等終態的呼叫端不應傳進來
+// （由 metrics.computeHotfixBoard 先以 isInProgressIssue 篩過）。
+export function hotfixBoardBucketOf(stage: { stageKey: string; label: string } | null): HotfixBoardBucket {
+  if (!stage) return "開單／待處理";
+  const phase = stagePhaseOf(stage)!;
+  return PHASE_TO_BOARD_BUCKET[phase] ?? "開單／待處理";
+}
+
+// 卡片上的核准／放行 badge：只有落在「RD 主管核准」「QA 放行」這兩個細顆粒度階段時
+// 才顯示，其餘回傳 null（不顯示 badge）。
+export function hotfixBoardApprovalBadge(stage: { stageKey: string; label: string } | null): string | null {
+  if (!stage) return null;
+  const phase = stagePhaseOf(stage);
+  if (phase === "RD 主管核准") return "待 RD 主管核准";
+  if (phase === "QA 放行") return "待 QA 放行";
+  return null;
+}

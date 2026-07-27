@@ -238,6 +238,23 @@ async function backdateOpenHistory(issueId: string, days: number) {
   });
 }
 
+// Category B 展示案件：完全不呼叫 startIssueWorkflow，直接以 legacy 模型建立
+// （workflowVersionId／currentWorkflowStageId 皆為 null，workflowStatus 為該
+// issueType 在 src/lib/workflow.ts 既有 WORKFLOW_STEPS 的某個未結案步驟）。這正是
+// 「已建立 Hotfix 工單，但治理儀表板 Hotfix 數量仍顯示 0」根因修正對應的真實案例：
+// 該 issueType 目前沒有已發布的新版 Workflow 可供自動啟動時，工單一律長這樣。
+async function createPreWorkflowIssue(key: string, title: string, issueType: string, workflowStatus: string, createdDaysAgo = 0) {
+  return prisma.issue.create({
+    data: {
+      issueKey: `${RUN_TAG}-${key}`,
+      issueType,
+      title,
+      workflowStatus,
+      createdAt: new Date(Date.now() - createdDaysAgo * 86_400_000),
+    },
+  });
+}
+
 // 供 RCA／RiskException 展示用的極簡雙關卡流程（open→closed，1 條 FORWARD），
 // 只是要證明治理儀表板對 issueType 是通用讀取、不是寫死 Hotfix 專屬邏輯——不需要
 // Hotfix v1 那種 20 關卡的完整度。
@@ -390,18 +407,36 @@ async function main() {
   const cancelT = await findTransition(hotfix.version.id, hotfix.stageIds.draft, "cancelDraft");
   await cancelIssueWorkflow({ issueId: cancelled.id, transitionId: cancelT.id, actorId: admin.id, reasonCode: "PREVIEW_CANCEL" });
 
-  // ---- RCA／RiskException：各發布一個最小流程＋一筆進行中案件 ----
+  const completed = await createHotfixIssue("DONE-01", "首頁圖片載入逾時", ctx);
+  await advanceTo(ctx, completed, 14); // 走完全程，結案（COMPLETED）
+
+  // ---- Category B：尚未啟動新版 Workflow、但依 legacy 語意尚未結案的 Hotfix
+  // （根因修正對應案例，見 createPreWorkflowIssue 說明），同時作為第二筆「停留超過
+  // 7 天」案例（dwellDays 依 Issue.createdAt 估算，見 queries.ts）。 ----
+  const preWorkflowHotfix = await createPreWorkflowIssue("PREWF-01", "客服回報付款頁面偶發白畫面", "Hotfix", "opened", 9);
+
+  // ---- RCA（2 件）／RiskException（2 件）：各發布一個最小流程＋進行中案件，證明
+  // 治理儀表板對 issueType 是通用讀取、不是寫死 Hotfix 專屬邏輯 ----
   const rcaWorkflow = await buildSimpleWorkflow("RCA", "RCA 根因分析流程（Preview）", admin.id);
-  const rcaIssue = await createSimpleInProgressIssue("RCA-01", "登入逾時根因分析", "RCA", rcaWorkflow.version.id, admin.id);
+  const rcaIssue1 = await createSimpleInProgressIssue("RCA-01", "登入逾時根因分析", "RCA", rcaWorkflow.version.id, admin.id);
+  const rcaIssue2 = await createPreWorkflowIssue("RCA-02", "批次作業異常中斷根因分析", "RCA", "analyzing");
 
   const riskExceptionWorkflow = await buildSimpleWorkflow("RiskException", "風險例外處理流程（Preview）", admin.id);
-  const riskExceptionIssue = await createSimpleInProgressIssue(
+  const riskExceptionIssue1 = await createSimpleInProgressIssue(
     "RISKEXC-01",
     "第三方 SDK 暫時使用過期憑證風險例外申請",
     "RiskException",
     riskExceptionWorkflow.version.id,
     admin.id,
   );
+  const riskExceptionIssue2 = await createPreWorkflowIssue("RISKEXC-02", "舊版 TLS 協定暫時保留風險例外", "RiskException", "pendingApproval");
+
+  // ---- 事件通報（3 件）：目前沒有已發布的 Incident 新版 Workflow，一律是
+  // Category B，「目前階段」改用既有 legacy 模型顯示標籤（見
+  // queries.ts preWorkflowStatusLabel）。 ----
+  const incident1 = await createPreWorkflowIssue("INC-P01", "核心交易 API 回應時間異常升高", "Incident", "initialResponse");
+  const incident2 = await createPreWorkflowIssue("INC-P02", "會員中心登入失敗率上升", "Incident", "reported");
+  const incident3 = await createPreWorkflowIssue("INC-P03", "報表批次延遲影響對帳", "Incident", "rcaDecision");
 
   console.log("[4/4] 完成。");
   console.log(`  RD 修正中：${rd1.issueKey}, ${rd2.issueKey}, ${riskYes.issueKey}（有風險）, ${stale.issueKey}（停留過久）`);
@@ -412,8 +447,11 @@ async function main() {
   console.log(`  開單人確認中（正式環境確認）：${confirming.issueKey}`);
   console.log(`  重複退回（現停 RD 修正中）：${repeatedReturn.issueKey}`);
   console.log(`  已取消：${cancelled.issueKey}`);
-  console.log(`  RCA 進行中：${rcaIssue.issueKey}`);
-  console.log(`  RiskException 進行中：${riskExceptionIssue.issueKey}`);
+  console.log(`  已完成：${completed.issueKey}`);
+  console.log(`  尚未啟動新版 Workflow 但尚未結案（開單／待處理＋停留過久）：${preWorkflowHotfix.issueKey}`);
+  console.log(`  RCA 進行中：${rcaIssue1.issueKey}, ${rcaIssue2.issueKey}`);
+  console.log(`  RiskException 進行中：${riskExceptionIssue1.issueKey}, ${riskExceptionIssue2.issueKey}`);
+  console.log(`  事件通報處理中：${incident1.issueKey}, ${incident2.issueKey}, ${incident3.issueKey}`);
   console.log(`  Team：${rdTeam.name} / ${qaTeam.name} / ${opTeam.name}`);
 }
 

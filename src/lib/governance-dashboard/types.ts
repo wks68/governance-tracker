@@ -65,6 +65,15 @@ export interface GovernanceIssueRow {
   returnCount: number;
   pendingApproval: boolean;
   riskStatus: GovernanceRiskStatus;
+  // B／C 區（RCA／Incident）顯示用：既有正式欄位，直接沿用，不發明新欄位。
+  ownerName: string | null;
+  dueDate: Date | null;
+  systemName: string | null;
+  priority: string | null;
+  // 尚未啟動新版 Workflow 時（currentStage 為 null），用既有 legacy 模型的顯示標籤
+  // 呈現「目前階段」，不留白、不顯示技術值；已啟動新版 Workflow 時一律為 null
+  // （UI 改用 currentStage.label）。
+  preWorkflowStatusLabel: string | null;
 }
 
 export const STALE_DAYS_OPTIONS = [1, 3, 7, 14] as const;
@@ -167,12 +176,14 @@ export interface GovernanceFilterOptions {
 }
 
 // 今日治理總覽：首頁最上方最多 6 張主要 KPI（管理者語意，非技術語意）。
+// 首頁頂部 5 張 KPI（治理儀表板第四輪：四區塊治理管理看板版型）。待主管核准／待 QA
+// 驗證／待 OP 上版已移除，改在 Hotfix 管理看板（GovernanceHotfixBoardEntry）內以卡片
+// badge 呈現，不占用頂部 KPI 版面。
 export interface GovernanceTodayOverview {
   hotfixInProgress: number;
-  pendingApproval: number;
-  pendingQaVerification: number;
-  pendingOpDeployment: number;
-  riskOrException: number;
+  rcaInProgress: number;
+  incidentInProgress: number;
+  riskExceptionOpen: number;
   stale: number;
   staleDaysThreshold: StaleDaysOption;
 }
@@ -186,11 +197,27 @@ export interface GovernancePhaseDistributionEntry {
   stageIds: string[];
 }
 
+// Hotfix 管理看板（A 區）單一桶位：桶內 preview 依優先序（風險／停留天數）排序取前幾筆
+// 供卡片展示，count 為該桶完整件數（供加總與 KPI 對應，不受 preview 筆數上限影響）。
+export interface GovernanceHotfixBoardEntry {
+  bucket: string;
+  count: number;
+  preview: GovernanceIssueRow[];
+}
+
 export interface GovernanceDashboardViewModel {
   filters: GovernanceDashboardFilters;
   filterOptions: GovernanceFilterOptions;
   kpi: GovernanceKpiSummary;
   todayOverview: GovernanceTodayOverview;
+  hotfixBoard: GovernanceHotfixBoardEntry[];
+  // B／C 區：目前資料模型只有 RCA／Incident 兩種 issueType 可用，直接顯示既有欄位，
+  // 不發明 CAPA／SLA 等不存在的資料。
+  rcaEntries: GovernanceIssueRow[];
+  incidentEntries: GovernanceIssueRow[];
+  // D 區：季度上版 Workflow 是否已經有任何 ChangeRelease 案件實際使用——沒有的話
+  // D 區只顯示「季度上版流程模板尚未啟用」的小型說明，不得顯示假進度。
+  quarterlyReleaseEnabled: boolean;
   stageDistribution: GovernanceStageDistributionEntry[];
   phaseDistribution: GovernancePhaseDistributionEntry[];
   riskOverview: GovernanceRiskOverview;

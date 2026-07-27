@@ -15,8 +15,22 @@
 //   - Team 負載：Issue.assignedTeamId。
 
 import { prisma } from "../prisma";
+import { isClosed as isLegacyModelClosed, statusLabel as legacyModelStatusLabel } from "../workflow";
 import { requireGovernanceDashboardAccess } from "./access";
 import type { GovernanceIssueRow, GovernanceLifecycleStatus, GovernanceRiskStatus, GovernanceStageRef } from "./types";
+
+// 尚未啟動新版 Workflow（workflowVersionId=null）的案件唯二需要的 legacy 事實：是否已
+// 結案（沿用 src/lib/workflow.ts 既有 isClosed／CLOSED_STATUS，不自創判斷），以及目前
+// 步驟的顯示用中文標籤（沿用既有 statusLabel，供 RCA／Incident 這類完全沒有新版
+// Workflow 可用的 issueType 顯示「目前階段」，不得顯示技術值或留白）。這是本模組
+// 唯一讀取 Issue.workflowStatus 的地方，且完全不涉及新版 Workflow 的權威狀態判斷
+// （新版案件一律只看 WorkflowStage.isEnd／terminalOutcome，見下方 deriveLifecycleStatus）。
+function derivePreWorkflowFacts(issue: { issueType: string; workflowStatus: string }): { closed: boolean; statusLabel: string } {
+  return {
+    closed: isLegacyModelClosed(issue.issueType, issue.workflowStatus),
+    statusLabel: legacyModelStatusLabel(issue.issueType, issue.workflowStatus),
+  };
+}
 
 async function fetchOpenHistoryRows(issueIds: string[]) {
   if (issueIds.length === 0) return new Map<string, Date>();
@@ -54,11 +68,23 @@ function toStageRef(stage: {
   };
 }
 
+// 根因修正（治理儀表板第三輪）：workflowVersionId===null 不得一律視為「舊制／隱藏」。
+// 尚未啟動新版 Workflow 的案件分兩種：
+//   - 依既有 legacy 模型已結案：真正的歷史雜訊，沒有治理價值，維持隱藏（LEGACY）。
+//   - 依既有 legacy 模型尚未結案：即使還沒有 workflowVersionId（例如該 issueType
+//     目前根本沒有已發布的新版 Workflow 可供自動啟動），仍是需要主管關注、尚未結案
+//     的真實案件，必須視為 IN_PROGRESS——這正是「已建立 Hotfix 工單，但治理儀表板
+//     Hotfix 數量仍顯示 0」的根因：先前版本不分青紅皂白，把所有 workflowVersionId=
+//     null 的案件都當成「舊制」整批排除。
 function deriveLifecycleStatus(issue: {
   workflowVersionId: string | null;
+  issueType: string;
+  workflowStatus: string;
   currentWorkflowStage: { isEnd: boolean; terminalOutcome: string | null } | null;
 }): GovernanceLifecycleStatus {
-  if (issue.workflowVersionId === null) return "LEGACY";
+  if (issue.workflowVersionId === null) {
+    return derivePreWorkflowFacts(issue).closed ? "LEGACY" : "IN_PROGRESS";
+  }
   if (!issue.currentWorkflowStage) return "NOT_STARTED";
   if (!issue.currentWorkflowStage.isEnd) return "IN_PROGRESS";
   return issue.currentWorkflowStage.terminalOutcome === "CANCELLED" ? "CANCELLED" : "COMPLETED";
@@ -102,9 +128,15 @@ export async function getVisibleGovernanceIssueRows(actorId: string): Promise<Go
 
     let dwellDays: number | null = null;
     if (lifecycleStatus === "IN_PROGRESS") {
-      const enteredAt = openHistoryByIssueId.get(issue.id);
-      if (enteredAt) {
-        dwellDays = Math.floor((now - enteredAt.getTime()) / 86_400_000);
+      if (issue.workflowVersionId === null) {
+        // 尚未啟動新版 Workflow，沒有 IssueWorkflowStageHistory 可用；改以
+        // Issue.createdAt（案件建立時間，非 stageEnteredAt 相容欄位）估算已等待天數。
+        dwellDays = Math.floor((now - issue.createdAt.getTime()) / 86_400_000);
+      } else {
+        const enteredAt = openHistoryByIssueId.get(issue.id);
+        if (enteredAt) {
+          dwellDays = Math.floor((now - enteredAt.getTime()) / 86_400_000);
+        }
       }
     }
 
@@ -139,6 +171,11 @@ export async function getVisibleGovernanceIssueRows(actorId: string): Promise<Go
       returnCount: returnEvents.length,
       pendingApproval: issue.approvalRecords.length > 0,
       riskStatus: deriveRiskStatus(issue.stageRiskChecks),
+      ownerName: issue.ownerName || null,
+      dueDate: issue.dueDate,
+      systemName: issue.systemName || null,
+      priority: issue.priority || null,
+      preWorkflowStatusLabel: issue.workflowVersionId === null ? derivePreWorkflowFacts(issue).statusLabel : null,
     };
     return row;
   });

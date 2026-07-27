@@ -9,6 +9,7 @@ import {
   DEFAULT_STALE_DAYS_THRESHOLD,
   type GovernanceBottleneckSummary,
   type GovernanceDashboardFilters,
+  type GovernanceHotfixBoardEntry,
   type GovernanceIssueRow,
   type GovernanceKpiSummary,
   type GovernancePhaseDistributionEntry,
@@ -21,7 +22,7 @@ import {
   STALE_DAYS_OPTIONS,
   type StaleDaysOption,
 } from "./types";
-import { GOVERNANCE_PHASE_ORDER, stagePhaseOf } from "./stagePhase";
+import { GOVERNANCE_PHASE_ORDER, HOTFIX_BOARD_BUCKET_ORDER, hotfixBoardBucketOf, stagePhaseOf } from "./stagePhase";
 
 // ---------------------------------------------------------------------------
 // 共用分類 predicate（filters.applyFilters 與本檔案統計聚合唯一共用來源）
@@ -60,6 +61,12 @@ export function hasReturnIssue(row: GovernanceIssueRow): boolean {
 export function hasRepeatedReturnIssue(row: GovernanceIssueRow): boolean {
   return row.returnCount >= 2;
 }
+// Category B：尚未啟動新版 Workflow，但依 legacy 語意尚未結案的案件（見 queries.ts
+// deriveLifecycleStatus 的根因修正）。這類案件 lifecycleStatus 仍是 IN_PROGRESS，
+// 但沒有 currentStage 可用，Hotfix 管理看板一律歸類到「開單／待處理」桶。
+export function isPreWorkflowOpenIssue(row: GovernanceIssueRow): boolean {
+  return isInProgressIssue(row) && row.currentStage === null;
+}
 
 // ---------------------------------------------------------------------------
 // KPI 總覽
@@ -82,7 +89,14 @@ export function computeKpiSummary(
 }
 
 // ---------------------------------------------------------------------------
-// 今日治理總覽：首頁最多 6 張主要 KPI，管理者語意（而非 Workflow/Stage 技術語意）。
+// 首頁頂部 5 張 KPI（治理儀表板第四輪：四區塊治理管理看板版型）。
+//
+// 「進行中」四項一律用 isInProgressIssue（lifecycleStatus==="IN_PROGRESS"）判斷，
+// 這個 predicate 在 queries.ts 根因修正後，同時涵蓋：
+//   A. 已啟動新版 Workflow 且尚未 COMPLETED／CANCELLED 的案件。
+//   B. 尚未啟動新版 Workflow、但依既有 legacy 語意尚未結案的案件（isPreWorkflowOpenIssue）。
+// 兩者的聯集才是「使用者可見範圍內所有尚未結案的案件」，不得只看其中一種
+// （這正是「已建立 Hotfix 工單，但 KPI 仍顯示 0」的根因修正重點）。
 // ---------------------------------------------------------------------------
 
 export function computeTodayOverview(
@@ -92,10 +106,9 @@ export function computeTodayOverview(
   const inProgress = rows.filter(isInProgressIssue);
   return {
     hotfixInProgress: inProgress.filter((r) => r.issueType === "Hotfix").length,
-    pendingApproval: rows.filter(isPendingApprovalIssue).length,
-    pendingQaVerification: inProgress.filter((r) => stagePhaseOf(r.currentStage) === "QA 驗證").length,
-    pendingOpDeployment: inProgress.filter((r) => stagePhaseOf(r.currentStage) === "OP 上版").length,
-    riskOrException: rows.filter(isHighRiskIssue).length,
+    rcaInProgress: inProgress.filter((r) => r.issueType === "RCA").length,
+    incidentInProgress: inProgress.filter((r) => r.issueType === "Incident").length,
+    riskExceptionOpen: inProgress.filter((r) => r.issueType === "RiskException").length,
     stale: rows.filter((r) => isStaleIssue(r, staleDaysThreshold)).length,
     staleDaysThreshold,
   };
@@ -106,7 +119,7 @@ export function computeTodayOverview(
 // 重複退回 > 一般進行中」排序，只納入進行中案件（不含舊制／已完成／已取消）。
 // ---------------------------------------------------------------------------
 
-function actionPriorityScore(row: GovernanceIssueRow, staleDaysThreshold: number): number {
+export function actionPriorityScore(row: GovernanceIssueRow, staleDaysThreshold: number): number {
   if (isHighRiskIssue(row) || isRiskUnknownIssue(row)) return 0;
   if (isPendingApprovalIssue(row)) return 1;
   if (isStaleIssue(row, staleDaysThreshold)) return 2;
@@ -137,6 +150,39 @@ export function deriveSuggestedAction(row: GovernanceIssueRow, staleDaysThreshol
   if (isStaleIssue(row, staleDaysThreshold)) return "確認卡關原因並推進";
   if (hasRepeatedReturnIssue(row)) return "檢視退回原因，避免重複退回";
   return "持續處理中";
+}
+
+// ---------------------------------------------------------------------------
+// Hotfix 管理看板（A 區）：5 桶固定管線（開單／待處理 → RD 修正 → QA 驗證 → OP 上版 →
+// 正式環境確認），只計入 issueType==="Hotfix" 且 isInProgressIssue 的案件——這包含
+// Category A（新版 Workflow 進行中）與 Category B（尚未啟動新版 Workflow 但依 legacy
+// 語意尚未結案），兩者一律計入，不得因為沒有 currentStage 就漏算（根因修正重點）。
+// 各桶加總即為「進行中 Hotfix」KPI（見 computeTodayOverview.hotfixInProgress）。
+// preview 依 actionPriorityScore 排序（風險／待核准／停留最久優先），只取前幾筆供卡片
+// 展示，count 才是該桶完整件數。桶位固定顯示（即使 0 件也顯示，不得因排版好看而省略）。
+// ---------------------------------------------------------------------------
+
+export function computeHotfixBoard(
+  rows: readonly GovernanceIssueRow[],
+  staleDaysThreshold: StaleDaysOption = DEFAULT_STALE_DAYS_THRESHOLD,
+  previewLimit = 4,
+): GovernanceHotfixBoardEntry[] {
+  const hotfixInProgress = rows.filter((r) => r.issueType === "Hotfix" && isInProgressIssue(r));
+  const byBucket = new Map<string, GovernanceIssueRow[]>();
+  for (const row of hotfixInProgress) {
+    const bucket = hotfixBoardBucketOf(row.currentStage);
+    const list = byBucket.get(bucket) ?? [];
+    list.push(row);
+    byBucket.set(bucket, list);
+  }
+  return HOTFIX_BOARD_BUCKET_ORDER.map((bucket) => {
+    const list = byBucket.get(bucket) ?? [];
+    const sorted = [...list].sort((a, b) => {
+      const diff = actionPriorityScore(a, staleDaysThreshold) - actionPriorityScore(b, staleDaysThreshold);
+      return diff !== 0 ? diff : (b.dwellDays ?? -1) - (a.dwellDays ?? -1);
+    });
+    return { bucket, count: list.length, preview: sorted.slice(0, previewLimit) };
+  });
 }
 
 // ---------------------------------------------------------------------------
