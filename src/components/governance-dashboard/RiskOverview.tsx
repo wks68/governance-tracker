@@ -11,26 +11,23 @@ export default function RiskOverview({
   overview: RiskOverviewData;
   filters: GovernanceDashboardFilters;
 }) {
-  const totalWithRecord = overview.yes + overview.unknown + overview.unanswered;
-  if (totalWithRecord === 0 && overview.noRecord === 0) {
-    return null;
-  }
-
+  // 刻意不因全部為 0 就整塊隱藏（return null）——0 筆時仍必須顯示三張 0 值卡片，
+  // 不得讓「需關注案件」區塊憑空消失。
   const tiles: { label: string; value: number; tone: string; href: string }[] = [
     {
-      label: "有風險",
+      label: "已確認有風險",
       value: overview.yes,
       tone: "text-gov-red",
       href: withGovernanceFilterOverride(filters, { riskStatus: "YES" }),
     },
     {
-      label: "風險待確認",
+      label: "風險狀況待釐清",
       value: overview.unknown,
       tone: "text-gov-yellow",
       href: withGovernanceFilterOverride(filters, { riskStatus: "UNKNOWN" }),
     },
     {
-      label: "尚未完成風險確認",
+      label: "尚未填寫風險確認",
       value: overview.unanswered,
       tone: "text-gov-blue",
       href: withGovernanceFilterOverride(filters, { riskStatus: "UNANSWERED" }),

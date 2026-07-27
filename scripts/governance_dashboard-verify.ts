@@ -631,6 +631,33 @@ async function main() {
         return vm.issueList.length === 0;
       },
     );
+    // ---- [EMPTY-1] 0 筆資料時 ViewModel 仍是完整、格式正確的結構（不塌陷成
+    //      null／undefined／缺欄位），對照 page.tsx 不得因此整頁 return 單一空白訊息
+    //      ——這是本輪修正的核心 Bug（UI 收斂後曾經因為 governedRows.length===0 就把
+    //      整個 /governance 換成一則「尚無資料」訊息，KPI／篩選器／所有區塊全部消失）。 ----
+    await checkAsync(
+      "[EMPTY-1] 篩選成 0 筆（governedRows 為空）時，ViewModel 每個統計欄位仍是完整、正確的 0 值／空陣列結構，不拋出例外、不缺欄位",
+      async () => {
+        const vm = await buildGovernanceDashboardViewModel(admin.id, { issueType: "Incident" });
+        return (
+          vm.issueList.length === 0 &&
+          vm.kpi.totalVisible === 0 &&
+          vm.kpi.inProgress === 0 &&
+          vm.todayOverview.hotfixInProgress === 0 &&
+          vm.todayOverview.pendingApproval === 0 &&
+          vm.phaseDistribution.length === 0 &&
+          vm.stageDistribution.length === 0 &&
+          vm.riskOverview.yes === 0 &&
+          vm.riskOverview.unknown === 0 &&
+          vm.riskOverview.unanswered === 0 &&
+          vm.riskOverview.noRecord === 0 &&
+          vm.returnOverview.totalReturns === 0 &&
+          vm.teamWorkload.length === 0 &&
+          vm.actionNeeded.length === 0 &&
+          Array.isArray(vm.filterOptions.issueTypes)
+        );
+      },
+    );
     await checkAsync("[8-6] dateTo 篩選：只回傳 30 天前建立的 issueCompleted", async () => {
       const cutoff = new Date(Date.now() - 20 * 86_400_000).toISOString().slice(0, 10);
       const vm = await buildGovernanceDashboardViewModel(admin.id, { dateTo: cutoff });
@@ -662,12 +689,12 @@ async function main() {
       },
     );
 
-    // ---- [16] 空資料畫面（DB 層級）：無 issue.view 的 actor 觸發存取拒絕、有 issue.view
-    //      但完全無案件時 hasAnyVisibleIssue=false（此處以篩選條件濾成 0 筆驗證欄位存在，
-    //      真正「完全無案件」情境已由 A1 節純邏輯測試 computeXxx([]) 覆蓋）。 ----
+    // ---- [16] 空資料畫面（DB 層級）：無 issue.view 的 actor 觸發存取拒絕；有 issue.view
+    //      但篩選成 0 筆時仍正常回傳完整結構，不拋出例外（真正「完全無案件」情境已由
+    //      A1 節純邏輯測試 computeXxx([]) 與上方 [EMPTY-1] 覆蓋）。 ----
     await checkAsync("[17-9] 篩選成 0 筆時，issueList 為空陣列且不拋出例外", async () => {
       const vm = await buildGovernanceDashboardViewModel(admin.id, { issueType: "不存在的類型" });
-      return vm.issueList.length === 0 && vm.hasAnyVisibleIssue === true;
+      return vm.issueList.length === 0;
     });
   } finally {
     console.log("\n=== 清理測試 Fixture ===");
@@ -838,6 +865,27 @@ function runStaticSourceChecks() {
   }
   check("[UI-1] 治理儀表板 UI 程式碼（不含註解）不出現「MVP」字樣", mvpTextViolation === null, mvpTextViolation ?? undefined);
   check("[UI-2] 治理儀表板 UI 程式碼（不含註解）不出現「Mock」字樣（不得顯示 Mock AI 摘要）", mockTextViolation === null, mockTextViolation ?? undefined);
+
+  // ---- 回歸鎖定：/governance 不得再出現「0 筆新版案件就整頁替換成單一空白訊息」
+  // 這個 Bug。EmptyDashboardState 曾經是造成整頁塌陷的元件（page.tsx 對
+  // hasAnyVisibleIssue===false 提早 return 一個只含 EmptyDashboardState 的畫面）；
+  // 現在 hasAnyVisibleIssue 欄位已整個移除，page.tsx 也不該再 import
+  // EmptyDashboardState 本身（各子元件各自處理自己的空狀態，不透過頁面層級的
+  // 單一大区块取代）。 ----
+  const pageSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/governance/page.tsx"), "utf8");
+  check(
+    "[EMPTY-2] /governance page.tsx 不再 import EmptyDashboardState（防止重新引入整頁空白 early return）",
+    !/EmptyDashboardState/.test(pageSrc),
+  );
+  check(
+    "[EMPTY-3] /governance page.tsx 不出現已移除的 hasAnyVisibleIssue 欄位（防止重新引入整頁 early return 的判斷依據）",
+    !/hasAnyVisibleIssue/.test(stripComments(pageSrc)),
+  );
+  const viewModelSrc = fs.readFileSync(path.join(libDir, "viewModel.ts"), "utf8");
+  check(
+    "[EMPTY-4] viewModel.ts 不再輸出 hasAnyVisibleIssue 欄位",
+    !/hasAnyVisibleIssue/.test(viewModelSrc),
+  );
 }
 
 main().catch(async (err) => {

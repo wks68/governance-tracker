@@ -24,7 +24,7 @@ export default function PhaseBottleneck({
   filters: GovernanceDashboardFilters;
 }) {
   if (phases.length === 0) {
-    return <EmptyDashboardState message="目前沒有新版流程進行中案件，尚無流程卡點資料。" />;
+    return <EmptyDashboardState message="目前尚無使用新版流程的進行中案件。" />;
   }
 
   const maxCount = Math.max(...phases.map((p) => p.count));

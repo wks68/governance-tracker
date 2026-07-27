@@ -85,9 +85,9 @@ export default function GovernanceFilters({ options }: { options: GovernanceFilt
           onChange={(e) => update("riskStatus", e.target.value)}
         >
           <option value="">風險／例外：全部</option>
-          <option value="YES">有風險</option>
-          <option value="UNKNOWN">風險待確認</option>
-          <option value="UNANSWERED">尚未完成風險確認</option>
+          <option value="YES">已確認有風險</option>
+          <option value="UNKNOWN">風險狀況待釐清</option>
+          <option value="UNANSWERED">尚未填寫風險確認</option>
         </select>
 
         <select

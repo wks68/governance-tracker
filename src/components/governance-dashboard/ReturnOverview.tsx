@@ -1,7 +1,6 @@
 // 治理儀表板 MVP 新增：RETURN 監控（Plan 第二節第 5 項）。
 
 import Link from "next/link";
-import EmptyDashboardState from "./EmptyDashboardState";
 import { withGovernanceFilterOverride } from "@/lib/governance-dashboard/filters";
 import type { GovernanceDashboardFilters, GovernanceReturnOverview as ReturnOverviewData } from "@/lib/governance-dashboard/types";
 
@@ -12,10 +11,8 @@ export default function ReturnOverview({
   overview: ReturnOverviewData;
   filters: GovernanceDashboardFilters;
 }) {
-  if (overview.totalReturns === 0) {
-    return <EmptyDashboardState message="目前沒有退回重作紀錄。" />;
-  }
-
+  // 刻意不因 totalReturns===0 就整塊替換成空狀態訊息——0 筆時仍必須顯示三張 0 值卡片，
+  // 不得讓「需關注案件」區塊憑空消失。
   return (
     <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

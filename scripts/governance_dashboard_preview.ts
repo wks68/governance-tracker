@@ -1,31 +1,46 @@
-// 治理儀表板 UI 收斂新增：Preview／Smoke 展示資料建置腳本。
+// 治理儀表板 Preview／Smoke 展示資料建置腳本。
 //
 // 目的：正式 dev.db 目前沒有新版 Workflow runtime 資料（Hotfix v1 尚未實際發布給正式
-// 案件使用），無法用來展示收斂後的治理儀表板畫面。本腳本在一個獨立 scratch DB 上建立
-// 完整展示資料：發布 Hotfix v1 WorkflowVersion，並透過真正的執行引擎（M2-B
-// workflowExecutionService，而非直接寫 raw row）把數筆 Issue 推進到各種需要展示的狀態
-// （RD 修正中／待 RD 主管核准／QA 驗證中／待 QA 主管核准／OP 部署準備中／開單人確認中／
-// 有風險／風險待確認／停留過久／重複退回／已取消），外加原有舊制案件（prisma/seed.ts）。
+// 案件使用），無法用來展示收斂後的治理儀表板畫面，也無法驗證「新版案件為 0」以外的
+// 情境。本腳本在一個獨立、可重複產生的 scratch DB 上建立完整展示資料：發布 Hotfix v1
+// WorkflowVersion，並透過真正的執行引擎（M2-B workflowExecutionService，而非直接寫
+// raw row）把數筆 Issue 推進到各種需要展示的狀態（RD 修正中／待 RD 主管核准／QA 驗證
+// 中／待 QA 主管核准／OP 部署準備中／開單人確認中／有風險／風險待確認／停留過久／
+// 重複退回／已取消），並額外發布 RCA／RiskException 兩個簡化 WorkflowVersion，各建立
+// 一筆進行中案件，證明治理儀表板對 issueType 是通用的、不是寫死給 Hotfix 專用；外加
+// 原有舊制案件（prisma/seed.ts，19 筆，維持舊制不變、不啟動新版 Workflow）。
 //
 // Fail-closed：第一行 import 為 assertSafeTestDatabase，拒絕連線到正式 prisma/dev.db。
 //
-// 執行方式（DATABASE_URL 指向的檔案必須已存在）：
-//   touch /path/to/preview.db
-//   DATABASE_URL="file:/path/to/preview.db" node_modules/.bin/tsx scripts/dev/seedGovernancePreviewDb.ts
+// 使用方式（單一指令，DB 路徑固定在本 worktree 下、已由頂層 .gitignore 的 `*.db`
+// 規則排除，不會被 commit）：
+//   npm run governance:preview        # 重建 preview DB 並灌入展示資料
+//   npm run dev:governance-preview    # 啟動 dev server 指向該 DB，開 http://localhost:3000/governance
+//
+// 直接執行本檔（略過上面兩個 npm script）：
+//   touch prisma/governance-preview.db
+//   DATABASE_URL="file:./governance-preview.db" npx prisma migrate deploy
+//   DATABASE_URL="file:./governance-preview.db" node_modules/.bin/tsx scripts/governance_dashboard_preview.ts
+//
+// 注意：Prisma（CLI 與執行期 Client 皆同）對 sqlite 的相對路徑一律以 schema.prisma
+// 所在目錄（prisma/）為基準解析，不是以執行指令當下的工作目錄為基準——因此上面這裡
+// 是 "file:./governance-preview.db"，不是 "file:./prisma/governance-preview.db"
+// （後者會被誤解析成 prisma/prisma/governance-preview.db）。
 
-import "../lib/assertSafeTestDatabase";
+import "./lib/assertSafeTestDatabase";
 
 import { execSync } from "node:child_process";
-import { prisma } from "../../src/lib/prisma";
-import { decideApprovalRecord } from "../../src/lib/approvalService";
-import { buildHotfixWorkflowV1 } from "../lib/buildHotfixWorkflowV1";
+import { prisma } from "../src/lib/prisma";
+import { decideApprovalRecord } from "../src/lib/approvalService";
+import { buildHotfixWorkflowV1 } from "./lib/buildHotfixWorkflowV1";
+import { createWorkflowDefinition, createDraftVersion, addWorkflowStage, addWorkflowTransition, publishWorkflowVersion } from "../src/lib/workflowService";
 import {
   startIssueWorkflow,
   executeIssueTransition,
   returnIssueToStage,
   cancelIssueWorkflow,
   setIssueAssignedTeamAtTriage,
-} from "../../src/lib/workflowExecutionService";
+} from "../src/lib/workflowExecutionService";
 
 const RUN_TAG = "hfpv";
 
@@ -59,7 +74,7 @@ async function findActiveApproval(issueId: string, approvalType: string, related
 }
 
 async function answerRiskChecks(issueId: string, stageKey: string, userId: string, answer: "NO" | "YES" | "UNKNOWN" = "NO") {
-  const { getRiskCheckTemplate } = await import("../../src/lib/riskCheckTemplates");
+  const { getRiskCheckTemplate } = await import("../src/lib/riskCheckTemplates");
   const template = getRiskCheckTemplate(stageKey);
   if (!template) throw new Error(`stageKey「${stageKey}」無風險檢核模板`);
   for (const item of template) {
@@ -223,10 +238,69 @@ async function backdateOpenHistory(issueId: string, days: number) {
   });
 }
 
+// 供 RCA／RiskException 展示用的極簡雙關卡流程（open→closed，1 條 FORWARD），
+// 只是要證明治理儀表板對 issueType 是通用讀取、不是寫死 Hotfix 專屬邏輯——不需要
+// Hotfix v1 那種 20 關卡的完整度。
+async function buildSimpleWorkflow(issueType: string, name: string, actorId: string) {
+  const definition = await createWorkflowDefinition({
+    key: `${RUN_TAG}-simple-${issueType.toLowerCase()}`,
+    name,
+    description: `Preview 展示用最小流程（${issueType}）`,
+    issueType,
+    actorId,
+    reasonCode: "PREVIEW_BUILD_SIMPLE",
+  });
+  const version = await createDraftVersion({ workflowDefinitionId: definition.id, actorId, reasonCode: "PREVIEW_BUILD_SIMPLE" });
+  const openStage = await addWorkflowStage({
+    workflowVersionId: version.id,
+    stageKey: "open",
+    label: "處理中",
+    stageType: "WORK",
+    sortOrder: 0,
+    isStart: true,
+    isEnd: false,
+    actorId,
+    reasonCode: "PREVIEW_BUILD_SIMPLE",
+  });
+  const closedStage = await addWorkflowStage({
+    workflowVersionId: version.id,
+    stageKey: "closed",
+    label: "結案",
+    stageType: "CLOSURE",
+    sortOrder: 1,
+    isStart: false,
+    isEnd: true,
+    terminalOutcome: "COMPLETED",
+    actorId,
+    reasonCode: "PREVIEW_BUILD_SIMPLE",
+  });
+  await addWorkflowTransition({
+    workflowVersionId: version.id,
+    fromStageId: openStage.id,
+    toStageId: closedStage.id,
+    transitionType: "FORWARD",
+    actionKey: "close",
+    label: "結案",
+    requireReason: false,
+    actorId,
+    reasonCode: "PREVIEW_BUILD_SIMPLE",
+  });
+  const published = await publishWorkflowVersion({ versionId: version.id, actorId, reasonCode: "PREVIEW_BUILD_SIMPLE" });
+  return { definition, version: published, openStageId: openStage.id };
+}
+
+async function createSimpleInProgressIssue(key: string, title: string, issueType: string, workflowVersionId: string, adminId: string) {
+  const issue = await prisma.issue.create({
+    data: { issueKey: `${RUN_TAG}-${key}`, issueType, title, workflowStatus: "n/a" },
+  });
+  await startIssueWorkflow({ issueId: issue.id, workflowVersionId, actorId: adminId, reasonCode: "PREVIEW_START" });
+  return issue;
+}
+
 async function main() {
   console.log("=== 建立治理儀表板 Preview／Smoke 展示資料 ===");
 
-  console.log("[1/4] 套用 baseline seed（原有 7 位使用者＋19 筆舊制案件）...");
+  console.log("[1/4] 套用 baseline seed（原有 7 位使用者＋19 筆舊制案件，維持舊制不變）...");
   execSync("npx tsx prisma/seed.ts", { cwd: process.cwd(), stdio: "inherit" });
 
   console.log("[2/4] 建立 RD／QA／OP 團隊與人員、發布 Hotfix v1 流程...");
@@ -259,7 +333,7 @@ async function main() {
 
   const ctx: Ctx = { hotfix, admin, pm, supervisor, rdTeam, rdMember, rdLead, qaTeam, qaMember, qaLead, opTeam, opMember, opLead };
 
-  console.log("[3/4] 建立展示用 Hotfix 案件（依需求 6 節清單各狀態）...");
+  console.log("[3/4] 建立展示用 Hotfix 案件（涵蓋各種狀態）＋ RCA／RiskException 案件（證明多 issueType 通用）...");
 
   const rd1 = await createHotfixIssue("RD-01", "登入頁面驗證碼顯示異常", ctx);
   await advanceTo(ctx, rd1, 2); // RD 修正中
@@ -316,6 +390,19 @@ async function main() {
   const cancelT = await findTransition(hotfix.version.id, hotfix.stageIds.draft, "cancelDraft");
   await cancelIssueWorkflow({ issueId: cancelled.id, transitionId: cancelT.id, actorId: admin.id, reasonCode: "PREVIEW_CANCEL" });
 
+  // ---- RCA／RiskException：各發布一個最小流程＋一筆進行中案件 ----
+  const rcaWorkflow = await buildSimpleWorkflow("RCA", "RCA 根因分析流程（Preview）", admin.id);
+  const rcaIssue = await createSimpleInProgressIssue("RCA-01", "登入逾時根因分析", "RCA", rcaWorkflow.version.id, admin.id);
+
+  const riskExceptionWorkflow = await buildSimpleWorkflow("RiskException", "風險例外處理流程（Preview）", admin.id);
+  const riskExceptionIssue = await createSimpleInProgressIssue(
+    "RISKEXC-01",
+    "第三方 SDK 暫時使用過期憑證風險例外申請",
+    "RiskException",
+    riskExceptionWorkflow.version.id,
+    admin.id,
+  );
+
   console.log("[4/4] 完成。");
   console.log(`  RD 修正中：${rd1.issueKey}, ${rd2.issueKey}, ${riskYes.issueKey}（有風險）, ${stale.issueKey}（停留過久）`);
   console.log(`  待 RD 主管核准：${rdApproval.issueKey}`);
@@ -325,6 +412,8 @@ async function main() {
   console.log(`  開單人確認中（正式環境確認）：${confirming.issueKey}`);
   console.log(`  重複退回（現停 RD 修正中）：${repeatedReturn.issueKey}`);
   console.log(`  已取消：${cancelled.issueKey}`);
+  console.log(`  RCA 進行中：${rcaIssue.issueKey}`);
+  console.log(`  RiskException 進行中：${riskExceptionIssue.issueKey}`);
   console.log(`  Team：${rdTeam.name} / ${qaTeam.name} / ${opTeam.name}`);
 }
 

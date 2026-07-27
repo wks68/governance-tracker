@@ -202,7 +202,6 @@ export interface GovernanceDashboardViewModel {
   // 出現於治理儀表板的任何統計或清單，一律只能在 /issues 一般工單清單／明細頁查閱
   // （見 viewModel.ts 對 governedRows 的篩選）。
   issueList: GovernanceIssueRow[];
-  hasAnyVisibleIssue: boolean;
 }
 
 export class GovernanceDashboardAccessDeniedError extends Error {

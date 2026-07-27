@@ -84,6 +84,5 @@ export async function buildGovernanceDashboardViewModel(
     teamWorkload: computeTeamWorkload(filteredRows, staleDaysThreshold),
     actionNeeded: computeActionNeededList(filteredRows, staleDaysThreshold),
     issueList: filteredRows,
-    hasAnyVisibleIssue: governedRows.length > 0,
   };
 }

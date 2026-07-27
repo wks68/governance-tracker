@@ -11,8 +11,8 @@ import { LIFECYCLE_STATUS_LABEL, RISK_STATUS_LABEL, RISK_STATUS_TONE } from "@/l
 export default function GovernanceIssueList({ issues }: { issues: GovernanceIssueRow[] }) {
   if (issues.length === 0) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
-        目前沒有符合篩選條件的案件。
+      <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-center text-sm text-gray-400">
+        目前沒有符合篩選條件的進行中案件。
       </div>
     );
   }

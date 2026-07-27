@@ -5,9 +5,9 @@
 import type { GovernanceIssueRow, GovernanceLifecycleStatus, GovernanceRiskStatus } from "./types";
 
 export const RISK_STATUS_LABEL: Record<GovernanceRiskStatus, string> = {
-  YES: "有風險",
-  UNKNOWN: "風險待確認",
-  UNANSWERED: "尚未完成風險確認",
+  YES: "已確認有風險",
+  UNKNOWN: "風險狀況待釐清",
+  UNANSWERED: "尚未填寫風險確認",
   NONE: "—",
 };
 

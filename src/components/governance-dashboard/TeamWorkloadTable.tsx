@@ -15,7 +15,7 @@ export default function TeamWorkloadTable({
   staleDaysThreshold: StaleDaysOption;
 }) {
   if (entries.length === 0) {
-    return <EmptyDashboardState message="目前沒有已指派 Team 的案件。" />;
+    return <EmptyDashboardState message="目前尚無已指派負責單位的進行中案件。" />;
   }
 
   return (

@@ -10,7 +10,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "governance:preview": "rm -f prisma/governance-preview.db && touch prisma/governance-preview.db && DATABASE_URL=\"file:./governance-preview.db\" npx prisma migrate deploy && DATABASE_URL=\"file:./governance-preview.db\" tsx scripts/governance_dashboard_preview.ts",
+    "dev:governance-preview": "DATABASE_URL=\"file:./governance-preview.db\" next dev"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
