@@ -16,7 +16,9 @@ import "./lib/assertSafeTestDatabase";
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { execSync } from "node:child_process";
+import { PrismaClient } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
 import { decideApprovalRecord } from "../src/lib/approvalService";
 import { getRiskCheckTemplate } from "../src/lib/riskCheckTemplates";
@@ -42,6 +44,7 @@ import {
   getIssueWorkflowRuntime,
   recordStageRequirementResult,
   isIssueOnVersionedWorkflow,
+  resolveUniqueAutoStartVersionForIssueType,
   WorkflowExecutionStateError,
   WorkflowExecutionAccessDeniedError,
   WorkflowExecutionBlockedError,
@@ -93,6 +96,44 @@ async function expectError(name: string, fn: () => Promise<unknown>, matcher: (e
 }
 
 const RUN_TAG = `m2bv${Date.now()}`;
+
+// ---------------------------------------------------------------------------
+// Migration 路徑驗證用的獨立 scratch 檔案（與上方主測試 DB 完全分離，各自獨立生命
+// 週期，互不干擾）。比照 scripts/m1_5_c1_a-verify.ts 的 freshScratchPath／migrateDeploy／
+// runSeed／clientFor 慣例。OFFICIAL_DEV_DB 一律只被讀取（fs.copyFileSync 的來源），
+// 本檔任何地方都不對它送出 migrate/seed，也不直接開啟連線寫入。
+// ---------------------------------------------------------------------------
+const REPO_ROOT = path.resolve(__dirname, "..");
+const PRISMA_DIR = path.join(REPO_ROOT, "prisma");
+const OFFICIAL_DEV_DB = "/workspaces/governance-tracker/prisma/dev.db";
+const MIGRATION_SCRATCH_DIR = path.join(PRISMA_DIR, ".m2_b_verify_migration_scratch");
+
+function freshMigrationScratchPath(name: string): string {
+  return path.join(MIGRATION_SCRATCH_DIR, name);
+}
+
+function migrateDeployOn(scratchAbsPath: string) {
+  const rel = path.relative(PRISMA_DIR, scratchAbsPath);
+  execSync(`npx prisma migrate deploy`, {
+    cwd: REPO_ROOT,
+    env: { ...process.env, DATABASE_URL: `file:./${rel}` },
+    stdio: "pipe",
+  });
+}
+
+function seedOn(scratchAbsPath: string) {
+  const rel = path.relative(PRISMA_DIR, scratchAbsPath);
+  execSync(`npx tsx prisma/seed.ts`, {
+    cwd: REPO_ROOT,
+    env: { ...process.env, DATABASE_URL: `file:./${rel}` },
+    stdio: "pipe",
+  });
+}
+
+function migrationScratchClientFor(scratchAbsPath: string): PrismaClient {
+  const rel = path.relative(PRISMA_DIR, scratchAbsPath);
+  return new PrismaClient({ datasources: { db: { url: `file:./${rel}` } } });
+}
 
 interface Fixtures {
   userIds: string[];
@@ -653,6 +694,383 @@ async function runStaticSourceChecks() {
   const actionsSrc = fs.readFileSync(actionsPath, "utf8");
   check("[UI3] actions.ts 的 transitionStatusAction／sendBackToRdAction 已改為對新流程 Issue 拒絕執行", /isIssueOnVersionedWorkflow\(issue\)/.test(actionsSrc));
   check("[UI4] actions.ts 的 createIssueAction 已串接 startWorkflowForIssueSystemTx", /startWorkflowForIssueSystemTx/.test(actionsSrc));
+
+  // [UI5]/[UI6]：未授權時不得建立 Issue。createIssueAction 呼叫 requireCurrentUser()
+  // 需要 next/headers 的 cookies()，離開真實 request 情境無法直接呼叫（比照既有
+  // m1_5_c1_b-verify.ts [9a]-[9d]／m1_5_c1_c-verify.ts 對 Server Action 的既有處理慣例，
+  // 改以靜態原始碼檢查取代執行期呼叫）。這裡驗證的是「requireCurrentUser() 是
+  // createIssueAction 函式體的第一行可執行陳述式，且早於任何 Issue 寫入（prisma.issue.create
+  // 或 prisma.$transaction）」——未登入或已停用帳號會在 requireCurrentUser() 內被
+  // redirect("/login")，函式體會在抵達任何寫入前就中止，因此不會建立孤兒 Issue。
+  const createIssueActionMatch = actionsSrc.match(
+    /export async function createIssueAction\([^)]*\)\s*\{([\s\S]*?)\n\}/,
+  );
+  check("[UI5] 找到 createIssueAction 函式本體，可供靜態檢查", createIssueActionMatch !== null);
+  if (createIssueActionMatch) {
+    const body = createIssueActionMatch[1];
+    const requireCurrentUserIdx = body.indexOf("requireCurrentUser()");
+    const firstIssueWriteIdx = (() => {
+      const candidates = [body.indexOf("prisma.issue.create"), body.indexOf("prisma.$transaction")].filter((i) => i >= 0);
+      return candidates.length > 0 ? Math.min(...candidates) : -1;
+    })();
+    check(
+      "[UI6] createIssueAction 內 requireCurrentUser() 早於任何 Issue 寫入（未授權會在寫入前以 redirect 中止，不留下孤兒 Issue）",
+      requireCurrentUserIdx >= 0 && firstIssueWriteIdx >= 0 && requireCurrentUserIdx < firstIssueWriteIdx,
+      `requireCurrentUser() at ${requireCurrentUserIdx}, first issue write at ${firstIssueWriteIdx}`,
+    );
+  } else {
+    skip("[UI6] createIssueAction 內 requireCurrentUser() 早於任何 Issue 寫入", "找不到 createIssueAction 函式本體");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Migration 路徑驗證（Existing DB／Fresh DB／Synthetic M2-A History）
+//
+// 三者完全獨立於上面各段使用的主測試 DB，各自在 .m2_b_verify_migration_scratch/
+// 底下建立自己的 scratch 檔案，只對 scratch 檔案執行 `prisma migrate deploy`／
+// `prisma/seed.ts`，不曾對 DATABASE_URL 指定的主測試 DB、也不曾對正式
+// /workspaces/governance-tracker/prisma/dev.db 送出任何 migrate/seed 或寫入——
+// 正式 dev.db 只被當作「唯讀複製來源」（fs.copyFileSync）使用。
+// ---------------------------------------------------------------------------
+
+// 與 scripts/m1_5_c1_a-verify.ts 的 issueSetHash 完全相同的演算法（欄位順序、排序鍵、
+// 序列化方式皆相同）——只用來確認「migration 前後 Issue 資料本身沒有變動」，不是拿來
+// 跟外部提供、演算法未知的參考值逐位元比對。
+const ISSUE_HASH_COLUMNS = [
+  "id", "issueKey", "issueType", "title", "description", "systemName", "environment",
+  "riskLevel", "priority", "ownerRole", "ownerName", "ownerUserId", "reporter", "reporterUserId",
+  "workflowStatus", "statusLight", "dueDate", "needRca", "needRiskException", "impactProduction",
+  "evidenceStatus", "blockReason", "waitingRole", "nextStep", "alertLevel", "firstResponseAt",
+  "assignedTeamId", "stageEnteredAt", "changeSubType", "createdAt", "updatedAt", "closedAt",
+]
+  .map((c) => `"${c}"`)
+  .join(", ");
+
+async function issueSetHash(client: PrismaClient): Promise<string> {
+  const rows = await client.$queryRawUnsafe<Record<string, unknown>[]>(`SELECT ${ISSUE_HASH_COLUMNS} FROM "Issue" ORDER BY "id"`);
+  const serialized = rows.map((r) => Object.values(r).join("|")).join("\n");
+  return crypto.createHash("sha256").update(serialized).digest("hex");
+}
+
+async function runExistingDbMigrationTest(): Promise<void> {
+  const scratchPath = freshMigrationScratchPath("existing-upgrade.db");
+  fs.rmSync(scratchPath, { force: true });
+
+  const officialStatBefore = fs.statSync(OFFICIAL_DEV_DB);
+  const officialHashBefore = crypto.createHash("sha256").update(fs.readFileSync(OFFICIAL_DEV_DB)).digest("hex");
+  fs.copyFileSync(OFFICIAL_DEV_DB, scratchPath);
+
+  const before = migrationScratchClientFor(scratchPath);
+  let snapBefore: Record<string, number | string>;
+  try {
+    snapBefore = {
+      issueCount: await before.issue.count(),
+      hotfix0004Count: await before.issue.count({ where: { issueKey: "HOTFIX-0004" } }),
+      issueHash: await issueSetHash(before),
+      userCount: await before.user.count(),
+      userRoleCount: await before.userRole.count(),
+      teamCount: await before.team.count(),
+      teamMemberCount: await before.teamMember.count(),
+      approvalRecordCount: await before.approvalRecord.count(),
+      stageRiskCheckCount: await before.stageRiskCheck.count(),
+      supervisorAssignmentCount: await before.userSupervisorAssignment.count(),
+      approvalDelegationCount: await before.approvalDelegation.count(),
+      workflowDefinitionCount: await before.workflowDefinition.count(),
+      workflowVersionCount: await before.workflowVersion.count(),
+      workflowStageCount: await before.workflowStage.count(),
+      workflowTransitionCount: await before.workflowTransition.count(),
+    };
+  } finally {
+    await before.$disconnect();
+  }
+
+  check("[MIG1-0] 複本 Issue 筆數為 19（正式基準）", snapBefore.issueCount === 19, `實際 ${snapBefore.issueCount}`);
+  check("[MIG1-0b] 複本 HOTFIX-0004 為 0 筆（已清理殘留）", snapBefore.hotfix0004Count === 0, `實際 ${snapBefore.hotfix0004Count}`);
+
+  migrateDeployOn(scratchPath);
+
+  const after = migrationScratchClientFor(scratchPath);
+  try {
+    const issueCountAfter = await after.issue.count();
+    const hotfix0004CountAfter = await after.issue.count({ where: { issueKey: "HOTFIX-0004" } });
+    const issueHashAfter = await issueSetHash(after);
+    const historyCountAfter = await after.issueWorkflowStageHistory.count();
+
+    check("[MIG1-1] Issue 筆數不變（19）", issueCountAfter === snapBefore.issueCount, `前 ${snapBefore.issueCount} 後 ${issueCountAfter}`);
+    check("[MIG1-2] HOTFIX-0004 不變（0）", hotfix0004CountAfter === snapBefore.hotfix0004Count);
+    check("[MIG1-3] Issue hash 不變（migration 未曾觸碰 Issue 資料）", issueHashAfter === snapBefore.issueHash, `前 ${snapBefore.issueHash} 後 ${issueHashAfter}`);
+    check("[MIG1-4] User 筆數不變", (await after.user.count()) === snapBefore.userCount);
+    check("[MIG1-5] UserRole 筆數不變", (await after.userRole.count()) === snapBefore.userRoleCount);
+    check("[MIG1-6] Team／TeamMember 筆數不變", (await after.team.count()) === snapBefore.teamCount && (await after.teamMember.count()) === snapBefore.teamMemberCount);
+    check(
+      "[MIG1-7] 治理資料（ApprovalRecord／StageRiskCheck／UserSupervisorAssignment／ApprovalDelegation）筆數不變",
+      (await after.approvalRecord.count()) === snapBefore.approvalRecordCount &&
+        (await after.stageRiskCheck.count()) === snapBefore.stageRiskCheckCount &&
+        (await after.userSupervisorAssignment.count()) === snapBefore.supervisorAssignmentCount &&
+        (await after.approvalDelegation.count()) === snapBefore.approvalDelegationCount,
+    );
+    check(
+      "[MIG1-8] M2-A Workflow 定義資料（Definition／Version／Stage／Transition）筆數不變",
+      (await after.workflowDefinition.count()) === snapBefore.workflowDefinitionCount &&
+        (await after.workflowVersion.count()) === snapBefore.workflowVersionCount &&
+        (await after.workflowStage.count()) === snapBefore.workflowStageCount &&
+        (await after.workflowTransition.count()) === snapBefore.workflowTransitionCount,
+    );
+    check("[MIG1-9] IssueWorkflowStageHistory 為 0 筆（正式庫尚無既有執行紀錄）", historyCountAfter === 0, `實際 ${historyCountAfter}`);
+
+    const fkCheck = await after.$queryRawUnsafe<Record<string, unknown>[]>("PRAGMA foreign_key_check;");
+    check("[MIG1-10] 無孤兒 FK（套用 M2-B migration 後）", fkCheck.length === 0, JSON.stringify(fkCheck));
+
+    const integrity = await after.$queryRawUnsafe<{ integrity_check: string }[]>("PRAGMA integrity_check;");
+    check("[MIG1-11] PRAGMA integrity_check = ok", integrity[0]?.integrity_check === "ok", integrity[0]?.integrity_check);
+  } finally {
+    await after.$disconnect();
+  }
+
+  const officialStatAfter = fs.statSync(OFFICIAL_DEV_DB);
+  const officialHashAfter = crypto.createHash("sha256").update(fs.readFileSync(OFFICIAL_DEV_DB)).digest("hex");
+  check(
+    "[MIG1-12] 正式 dev.db 全程未被寫入（bytes／SHA-256／mtime 皆不變，本測試只複製，從未對正式檔案 migrate/寫入）",
+    officialStatBefore.size === officialStatAfter.size && officialStatBefore.mtimeMs === officialStatAfter.mtimeMs && officialHashBefore === officialHashAfter,
+  );
+}
+
+async function runFreshDbMigrationTest(): Promise<boolean> {
+  const scratchPath = freshMigrationScratchPath("fresh-seed.db");
+  fs.rmSync(scratchPath, { force: true });
+  migrateDeployOn(scratchPath);
+  seedOn(scratchPath);
+
+  const client = migrationScratchClientFor(scratchPath);
+  try {
+    const userCount = await client.user.count();
+    const issueCount = await client.issue.count();
+    const historyCount = await client.issueWorkflowStageHistory.count();
+    return userCount === 7 && issueCount === 19 && historyCount === 0;
+  } finally {
+    await client.$disconnect();
+  }
+}
+
+/**
+ * 官方 dev.db 目前仍停在 M2-A1（IssueWorkflowStageHistory 舊形狀：workflowStageId／
+ * reason／enteredAt，0 筆既有資料），因此單獨複製官方 dev.db 並不足以驗證 M2-B
+ * migration.sql 手動修正過的 INSERT...SELECT 資料搬移邏輯是否正確——0 筆資料的
+ * migration 永遠會「成功」，卻證明不了任何東西。這裡刻意合成兩筆舊形狀歷史列
+ * （一筆進行中關卡 terminalOutcome 應為 null，一筆終點關卡 terminalOutcome 應由
+ * WorkflowStage 現場查出），驗證 migration 後的新形狀資料逐欄正確、且新增的
+ * fromStageId／transitionId／assignedTeamIdBefore／assignedTeamIdAfter 四欄
+ * 明確為 null（舊資料本來就不含這些事實，而非搬移遺漏）。
+ */
+async function runSyntheticM2aHistoryMigrationTest(): Promise<{ ok: boolean; detail?: string }> {
+  const scratchPath = freshMigrationScratchPath("synthetic-history.db");
+  fs.rmSync(scratchPath, { force: true });
+  fs.copyFileSync(OFFICIAL_DEV_DB, scratchPath);
+
+  const tag = `m2bmig${Date.now()}`;
+  const setupClient = migrationScratchClientFor(scratchPath);
+  let issueId: string;
+  let enterStageId: string;
+  let endStageId: string;
+  let actorUserId: string;
+  const enteredAtMs = Date.now() - 60_000;
+  const exitedAtMs = Date.now() - 30_000;
+  const closedAtMs = Date.now();
+  try {
+    const admin = await setupClient.user.findFirst({ where: { isActive: true } });
+    if (!admin) return { ok: false, detail: "官方 dev.db 複本缺少可用的 active User，無法建立 synthetic fixture" };
+    actorUserId = admin.id;
+
+    const def = await setupClient.workflowDefinition.create({
+      data: { key: `${tag}-def`, name: "Synthetic M2-A History", issueType: `${tag}-type`, createdByUserId: actorUserId },
+    });
+    const version = await setupClient.workflowVersion.create({
+      data: { workflowDefinitionId: def.id, versionNo: 1, status: "PUBLISHED", createdByUserId: actorUserId, publishedAt: new Date(), publishedByUserId: actorUserId },
+    });
+    const enterStage = await setupClient.workflowStage.create({
+      data: { workflowVersionId: version.id, stageKey: "in-progress", label: "進行中", stageType: "WORK", sortOrder: 1, isStart: true, isEnd: false },
+    });
+    const endStage = await setupClient.workflowStage.create({
+      data: { workflowVersionId: version.id, stageKey: "closed", label: "結案", stageType: "CLOSURE", sortOrder: 2, isEnd: true, terminalOutcome: "COMPLETED" },
+    });
+    const issue = await setupClient.issue.create({
+      data: { issueKey: `${tag}-ISSUE`, issueType: def.issueType, title: "Synthetic M2-A history issue", workflowStatus: "closed" },
+    });
+    issueId = issue.id;
+    enterStageId = enterStage.id;
+    endStageId = endStage.id;
+
+    // 舊形狀 raw insert（M2-A1 時期的實際欄位：workflowStageId／reason／enteredAt，
+    // 完全比照 M2-B migration.sql 頂部註解記載的舊 schema）。
+    await setupClient.$executeRawUnsafe(
+      `INSERT INTO "IssueWorkflowStageHistory" ("id","issueId","workflowStageId","transitionType","actorUserId","reason","enteredAt","exitedAt") VALUES (?,?,?,?,?,?,?,?)`,
+      `${tag}-hist-1`, issueId, enterStageId, "ENTERED", actorUserId, null, enteredAtMs, exitedAtMs,
+    );
+    await setupClient.$executeRawUnsafe(
+      `INSERT INTO "IssueWorkflowStageHistory" ("id","issueId","workflowStageId","transitionType","actorUserId","reason","enteredAt","exitedAt") VALUES (?,?,?,?,?,?,?,?)`,
+      `${tag}-hist-2`, issueId, endStageId, "FORWARD", actorUserId, "已完成處理", closedAtMs, null,
+    );
+  } finally {
+    await setupClient.$disconnect();
+  }
+
+  migrateDeployOn(scratchPath);
+
+  const afterClient = migrationScratchClientFor(scratchPath);
+  try {
+    const rows = await afterClient.issueWorkflowStageHistory.findMany({ where: { issueId }, orderBy: { id: "asc" } });
+    if (rows.length !== 2) return { ok: false, detail: `搬移後筆數應為 2，實際為 ${rows.length}` };
+    const [row1, row2] = rows;
+
+    const row1Ok =
+      row1.toStageId === enterStageId &&
+      row1.fromStageId === null &&
+      row1.transitionId === null &&
+      row1.assignedTeamIdBefore === null &&
+      row1.assignedTeamIdAfter === null &&
+      row1.reasonCode === null &&
+      row1.terminalOutcome === null &&
+      row1.executedAt.getTime() === enteredAtMs &&
+      row1.exitedAt?.getTime() === exitedAtMs;
+
+    const row2Ok =
+      row2.toStageId === endStageId &&
+      row2.fromStageId === null &&
+      row2.transitionId === null &&
+      row2.assignedTeamIdBefore === null &&
+      row2.assignedTeamIdAfter === null &&
+      row2.reasonCode === "已完成處理" &&
+      row2.terminalOutcome === "COMPLETED" &&
+      row2.executedAt.getTime() === closedAtMs &&
+      row2.exitedAt === null;
+
+    if (!row1Ok) return { ok: false, detail: `第一筆（進行中關卡）搬移後欄位不符：${JSON.stringify(row1)}` };
+    if (!row2Ok) return { ok: false, detail: `第二筆（終點關卡）搬移後欄位不符：${JSON.stringify(row2)}` };
+    return { ok: true };
+  } finally {
+    await afterClient.$disconnect();
+  }
+}
+
+async function runMigrationPathTests() {
+  console.log("\n=== 五、Migration 路徑驗證（Existing DB／Fresh DB／Synthetic M2-A History） ===");
+
+  fs.mkdirSync(MIGRATION_SCRATCH_DIR, { recursive: true });
+
+  if (!fs.existsSync(OFFICIAL_DEV_DB)) {
+    skip("[MIG1] Existing DB Migration", `找不到正式 dev.db 複製來源：${OFFICIAL_DEV_DB}`);
+    skip("[MIG3] Synthetic M2-A History Migration", `找不到正式 dev.db 複製來源：${OFFICIAL_DEV_DB}`);
+  } else {
+    await runExistingDbMigrationTest();
+    await checkAsync("[MIG3] Synthetic M2-A History Migration：舊形狀歷史列搬移後欄位逐一正確（含 terminalOutcome 現場查出、新欄位明確為 null）", async () => {
+      const result = await runSyntheticM2aHistoryMigrationTest();
+      if (!result.ok) console.log(`    詳情：${result.detail}`);
+      return result.ok;
+    });
+  }
+
+  await checkAsync("[MIG2] Fresh DB Migration：全新空 DB 從 init 到 M2-B 完整套用＋seed 成功（7 位 User／19 筆 Issue／0 筆歷史紀錄）", runFreshDbMigrationTest);
+
+  fs.rmSync(MIGRATION_SCRATCH_DIR, { recursive: true, force: true });
+  console.log("    已清除 Migration 路徑驗證 scratch 目錄");
+}
+
+// ---------------------------------------------------------------------------
+// 6. createIssueAction／Workflow 啟動交易原子性
+//
+// createIssueAction 本身（src/lib/actions.ts）因呼叫 requireCurrentUser()（需要
+// next/headers 的 cookies()）而無法離開真實 request 情境直接呼叫（比照既有
+// m1_5_c1_c-verify.ts／m2_a-verify.ts 對 Server Action 的既有處理慣例）。這裡
+// 直接重現它內部真正的交易結構——同一個 prisma.$transaction 內先
+// tx.issue.create() 再呼叫 startWorkflowForIssueSystemTx(tx, ...)——藉由讓
+// 啟動步驟強制失敗，證明 Issue 建立不會單獨殘留（整個 transaction 一起回滾），
+// 並以正向對照組證明兩者在成功時確實一起提交。
+// ---------------------------------------------------------------------------
+
+async function runAtomicityTests(fx: Fixtures) {
+  console.log("\n=== 七、createIssueAction／Workflow 啟動交易原子性 ===");
+
+  const actor = await createUser(fx, "AtomicActor", "Admin");
+
+  // ---- ATM0：沒有適用 Published Workflow 時，resolveUniqueAutoStartVersionForIssueType
+  // 回傳 null，createIssueAction 應完全比照今天的 legacy 路徑建立 Issue（不呼叫
+  // startWorkflowForIssueSystemTx），workflowVersionId／currentWorkflowStageId 皆為 null。----
+  const noWorkflowIssueType = `${RUN_TAG}-atm0-no-workflow-type`;
+  await checkAsync("[ATM0] 沒有適用 Published Workflow：resolveUniqueAutoStartVersionForIssueType 回傳 null", async () => {
+    const resolved = await resolveUniqueAutoStartVersionForIssueType(noWorkflowIssueType);
+    return resolved === null;
+  });
+  await checkAsync("[ATM0b] 沒有適用 Published Workflow：legacy 路徑建立 Issue 成功，workflowVersionId／currentWorkflowStageId 皆為 null", async () => {
+    const issue = await prisma.issue.create({
+      data: { issueKey: `${RUN_TAG}-ATOMIC-LEGACY`, issueType: noWorkflowIssueType, title: "no applicable workflow probe", workflowStatus: "n/a" },
+    });
+    fx.issueIds.push(issue.id);
+    return issue.workflowVersionId === null && issue.currentWorkflowStageId === null;
+  });
+
+  // ---- ATM3：同一 issueType 存在兩個「不同」WorkflowDefinition 各自有 Published 版本時，
+  // 沒有 Plan 定義的唯一選擇規則，resolveUniqueAutoStartVersionForIssueType 必須 fail
+  // closed 回傳 null，不得依查詢回傳順序任意挑選其中一個。----
+  const ambiguousIssueType = `${RUN_TAG}-atm3-ambiguous-type`;
+  await buildGenericVersion(fx, actor.id, ambiguousIssueType, "atm3-def-1");
+  await buildGenericVersion(fx, actor.id, ambiguousIssueType, "atm3-def-2");
+  await checkAsync("[ATM3] 存在兩個不同 Definition 皆適用同一 issueType 時 fail closed，不任意挑選", async () => {
+    const resolved = await resolveUniqueAutoStartVersionForIssueType(ambiguousIssueType);
+    return resolved === null;
+  });
+  await checkAsync("[ATM3b] fail closed 後 legacy 路徑仍可正常建立 Issue（不阻擋建單本身，只是不自動綁定）", async () => {
+    const issue = await prisma.issue.create({
+      data: { issueKey: `${RUN_TAG}-ATOMIC-AMBIGUOUS`, issueType: ambiguousIssueType, title: "ambiguous workflow probe", workflowStatus: "n/a" },
+    });
+    fx.issueIds.push(issue.id);
+    return issue.workflowVersionId === null && issue.currentWorkflowStageId === null;
+  });
+
+  const rollbackIssueKey = `${RUN_TAG}-ATOMIC-ROLLBACK`;
+  await checkAsync(
+    "[ATM1] Workflow 啟動於同一 transaction 內失敗時，Issue 建立完整回滾（不留下孤兒 Issue）",
+    async () => {
+      try {
+        await prisma.$transaction(async (tx) => {
+          const created = await tx.issue.create({
+            data: { issueKey: rollbackIssueKey, issueType: `${RUN_TAG}-atomic-type`, title: "atomicity rollback probe", workflowStatus: "n/a" },
+          });
+          await startWorkflowForIssueSystemTx(tx, {
+            issueId: created.id,
+            workflowVersionId: "does-not-exist-forces-rollback",
+            actorId: actor.id,
+            reasonCode: "ATOMICITY_TEST",
+          });
+        });
+        return false; // 預期一定拋出例外，不應該走到這裡
+      } catch {
+        const found = await prisma.issue.findUnique({ where: { issueKey: rollbackIssueKey } });
+        return found === null;
+      }
+    },
+  );
+
+  const atomicVersion = await buildGenericVersion(fx, actor.id, `${RUN_TAG}-atomic-ok-type`, "atomic-ok");
+  const commitIssueKey = `${RUN_TAG}-ATOMIC-COMMIT`;
+  await checkAsync(
+    "[ATM2] 正向對照組：同一 transaction 內 Issue 建立與 Workflow 啟動皆成功時，兩者一起提交",
+    async () => {
+      const issue = await prisma.$transaction(async (tx) => {
+        const created = await tx.issue.create({
+          data: { issueKey: commitIssueKey, issueType: atomicVersion.definition.issueType, title: "atomicity commit probe", workflowStatus: "n/a" },
+        });
+        await startWorkflowForIssueSystemTx(tx, {
+          issueId: created.id,
+          workflowVersionId: atomicVersion.version.id,
+          actorId: actor.id,
+          reasonCode: "ATOMICITY_TEST",
+        });
+        return tx.issue.findUniqueOrThrow({ where: { id: created.id } });
+      });
+      fx.issueIds.push(issue.id);
+      return issue.workflowVersionId === atomicVersion.version.id && issue.currentWorkflowStageId === atomicVersion.stages.start.id;
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -712,10 +1130,13 @@ async function main() {
       const { hotfix, admin } = await runHotfixV1HappyPath(fx);
       await runCancelFlow(fx, hotfix, admin);
       await runGenericEngineTests(fx);
+      await runAtomicityTests(fx);
     } finally {
       await cleanupFixtures(fx);
     }
   }
+
+  await runMigrationPathTests();
 
   console.log(`\n=== 結果：PASS=${passCount} FAIL=${failCount} SKIP=${skipCount} ===`);
 

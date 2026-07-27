@@ -12,7 +12,7 @@ import { generateAiSuggestion, AiSuggestionType, AiContext } from "./mockAi";
 import { requireCurrentUser } from "./auth";
 import {
   isIssueOnVersionedWorkflow,
-  listSelectablePublishedVersionsForIssueType,
+  resolveUniqueAutoStartVersionForIssueType,
   startWorkflowForIssueSystemTx,
 } from "./workflowExecutionService";
 
@@ -152,9 +152,11 @@ export async function createIssueAction(formData: FormData) {
   // M2-B：逐 issueType opt-in（Plan 第八節第 4 點）——若此 issueType 已有可供選用的 Published
   // WorkflowVersion（所屬 Definition 必須 isActive=true），新 Issue 於建立當下即自動啟動該
   // 版本的執行引擎（固定使用此版本，不隨日後新版本發布改變）；否則行為與今天完全一致，
-  // 純粹沿用舊有 workflowStatus 線性流程，不受影響。有多個 Published 版本時取版號最大者。
-  const selectableVersions = await listSelectablePublishedVersionsForIssueType(issueType);
-  const versionToStart = selectableVersions[0] ?? null;
+  // 純粹沿用舊有 workflowStatus 線性流程，不受影響。同一 Definition 有多個 Published 版本
+  // 時取版號最大者；但若有兩個以上「不同」Definition 同時符合此 issueType，唯一選擇規則
+  // 不存在，resolveUniqueAutoStartVersionForIssueType fail closed 回傳 null，退回舊模型，
+  // 不得依查詢回傳順序任意挑選（見該函式內完整規則說明）。
+  const versionToStart = await resolveUniqueAutoStartVersionForIssueType(issueType);
 
   const issue = await prisma.$transaction(async (tx) => {
     const created = await tx.issue.create({

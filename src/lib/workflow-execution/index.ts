@@ -21,7 +21,7 @@ export { setIssueAssignedTeamAtTriage } from "./assignmentService";
 export { getIssueWorkflowHistory } from "./historyService";
 export { getIssueWorkflowRuntime, recordStageRequirementResult, type IssueWorkflowRuntime } from "./queries";
 export { evaluateWorkflowStageRequirements, submitStageFieldValue } from "./requirementService";
-export { isIssueOnVersionedWorkflow, listSelectablePublishedVersionsForIssueType } from "./compatibility";
+export { isIssueOnVersionedWorkflow, listSelectablePublishedVersionsForIssueType, resolveUniqueAutoStartVersionForIssueType } from "./compatibility";
 
 // UI 需要「這位 actor 能不能做 X」的唯讀提示（僅供決定要不要顯示某個按鈕／表單），
 // 實際授權仍一律由各服務在呼叫當下重新解析——UI 不得快取或傳遞此結果代替服務層檢查。

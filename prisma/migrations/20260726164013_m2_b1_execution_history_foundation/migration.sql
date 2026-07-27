@@ -1,11 +1,12 @@
 /*
-  Warnings:
-
-  - You are about to drop the column `enteredAt` on the `IssueWorkflowStageHistory` table. All the data in the column will be lost.
-  - You are about to drop the column `reason` on the `IssueWorkflowStageHistory` table. All the data in the column will be lost.
-  - You are about to drop the column `workflowStageId` on the `IssueWorkflowStageHistory` table. All the data in the column will be lost.
-  - Added the required column `toStageId` to the `IssueWorkflowStageHistory` table without a default value. This is not possible if the table is not empty.
-
+  這份 migration 是 Prisma `migrate dev --create-only` 的產出，但下方 INSERT INTO
+  ... SELECT 語句已手動修正（見該語句上方註解）：Prisma 自動產生的版本只複製了
+  actorUserId/exitedAt/id/issueId/transitionType 五欄，完全遺漏 NOT NULL 的 toStageId
+  資料來源，若既有資料非 0 筆會直接因違反 NOT NULL 約束而整個 migration 失敗。手動版本
+  正確地把 workflowStageId→toStageId、reason→reasonCode、enteredAt→executedAt 三個單純
+  改名的欄位資料搬移過去，並從 WorkflowStage 現場查出 terminalOutcome，不遺失任何既有
+  資料；fromStageId／transitionId／assignedTeamIdBefore／assignedTeamIdAfter 是舊 schema
+  從未記錄過的全新事實，既有資料明確設為 NULL（非資料遺失）。
 */
 -- RedefineTables
 PRAGMA defer_foreign_keys=ON;
@@ -31,7 +32,36 @@ CREATE TABLE "new_IssueWorkflowStageHistory" (
     CONSTRAINT "IssueWorkflowStageHistory_assignedTeamIdBefore_fkey" FOREIGN KEY ("assignedTeamIdBefore") REFERENCES "Team" ("id") ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT "IssueWorkflowStageHistory_assignedTeamIdAfter_fkey" FOREIGN KEY ("assignedTeamIdAfter") REFERENCES "Team" ("id") ON DELETE RESTRICT ON UPDATE RESTRICT
 );
-INSERT INTO "new_IssueWorkflowStageHistory" ("actorUserId", "exitedAt", "id", "issueId", "transitionType") SELECT "actorUserId", "exitedAt", "id", "issueId", "transitionType" FROM "IssueWorkflowStageHistory";
+-- 手動修正 Prisma 自動產生的 INSERT 語句（原始版本只複製了
+-- actorUserId/exitedAt/id/issueId/transitionType 五欄，完全遺漏 toStageId 這個
+-- NOT NULL 欄位的資料來源，若既有資料非 0 筆會直接違反 NOT NULL 約束而整個 migration
+-- 失敗；即使能執行也會靜默遺失 reasonCode／executedAt 的既有資料）：
+--   toStageId   ← 舊欄位 workflowStageId（單純改名，直接搬移）
+--   reasonCode  ← 舊欄位 reason（單純改名，直接搬移）
+--   executedAt  ← 舊欄位 enteredAt（單純改名，直接搬移）
+--   terminalOutcome ← 由舊 workflowStageId 對應的 WorkflowStage.terminalOutcome 現場查出
+--     （M2-A 發布前驗證已保證 isEnd=false 時 terminalOutcome 必為 null，isEnd=true 時必填，
+--     因此此處不需另外判斷 isEnd，直接取值即為正確結果）
+--   fromStageId／transitionId／assignedTeamIdBefore／assignedTeamIdAfter ← 舊 schema
+--     未曾記錄這些事實，沒有任何既有資料可搬移，一律明確設為 NULL（不是遺失資料，是
+--     舊資料本來就不包含這些欄位所代表的事實）
+INSERT INTO "new_IssueWorkflowStageHistory"
+  ("id", "issueId", "fromStageId", "toStageId", "transitionId", "transitionType", "actorUserId", "reasonCode", "assignedTeamIdBefore", "assignedTeamIdAfter", "terminalOutcome", "executedAt", "exitedAt")
+SELECT
+  "id",
+  "issueId",
+  NULL,
+  "workflowStageId",
+  NULL,
+  "transitionType",
+  "actorUserId",
+  "reason",
+  NULL,
+  NULL,
+  (SELECT ws."terminalOutcome" FROM "WorkflowStage" ws WHERE ws."id" = "IssueWorkflowStageHistory"."workflowStageId"),
+  "enteredAt",
+  "exitedAt"
+FROM "IssueWorkflowStageHistory";
 DROP TABLE "IssueWorkflowStageHistory";
 ALTER TABLE "new_IssueWorkflowStageHistory" RENAME TO "IssueWorkflowStageHistory";
 CREATE INDEX "IssueWorkflowStageHistory_issueId_idx" ON "IssueWorkflowStageHistory"("issueId");
