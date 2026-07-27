@@ -10,6 +10,7 @@ import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
 import { createPendingApprovalRecord, resubmitApprovalRecord } from "../approvalService";
 import { isApprovalType } from "../constants";
+import { getRiskCheckTemplate } from "../riskCheckTemplates";
 import { hasExecutionCapability } from "./access";
 import { getIssueOrThrow } from "./validation";
 import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError, WorkflowExecutionValidationError } from "./types";
@@ -120,6 +121,80 @@ export async function submitStageFieldValue(input: { issueId: string; fieldKey: 
   }
 
   return updated;
+}
+
+// ---------------------------------------------------------------------------
+// 風險檢核填答（Hotfix 操作畫面收斂新增）：approvalService.assertRiskChecksReadyForSubmission
+// 這個既有前置條件（送核前 StageRiskCheck 必須全數填答，UNKNOWN 必須已 resolve）先前
+// 完全沒有對應的填答入口——只有 verify script 用 prisma.stageRiskCheck.create 直接寫入。
+// 這裡比照 submitStageFieldValue 同樣的最小、受限寫入模式補上這個缺口：不重寫任何
+// Transition／Approval 判斷邏輯本身，只是讓「填答風險檢核」這件事透過服務層有一個
+// 安全、會重新授權、且限定寫入範圍的入口。
+//
+// stageKey 必須是「這個 Issue 目前關卡本身」或「目前關卡某條 Transition 的目標關卡」
+// 之一，且該 stageKey 必須確實有風險檢核模板——不接受任意 stageKey，避免這個入口被
+// 當成任意寫入 StageRiskCheck 的後門。
+export async function submitStageRiskCheckAnswer(input: {
+  issueId: string;
+  stageKey: string;
+  checkKey: string;
+  answer: "YES" | "NO" | "UNKNOWN";
+  detail?: string;
+  resolveUnknown?: boolean;
+  actorId: string;
+}) {
+  const canEdit = await hasExecutionCapability(input.actorId, "issue.edit");
+  if (!canEdit) throw new WorkflowExecutionAccessDeniedError('僅具備 "issue.edit" 能力者可填寫風險檢核');
+
+  const issue = await getIssueOrThrow(prisma, input.issueId);
+  if (!issue.currentWorkflowStageId) {
+    throw new WorkflowExecutionStateError("Issue 尚未啟動 Workflow，無法填寫風險檢核");
+  }
+
+  const currentStage = await prisma.workflowStage.findUniqueOrThrow({ where: { id: issue.currentWorkflowStageId } });
+  const isCurrentStage = currentStage.stageKey === input.stageKey;
+  const isReachableTarget = await prisma.workflowTransition.findFirst({
+    where: { fromStageId: issue.currentWorkflowStageId, toStage: { stageKey: input.stageKey } },
+  });
+  if (!isCurrentStage && !isReachableTarget) {
+    throw new WorkflowExecutionValidationError([`stageKey「${input.stageKey}」不是目前關卡，也不是目前關卡可前往的關卡，拒絕寫入`]);
+  }
+
+  const template = getRiskCheckTemplate(input.stageKey);
+  if (!template || !template.some((t) => t.checkKey === input.checkKey)) {
+    throw new WorkflowExecutionValidationError([`stageKey「${input.stageKey}」沒有 checkKey「${input.checkKey}」的風險檢核模板`]);
+  }
+
+  if (input.answer === "UNKNOWN" && input.resolveUnknown && !input.detail?.trim()) {
+    throw new WorkflowExecutionValidationError(["標記已釐清（resolve）時必須填寫說明"]);
+  }
+
+  const existingRows = await prisma.stageRiskCheck.findMany({ where: { issueId: issue.id, stageKey: input.stageKey } });
+  const currentRound = existingRows.length > 0 ? Math.max(...existingRows.map((r) => r.assessmentRound)) : 1;
+  const existing = existingRows.find((r) => r.assessmentRound === currentRound && r.checkKey === input.checkKey);
+
+  const resolvedAt = input.answer === "UNKNOWN" ? (input.resolveUnknown ? new Date() : null) : null;
+  const data = {
+    answer: input.answer,
+    detail: input.detail ?? "",
+    answeredByUserId: input.actorId,
+    answeredAt: new Date(),
+    resolvedAt,
+  };
+
+  const result = existing
+    ? await prisma.stageRiskCheck.update({ where: { id: existing.id }, data })
+    : await prisma.stageRiskCheck.create({ data: { issueId: issue.id, stageKey: input.stageKey, assessmentRound: currentRound, checkKey: input.checkKey, ...data } });
+
+  await writeAuditLog({
+    entityType: "Issue",
+    entityId: issue.id,
+    actionType: "FieldChange",
+    summary: `填寫風險檢核「${input.stageKey}」／「${input.checkKey}」：${input.answer}${resolvedAt ? "（已釐清）" : ""}`,
+    actorUserId: input.actorId,
+  });
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
