@@ -18,7 +18,9 @@ import {
   setIssueAssignedTeamAtTriage,
   startIssueWorkflow,
   submitStageFieldValue,
+  submitStageRiskCheckAnswer,
 } from "@/lib/workflowExecutionService";
+import { decideApprovalRecord } from "@/lib/approvalService";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
 function text(formData: FormData, key: string): string {
@@ -132,6 +134,57 @@ export async function submitStageFieldValueAction(formData: FormData): Promise<A
     });
     revalidateIssue(issueId);
     return actionOk("已填寫");
+  } catch (err) {
+    return toActionResult(err);
+  }
+}
+
+// Hotfix 操作畫面收斂新增：主管核准／駁回決策。approvalService.decideApprovalRecord
+// 本身已在 transaction 內現場重新解析「這個人現在算不算合法核准人」（不信任呼叫端），
+// 這裡只負責把 FormData 轉呼叫並 revalidate，不額外判斷、不快取任何資格結果。
+export async function decideApprovalRecordAction(formData: FormData): Promise<ActionResult> {
+  const actor = await requireCurrentUser();
+  const issueId = text(formData, "issueId");
+  const decision = text(formData, "decision");
+  if (decision !== "APPROVED" && decision !== "REJECTED") {
+    return toActionResult(new Error("decision 必須是 APPROVED 或 REJECTED"));
+  }
+  try {
+    await decideApprovalRecord({
+      approvalRecordId: text(formData, "approvalRecordId"),
+      actorUserId: actor.id,
+      decision,
+      decisionReasonCode: optionalText(formData, "decisionReasonCode"),
+      decisionComment: optionalText(formData, "decisionComment"),
+    });
+    revalidateIssue(issueId);
+    return actionOk(decision === "APPROVED" ? "已核准" : "已駁回");
+  } catch (err) {
+    return toActionResult(err);
+  }
+}
+
+// Hotfix 操作畫面收斂新增：風險檢核填答，見
+// src/lib/workflow-execution/requirementService.ts 的 submitStageRiskCheckAnswer 說明。
+export async function submitStageRiskCheckAnswerAction(formData: FormData): Promise<ActionResult> {
+  const actor = await requireCurrentUser();
+  const issueId = text(formData, "issueId");
+  const answer = text(formData, "answer");
+  if (answer !== "YES" && answer !== "NO" && answer !== "UNKNOWN") {
+    return toActionResult(new Error("answer 必須是 YES／NO／UNKNOWN"));
+  }
+  try {
+    await submitStageRiskCheckAnswer({
+      issueId,
+      stageKey: text(formData, "stageKey"),
+      checkKey: text(formData, "checkKey"),
+      answer,
+      detail: optionalText(formData, "detail") ?? undefined,
+      resolveUnknown: text(formData, "resolveUnknown") === "1",
+      actorId: actor.id,
+    });
+    revalidateIssue(issueId);
+    return actionOk("已填寫風險檢核");
   } catch (err) {
     return toActionResult(err);
   }
