@@ -103,6 +103,13 @@ const RUN_TAG = `m2bv${Date.now()}`;
 // 週期，互不干擾）。比照 scripts/m1_5_c1_a-verify.ts 的 freshScratchPath／migrateDeploy／
 // runSeed／clientFor 慣例。OFFICIAL_DEV_DB 一律只被讀取（fs.copyFileSync 的來源），
 // 本檔任何地方都不對它送出 migrate/seed，也不直接開啟連線寫入。
+//
+// MIG3（Synthetic M2-A History）需要一個「尚未套用 M2-B migration」的舊 Schema
+// fixture 才能有意義地驗證 migration.sql 的 INSERT...SELECT 資料搬移邏輯。正式
+// OFFICIAL_DEV_DB 一旦已經套用過 M2-B migration，就不再具備舊 Schema，不能再充當
+// 這個角色。因此 MIG3 改由環境變數 M2_B_MIG3_BASE_DB 明確指定 fixture 路徑（同樣
+// 只被讀取／複製，從不被 migrate/寫入）；未設定、檔案不存在、或 Schema 不符舊形狀
+// 時一律 fail closed（拋出例外使該項目 FAIL，不 SKIP）。
 // ---------------------------------------------------------------------------
 const REPO_ROOT = path.resolve(__dirname, "..");
 const PRISMA_DIR = path.join(REPO_ROOT, "prisma");
@@ -854,19 +861,25 @@ async function runFreshDbMigrationTest(): Promise<boolean> {
 }
 
 /**
- * 官方 dev.db 目前仍停在 M2-A1（IssueWorkflowStageHistory 舊形狀：workflowStageId／
- * reason／enteredAt，0 筆既有資料），因此單獨複製官方 dev.db 並不足以驗證 M2-B
- * migration.sql 手動修正過的 INSERT...SELECT 資料搬移邏輯是否正確——0 筆資料的
- * migration 永遠會「成功」，卻證明不了任何東西。這裡刻意合成兩筆舊形狀歷史列
- * （一筆進行中關卡 terminalOutcome 應為 null，一筆終點關卡 terminalOutcome 應由
- * WorkflowStage 現場查出），驗證 migration 後的新形狀資料逐欄正確、且新增的
- * fromStageId／transitionId／assignedTeamIdBefore／assignedTeamIdAfter 四欄
- * 明確為 null（舊資料本來就不含這些事實，而非搬移遺漏）。
+ * 驗證 M2-B migration.sql 手動修正過的 INSERT...SELECT 資料搬移邏輯：光是複製一個
+ * 0 筆既有資料的 DB 並不足以驗證這段邏輯——0 筆資料的 migration 永遠會「成功」，
+ * 卻證明不了任何東西。這裡刻意合成兩筆舊形狀歷史列（一筆進行中關卡 terminalOutcome
+ * 應為 null，一筆終點關卡 terminalOutcome 應由 WorkflowStage 現場查出），驗證
+ * migration 後的新形狀資料逐欄正確、且新增的 fromStageId／transitionId／
+ * assignedTeamIdBefore／assignedTeamIdAfter 四欄明確為 null（舊資料本來就不含這些
+ * 事實，而非搬移遺漏）。
+ *
+ * baseDbPath 必須是一個尚未套用 M2-B migration 的舊 Schema fixture（呼叫端已驗證
+ * 存在且 Schema 為舊形狀），本函式本身只讀取／複製它，從未對它 migrate 或寫入。
  */
-async function runSyntheticM2aHistoryMigrationTest(): Promise<{ ok: boolean; detail?: string }> {
+async function runSyntheticM2aHistoryMigrationTest(baseDbPath: string): Promise<{ ok: boolean; detail?: string }> {
   const scratchPath = freshMigrationScratchPath("synthetic-history.db");
   fs.rmSync(scratchPath, { force: true });
-  fs.copyFileSync(OFFICIAL_DEV_DB, scratchPath);
+  fs.copyFileSync(baseDbPath, scratchPath);
+  // baseDbPath（M2_B_MIG3_BASE_DB fixture）刻意以唯讀權限保存於佐證目錄；
+  // fs.copyFileSync 在本環境會保留來源檔案的權限位元，scratch 複本本身必須可寫
+  // 才能供本測試後續的 setup insert／migrate 使用，因此明確還原為可寫。
+  fs.chmodSync(scratchPath, 0o644);
 
   const tag = `m2bmig${Date.now()}`;
   const setupClient = migrationScratchClientFor(scratchPath);
@@ -953,6 +966,31 @@ async function runSyntheticM2aHistoryMigrationTest(): Promise<{ ok: boolean; det
   }
 }
 
+// MIG3 fixture 的 Schema 防呆檢查：必須具備舊形狀欄位（workflowStageId／reason／
+// enteredAt），且不得已具備新形狀欄位（toStageId／fromStageId／transitionId）——
+// 避免誤指到一個已套用過 M2-B migration 的 DB（例如已升級的 OFFICIAL_DEV_DB）而讓
+// MIG3 悄悄失去驗證意義。任何不符一律 fail closed（拋出例外）。
+function assertMig3BaseDbHasPreMigrationShape(baseDbPath: string): void {
+  const raw = execSync(`sqlite3 "${baseDbPath}" "PRAGMA table_info(IssueWorkflowStageHistory);"`, {
+    encoding: "utf8",
+  });
+  const columnNames = raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split("|")[1]);
+  const hasOldShape =
+    columnNames.includes("workflowStageId") && columnNames.includes("reason") && columnNames.includes("enteredAt");
+  const hasNewShape =
+    columnNames.includes("toStageId") || columnNames.includes("fromStageId") || columnNames.includes("transitionId");
+  if (!hasOldShape || hasNewShape) {
+    throw new Error(
+      `M2_B_MIG3_BASE_DB 指向的檔案 Schema 不符合 M2-B migration 前的舊形狀，fail closed：${baseDbPath}` +
+        `（需含 workflowStageId／reason／enteredAt，且不得已含 toStageId／fromStageId／transitionId；實際欄位：${columnNames.join(", ")}）`,
+    );
+  }
+}
+
 async function runMigrationPathTests() {
   console.log("\n=== 五、Migration 路徑驗證（Existing DB／Fresh DB／Synthetic M2-A History） ===");
 
@@ -960,15 +998,29 @@ async function runMigrationPathTests() {
 
   if (!fs.existsSync(OFFICIAL_DEV_DB)) {
     skip("[MIG1] Existing DB Migration", `找不到正式 dev.db 複製來源：${OFFICIAL_DEV_DB}`);
-    skip("[MIG3] Synthetic M2-A History Migration", `找不到正式 dev.db 複製來源：${OFFICIAL_DEV_DB}`);
   } else {
     await runExistingDbMigrationTest();
-    await checkAsync("[MIG3] Synthetic M2-A History Migration：舊形狀歷史列搬移後欄位逐一正確（含 terminalOutcome 現場查出、新欄位明確為 null）", async () => {
-      const result = await runSyntheticM2aHistoryMigrationTest();
+  }
+
+  const mig3BaseDbPath = process.env.M2_B_MIG3_BASE_DB;
+  await checkAsync(
+    "[MIG3] Synthetic M2-A History Migration：舊形狀歷史列搬移後欄位逐一正確（含 terminalOutcome 現場查出、新欄位明確為 null）",
+    async () => {
+      if (!mig3BaseDbPath) {
+        throw new Error(
+          "未設定環境變數 M2_B_MIG3_BASE_DB：MIG3 需要一個尚未套用 M2-B migration 的舊 Schema fixture DB" +
+            "（正式 OFFICIAL_DEV_DB 已套用過本次 M2-B migration，不可再作為此測試來源），fail closed。",
+        );
+      }
+      if (!fs.existsSync(mig3BaseDbPath)) {
+        throw new Error(`M2_B_MIG3_BASE_DB 指向的檔案不存在，fail closed：${mig3BaseDbPath}`);
+      }
+      assertMig3BaseDbHasPreMigrationShape(mig3BaseDbPath);
+      const result = await runSyntheticM2aHistoryMigrationTest(mig3BaseDbPath);
       if (!result.ok) console.log(`    詳情：${result.detail}`);
       return result.ok;
-    });
-  }
+    },
+  );
 
   await checkAsync("[MIG2] Fresh DB Migration：全新空 DB 從 init 到 M2-B 完整套用＋seed 成功（7 位 User／19 筆 Issue／0 筆歷史紀錄）", runFreshDbMigrationTest);
 
