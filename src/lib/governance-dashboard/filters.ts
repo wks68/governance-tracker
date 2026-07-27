@@ -80,6 +80,18 @@ export function governanceDashboardFiltersToSearchParams(filters: GovernanceDash
   return params;
 }
 
+// 供下鑽連結使用：以目前篩選條件為基礎，套用部分欄位覆寫後組出 /governance 的
+// href（Server／Client Component 皆可用的純函式）。點擊 KPI／Stage／Team／風險卡片
+// 時，只覆寫該卡片對應的欄位，其餘目前篩選條件維持不變。
+export function withGovernanceFilterOverride(
+  filters: GovernanceDashboardFilters,
+  overrides: Partial<GovernanceDashboardFilters>,
+): string {
+  const merged: GovernanceDashboardFilters = { ...filters, ...overrides };
+  const query = governanceDashboardFiltersToSearchParams(merged).toString();
+  return query ? `/governance?${query}` : "/governance";
+}
+
 // 套用篩選條件；一律呼叫 metrics.ts 匯出的 predicate 函式，確保與 KPI／統計卡片使用
 // 完全相同的分類邏輯（Plan 第八節第 9 項：KPI 下鑽結果與明細數量必須一致）。
 export function applyGovernanceDashboardFilters(

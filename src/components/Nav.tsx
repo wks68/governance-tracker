@@ -6,6 +6,9 @@ import LogoutButton from "./LogoutButton";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "治理儀表板" },
+  // 治理儀表板 MVP 新增：獨立於既有 /dashboard（工單總覽性質）之外的新版治理儀表板，
+  // 統計來源與可見性規則見 src/lib/governance-dashboard/*。
+  { href: "/governance", label: "治理儀表板 MVP" },
   { href: "/issues", label: "工單清單" },
   { href: "/issues/new", label: "建立工單" },
   { href: "/settings/approval-governance", label: "核准治理設定" },
