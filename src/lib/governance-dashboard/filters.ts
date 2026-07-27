@@ -39,6 +39,16 @@ function parseFlag(value: string | undefined): boolean {
   return value === "1";
 }
 
+// stageId 一律以逗號分隔多個 WorkflowStage id：單一巨集階段（見 stagePhase.ts）在目前
+// 資料中可能對應好幾個真實 WorkflowStage，下鑽時需要能同時篩選這幾個 id。
+function parseStageIds(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function parseGovernanceDashboardFilters(searchParams: GovernanceDashboardSearchParams): GovernanceDashboardFilters {
   const riskStatusRaw = firstValue(searchParams.riskStatus);
   const lifecycleStatusRaw = firstValue(searchParams.lifecycleStatus);
@@ -50,7 +60,7 @@ export function parseGovernanceDashboardFilters(searchParams: GovernanceDashboar
     dateTo: parseDate(firstValue(searchParams.dateTo)),
     workflowDefinitionId: firstValue(searchParams.workflowDefinitionId) || null,
     issueType: firstValue(searchParams.issueType) || null,
-    stageId: firstValue(searchParams.stageId) || null,
+    stageIds: parseStageIds(firstValue(searchParams.stageId)),
     teamId: firstValue(searchParams.teamId) || null,
     riskStatus: riskStatusRaw && isGovernanceRiskFilter(riskStatusRaw) ? riskStatusRaw : null,
     lifecycleStatus: lifecycleStatusRaw && isGovernanceLifecycleFilter(lifecycleStatusRaw) ? lifecycleStatusRaw : null,
@@ -68,7 +78,7 @@ export function governanceDashboardFiltersToSearchParams(filters: GovernanceDash
   if (filters.dateTo) params.set("dateTo", filters.dateTo.toISOString().slice(0, 10));
   if (filters.workflowDefinitionId) params.set("workflowDefinitionId", filters.workflowDefinitionId);
   if (filters.issueType) params.set("issueType", filters.issueType);
-  if (filters.stageId) params.set("stageId", filters.stageId);
+  if (filters.stageIds.length > 0) params.set("stageId", filters.stageIds.join(","));
   if (filters.teamId) params.set("teamId", filters.teamId);
   if (filters.riskStatus) params.set("riskStatus", filters.riskStatus);
   if (filters.lifecycleStatus) params.set("lifecycleStatus", filters.lifecycleStatus);
@@ -103,7 +113,7 @@ export function applyGovernanceDashboardFilters(
     if (filters.dateTo && row.createdAt.getTime() > filters.dateTo.getTime()) return false;
     if (filters.workflowDefinitionId && row.workflowDefinition?.id !== filters.workflowDefinitionId) return false;
     if (filters.issueType && row.issueType !== filters.issueType) return false;
-    if (filters.stageId && row.currentStage?.id !== filters.stageId) return false;
+    if (filters.stageIds.length > 0 && (!row.currentStage || !filters.stageIds.includes(row.currentStage.id))) return false;
     if (filters.teamId && row.assignedTeamId !== filters.teamId) return false;
 
     if (filters.riskStatus === "YES" && row.riskStatus !== "YES") return false;

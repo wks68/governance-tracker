@@ -31,7 +31,7 @@ function optionalText(formData: FormData, key: string): string | null {
 
 function revalidateIssue(issueId: string) {
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
   revalidatePath("/issues");
 }
 

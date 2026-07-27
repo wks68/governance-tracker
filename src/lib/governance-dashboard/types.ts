@@ -92,7 +92,9 @@ export interface GovernanceDashboardFilters {
   dateTo: Date | null;
   workflowDefinitionId: string | null;
   issueType: string | null;
-  stageId: string | null;
+  // 目前階段篩選：可為單一關卡（點擊「各關卡明細」單一列）或多個關卡（點擊「流程卡點」
+  // 巨集階段——例如「OP 上版」底下實際對應好幾個真實 WorkflowStage）。空陣列＝不篩選。
+  stageIds: string[];
   teamId: string | null;
   riskStatus: GovernanceRiskFilter | null;
   lifecycleStatus: GovernanceLifecycleFilter | null;
@@ -156,15 +158,7 @@ export interface GovernanceTeamWorkloadEntry {
   inProgress: number;
   pendingApproval: number;
   stale: number;
-}
-
-export interface GovernanceRecentExceptions {
-  highRisk: GovernanceIssueRow[];
-  riskUnknown: GovernanceIssueRow[];
-  pendingApproval: GovernanceIssueRow[];
-  repeatedReturn: GovernanceIssueRow[];
-  cancelled: GovernanceIssueRow[];
-  longDwelling: GovernanceIssueRow[];
+  longestDwellDays: number | null;
 }
 
 export interface GovernanceFilterOptions {
@@ -179,16 +173,38 @@ export interface GovernanceLegacySummary {
   issues: GovernanceIssueRow[];
 }
 
+// 今日治理總覽：首頁最上方最多 6 張主要 KPI（管理者語意，非技術語意）。
+export interface GovernanceTodayOverview {
+  hotfixInProgress: number;
+  pendingApproval: number;
+  pendingQaVerification: number;
+  pendingOpDeployment: number;
+  riskOrException: number;
+  stale: number;
+  staleDaysThreshold: StaleDaysOption;
+}
+
+// 流程卡點：依 stagePhase.ts 的巨集階段分組，取代直接顯示 StageType／WorkflowStage key。
+export interface GovernancePhaseDistributionEntry {
+  phase: string;
+  count: number;
+  // 該巨集階段目前實際涵蓋的真實 WorkflowStage id（供下鑽篩選使用，見
+  // GovernanceDashboardFilters.stageIds）。
+  stageIds: string[];
+}
+
 export interface GovernanceDashboardViewModel {
   filters: GovernanceDashboardFilters;
   filterOptions: GovernanceFilterOptions;
   kpi: GovernanceKpiSummary;
+  todayOverview: GovernanceTodayOverview;
   stageDistribution: GovernanceStageDistributionEntry[];
+  phaseDistribution: GovernancePhaseDistributionEntry[];
   riskOverview: GovernanceRiskOverview;
   bottleneck: GovernanceBottleneckSummary;
   returnOverview: GovernanceReturnOverview;
   teamWorkload: GovernanceTeamWorkloadEntry[];
-  recentExceptions: GovernanceRecentExceptions;
+  actionNeeded: GovernanceIssueRow[];
   legacy: GovernanceLegacySummary;
   issueList: GovernanceIssueRow[];
   hasAnyVisibleIssue: boolean;

@@ -12,15 +12,17 @@ import {
   type GovernanceIssueRow,
   type GovernanceKpiSummary,
   type GovernanceLegacySummary,
-  type GovernanceRecentExceptions,
+  type GovernancePhaseDistributionEntry,
   type GovernanceReturnOverview,
   type GovernanceReturnStageAggregate,
   type GovernanceRiskOverview,
   type GovernanceStageDistributionEntry,
   type GovernanceTeamWorkloadEntry,
+  type GovernanceTodayOverview,
   STALE_DAYS_OPTIONS,
   type StaleDaysOption,
 } from "./types";
+import { GOVERNANCE_PHASE_ORDER, stagePhaseOf } from "./stagePhase";
 
 // ---------------------------------------------------------------------------
 // 共用分類 predicate（filters.applyFilters 與本檔案統計聚合唯一共用來源）
@@ -82,8 +84,96 @@ export function computeKpiSummary(
 }
 
 // ---------------------------------------------------------------------------
-// 目前階段分布：只計入新版 Workflow「進行中」案件，不得混入舊制案件或已結束案件。
-// 完全依實際資料出現的 WorkflowStage 動態分組，不硬編碼任何階段 key／label。
+// 今日治理總覽：首頁最多 6 張主要 KPI，管理者語意（而非 Workflow/Stage 技術語意）。
+// ---------------------------------------------------------------------------
+
+export function computeTodayOverview(
+  rows: readonly GovernanceIssueRow[],
+  staleDaysThreshold: StaleDaysOption = DEFAULT_STALE_DAYS_THRESHOLD,
+): GovernanceTodayOverview {
+  const inProgress = rows.filter(isInProgressIssue);
+  return {
+    hotfixInProgress: inProgress.filter((r) => r.issueType === "Hotfix").length,
+    pendingApproval: rows.filter(isPendingApprovalIssue).length,
+    pendingQaVerification: inProgress.filter((r) => stagePhaseOf(r.currentStage) === "QA 驗證").length,
+    pendingOpDeployment: inProgress.filter((r) => stagePhaseOf(r.currentStage) === "OP 上版").length,
+    riskOrException: rows.filter(isHighRiskIssue).length,
+    stale: rows.filter((r) => isStaleIssue(r, staleDaysThreshold)).length,
+    staleDaysThreshold,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 現在需要處理：首頁核心清單，依「高風險／風險待確認 > 待主管核准 > 停留最久 >
+// 重複退回 > 一般進行中」排序，只納入進行中案件（不含舊制／已完成／已取消）。
+// ---------------------------------------------------------------------------
+
+function actionPriorityScore(row: GovernanceIssueRow, staleDaysThreshold: number): number {
+  if (isHighRiskIssue(row) || isRiskUnknownIssue(row)) return 0;
+  if (isPendingApprovalIssue(row)) return 1;
+  if (isStaleIssue(row, staleDaysThreshold)) return 2;
+  if (hasRepeatedReturnIssue(row)) return 3;
+  return 4;
+}
+
+export function computeActionNeededList(
+  rows: readonly GovernanceIssueRow[],
+  staleDaysThreshold: StaleDaysOption = DEFAULT_STALE_DAYS_THRESHOLD,
+  limit = 20,
+): GovernanceIssueRow[] {
+  return rows
+    .filter(isInProgressIssue)
+    .slice()
+    .sort((a, b) => {
+      const scoreDiff = actionPriorityScore(a, staleDaysThreshold) - actionPriorityScore(b, staleDaysThreshold);
+      if (scoreDiff !== 0) return scoreDiff;
+      return (b.dwellDays ?? -1) - (a.dwellDays ?? -1);
+    })
+    .slice(0, limit);
+}
+
+export function deriveSuggestedAction(row: GovernanceIssueRow, staleDaysThreshold: number): string {
+  if (isHighRiskIssue(row)) return "確認風險項目並決定處理方式";
+  if (isRiskUnknownIssue(row)) return "釐清風險狀態";
+  if (isPendingApprovalIssue(row)) return "等待主管核准";
+  if (isStaleIssue(row, staleDaysThreshold)) return "確認卡關原因並推進";
+  if (hasRepeatedReturnIssue(row)) return "檢視退回原因，避免重複退回";
+  return "持續處理中";
+}
+
+// ---------------------------------------------------------------------------
+// 流程卡點（巨集階段）：以 stagePhase.ts 的分組取代直接顯示 StageType／WorkflowStage
+// key，只計入新版 Workflow「進行中」案件。依業務流程順序排列，資料中沒有出現的階段
+// 不顯示；未落入既定分組的關卡以其自身 label 個別呈現（fallback，見 stagePhase.ts）。
+// ---------------------------------------------------------------------------
+
+export function computePhaseDistribution(rows: readonly GovernanceIssueRow[]): GovernancePhaseDistributionEntry[] {
+  const groups = new Map<string, { count: number; stageIds: Set<string> }>();
+  for (const row of rows) {
+    if (!isInProgressIssue(row) || !row.currentStage) continue;
+    const phase = stagePhaseOf(row.currentStage)!;
+    const g = groups.get(phase) ?? { count: 0, stageIds: new Set<string>() };
+    g.count += 1;
+    g.stageIds.add(row.currentStage.id);
+    groups.set(phase, g);
+  }
+
+  const ordered: GovernancePhaseDistributionEntry[] = [];
+  for (const phase of GOVERNANCE_PHASE_ORDER) {
+    const g = groups.get(phase);
+    if (g) ordered.push({ phase, count: g.count, stageIds: [...g.stageIds] });
+  }
+  for (const [phase, g] of groups) {
+    if (!(GOVERNANCE_PHASE_ORDER as readonly string[]).includes(phase)) {
+      ordered.push({ phase, count: g.count, stageIds: [...g.stageIds] });
+    }
+  }
+  return ordered;
+}
+
+// ---------------------------------------------------------------------------
+// 目前階段分布（各關卡明細）：只計入新版 Workflow「進行中」案件，不得混入舊制案件或
+// 已結束案件。完全依實際資料出現的 WorkflowStage 動態分組，不硬編碼任何階段 key／label。
 // ---------------------------------------------------------------------------
 
 export function computeStageDistribution(rows: readonly GovernanceIssueRow[]): GovernanceStageDistributionEntry[] {
@@ -177,36 +267,17 @@ export function computeTeamWorkload(
       inProgress: 0,
       pendingApproval: 0,
       stale: 0,
+      longestDwellDays: null as number | null,
     };
     if (isInProgressIssue(row)) entry.inProgress += 1;
     if (isPendingApprovalIssue(row)) entry.pendingApproval += 1;
     if (isStaleIssue(row, staleDaysThreshold)) entry.stale += 1;
+    if (row.dwellDays !== null && (entry.longestDwellDays === null || row.dwellDays > entry.longestDwellDays)) {
+      entry.longestDwellDays = row.dwellDays;
+    }
     byTeam.set(row.assignedTeamId, entry);
   }
   return [...byTeam.values()].sort((a, b) => b.inProgress - a.inProgress || a.teamName.localeCompare(b.teamName));
-}
-
-// ---------------------------------------------------------------------------
-// 最近異常
-// ---------------------------------------------------------------------------
-
-export function computeRecentExceptions(
-  rows: readonly GovernanceIssueRow[],
-  staleDaysThreshold: StaleDaysOption = DEFAULT_STALE_DAYS_THRESHOLD,
-  limit = 10,
-): GovernanceRecentExceptions {
-  const byCreatedDesc = (a: GovernanceIssueRow, b: GovernanceIssueRow) => b.createdAt.getTime() - a.createdAt.getTime();
-  return {
-    highRisk: rows.filter(isHighRiskIssue).sort(byCreatedDesc).slice(0, limit),
-    riskUnknown: rows.filter(isRiskUnknownIssue).sort(byCreatedDesc).slice(0, limit),
-    pendingApproval: rows.filter(isPendingApprovalIssue).sort(byCreatedDesc).slice(0, limit),
-    repeatedReturn: rows.filter(hasRepeatedReturnIssue).sort(byCreatedDesc).slice(0, limit),
-    cancelled: rows.filter(isCancelledIssue).sort(byCreatedDesc).slice(0, limit),
-    longDwelling: rows
-      .filter((r) => isStaleIssue(r, staleDaysThreshold))
-      .sort((a, b) => (b.dwellDays ?? 0) - (a.dwellDays ?? 0))
-      .slice(0, limit),
-  };
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ export async function loginAsUserAction(formData: FormData) {
 
   cookies().set(SESSION_COOKIE_NAME, user.id, { path: "/", httpOnly: true });
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-  redirect("/dashboard");
+  redirect("/governance");
 }
 
 export async function logoutAction() {

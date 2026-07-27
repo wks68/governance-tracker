@@ -18,19 +18,19 @@ export default function RiskOverview({
 
   const tiles: { label: string; value: number; tone: string; href: string }[] = [
     {
-      label: "Risk = YES",
+      label: "有風險",
       value: overview.yes,
       tone: "text-gov-red",
       href: withGovernanceFilterOverride(filters, { riskStatus: "YES" }),
     },
     {
-      label: "Risk = UNKNOWN",
+      label: "風險待確認",
       value: overview.unknown,
       tone: "text-gov-yellow",
       href: withGovernanceFilterOverride(filters, { riskStatus: "UNKNOWN" }),
     },
     {
-      label: "尚未回答",
+      label: "尚未完成風險確認",
       value: overview.unanswered,
       tone: "text-gov-blue",
       href: withGovernanceFilterOverride(filters, { riskStatus: "UNANSWERED" }),

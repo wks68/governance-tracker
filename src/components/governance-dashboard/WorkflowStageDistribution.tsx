@@ -27,16 +27,15 @@ export default function WorkflowStageDistribution({
       {entries.map((entry) => (
         <Link
           key={entry.stage.id}
-          href={withGovernanceFilterOverride(filters, { stageId: entry.stage.id })}
+          href={withGovernanceFilterOverride(filters, { stageIds: [entry.stage.id] })}
           className="block rounded-md p-2 hover:bg-gray-50"
         >
           <div className="flex items-center justify-between text-sm">
             <span className="font-medium text-gray-800">
               {entry.stage.label}
-              <span className="ml-1.5 text-xs text-gray-400">
-                {entry.stage.stageType}
-                {entry.stage.assignedTeamName ? ` · ${entry.stage.assignedTeamName}` : ""}
-              </span>
+              {entry.stage.assignedTeamName ? (
+                <span className="ml-1.5 text-xs text-gray-400">{entry.stage.assignedTeamName}</span>
+              ) : null}
             </span>
             <span className="text-gray-600">{entry.count} 件</span>
           </div>

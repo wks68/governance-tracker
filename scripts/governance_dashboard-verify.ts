@@ -1,13 +1,16 @@
-// 治理儀表板 MVP 驗證腳本。
+// 治理儀表板驗證腳本。
 //
-// 涵蓋 Plan 第八節列出的 20 項檢查，分三類：
+// 涵蓋治理儀表板查詢層／統計層／UI 收斂正確性，分三類：
 //   A. 純邏輯測試（metrics.ts／filters.ts）：不依賴資料庫，使用手造 GovernanceIssueRow[]
-//      驗證統計與篩選邏輯本身，包含空資料狀態（Plan 第七節）與 URL 篩選輸入驗證。
+//      驗證統計與篩選邏輯本身，包含空資料狀態與 URL 篩選輸入驗證，也涵蓋 UI 收斂新增的
+//      今日治理總覽／流程卡點（巨集階段）／現在需要處理排序等純邏輯。
 //   B. DB 整合測試：在專用 scratch 資料庫建立涵蓋各種狀態的 Issue／WorkflowStage／
 //      IssueWorkflowStageHistory／ApprovalRecord／StageRiskCheck 資料，驗證
 //      queries.ts／viewModel.ts 產出的統計與可見性正確。
 //   C. 原始碼層級靜態檢查：UI／Page 不直接 import Prisma、Client Component 不 import
-//      伺服端專用模組、governance-dashboard 模組完全不讀取 workflowStatus。
+//      伺服端專用模組、governance-dashboard 模組完全不讀取 workflowStatus；UI 收斂驗收
+//      （Nav 只剩單一 /governance 入口、舊 /dashboard 改為 redirect、正式畫面不得出現
+//      「MVP」「Mock」字樣）。
 //
 // Fail-closed：第一行 import 為 assertSafeTestDatabase，拒絕連線到正式 prisma/dev.db。
 //
@@ -32,7 +35,10 @@ import {
   computeBottleneckSummary,
   computeReturnOverview,
   computeTeamWorkload,
-  computeRecentExceptions,
+  computeTodayOverview,
+  computePhaseDistribution,
+  computeActionNeededList,
+  deriveSuggestedAction,
   computeLegacySummary,
   resolveGovernanceDashboardAccess,
   getVisibleGovernanceIssueRows,
@@ -90,7 +96,7 @@ const EMPTY_FILTERS: GovernanceDashboardFilters = {
   dateTo: null,
   workflowDefinitionId: null,
   issueType: null,
-  stageId: null,
+  stageIds: [],
   teamId: null,
   riskStatus: null,
   lifecycleStatus: null,
@@ -157,11 +163,18 @@ function runPureMetricsTests() {
     emptyReturn.issuesWithReturn === 0 && emptyReturn.totalReturns === 0 && emptyReturn.repeatedReturnIssues === 0 && emptyReturn.topReturnStages.length === 0,
   );
   check("[17-6] computeTeamWorkload([]) 回傳空陣列", computeTeamWorkload([]).length === 0);
-  const emptyExceptions = computeRecentExceptions([]);
+  const emptyOverview = computeTodayOverview([]);
   check(
-    "[17-7] computeRecentExceptions([]) 六個分類皆為空陣列",
-    Object.values(emptyExceptions).every((arr) => Array.isArray(arr) && arr.length === 0),
+    "[17-7] computeTodayOverview([]) 全部欄位為 0，不拋出例外",
+    emptyOverview.hotfixInProgress === 0 &&
+      emptyOverview.pendingApproval === 0 &&
+      emptyOverview.pendingQaVerification === 0 &&
+      emptyOverview.pendingOpDeployment === 0 &&
+      emptyOverview.riskOrException === 0 &&
+      emptyOverview.stale === 0,
   );
+  check("[17-7b] computePhaseDistribution([]) 回傳空陣列", computePhaseDistribution([]).length === 0);
+  check("[17-7c] computeActionNeededList([]) 回傳空陣列", computeActionNeededList([]).length === 0);
   check("[17-8] computeLegacySummary([]) count=0", computeLegacySummary([]).count === 0);
 
   // ---- KPI／Stage 分布／風險／RETURN／Team 負載聚合邏輯（單元層級） ----
@@ -226,13 +239,28 @@ function runPureMetricsTests() {
   const team1 = team.find((t) => t.teamId === "team-1");
   check("[6-1] computeTeamWorkload：team-1 進行中 3 件（K1/K2/K7）", team1?.inProgress === 3);
   check("[6-2] computeTeamWorkload：team-1 停留超過門檻 1 件（K1）", team1?.stale === 1);
+  check("[6-4] computeTeamWorkload：team-1 最長停留天數＝10（K1）", team1?.longestDwellDays === 10);
 
-  const exceptions = computeRecentExceptions(rows, 7);
-  check("[1-4]/[4-4] computeRecentExceptions：highRisk 含 K3", exceptions.highRisk.some((r) => r.id === "3"));
-  check("[3-2] computeRecentExceptions：pendingApproval 含 K3", exceptions.pendingApproval.some((r) => r.id === "3"));
-  check("[5-5] computeRecentExceptions：repeatedReturn 含 K7", exceptions.repeatedReturn.some((r) => r.id === "7"));
-  check("[1-5] computeRecentExceptions：cancelled 含 K5", exceptions.cancelled.some((r) => r.id === "5"));
-  check("[7-6] computeRecentExceptions：longDwelling 含 K1", exceptions.longDwelling.some((r) => r.id === "1"));
+  const overview = computeTodayOverview(rows, 7);
+  check("[TO-1] computeTodayOverview：hotfixInProgress＝進行中且 issueType=Hotfix 的件數（K1/K2/K3/K7）", overview.hotfixInProgress === 4);
+  check("[TO-2] computeTodayOverview：pendingApproval＝1（K3）", overview.pendingApproval === 1);
+  check("[TO-3] computeTodayOverview：riskOrException＝1（K3 為 Risk=YES，K6 為 UNKNOWN 不計入）", overview.riskOrException === 1);
+  check("[TO-4] computeTodayOverview：stale＝1（僅 K1 dwellDays=10>=7）", overview.stale === 1);
+
+  const phases = computePhaseDistribution(rows);
+  check(
+    "[PH-1] computePhaseDistribution：只計入 IN_PROGRESS 且有 currentStage，未落入既定分組時以 stage.label 個別呈現",
+    phases.reduce((s, p) => s + p.count, 0) === 4 && phases.find((p) => p.phase === "A 關卡")?.count === 3 && phases.find((p) => p.phase === "B 關卡")?.count === 1,
+  );
+
+  const actionNeeded = computeActionNeededList(rows, 7);
+  check(
+    "[AN-1] computeActionNeededList：只納入 IN_PROGRESS（K4/K5/K6 排除），依「高風險 > 待核准 > 停留最久 > 重複退回 > 一般」排序",
+    actionNeeded.map((r) => r.id).join(",") === "3,1,7,2",
+  );
+  check("[AN-2] deriveSuggestedAction：高風險案件建議確認風險", deriveSuggestedAction(rows.find((r) => r.id === "3")!, 7) === "確認風險項目並決定處理方式");
+  check("[AN-3] deriveSuggestedAction：重複退回案件建議檢視退回原因", deriveSuggestedAction(rows.find((r) => r.id === "7")!, 7) === "檢視退回原因，避免重複退回");
+  check("[AN-4] deriveSuggestedAction：一般進行中案件回傳「持續處理中」", deriveSuggestedAction(rows.find((r) => r.id === "2")!, 7) === "持續處理中");
 
   const legacy = computeLegacySummary(rows);
   check("[10-2] computeLegacySummary：count=1 且不含任何非 LEGACY 案件", legacy.count === 1 && legacy.issues.every((r) => r.lifecycleStatus === "LEGACY"));
@@ -294,8 +322,12 @@ function runPureFilterTests() {
     applyGovernanceDashboardFilters(rows, { ...EMPTY_FILTERS, teamId: "team-1" }).length === 2,
   );
   check(
-    "[8-1] stageId 篩選：只回傳目前階段等於指定 stage 的案件（COMPLETED/CANCELLED 無 currentStage 故排除）",
-    applyGovernanceDashboardFilters(rows, { ...EMPTY_FILTERS, stageId: "s1" }).length === 2,
+    "[8-1] stageIds 篩選：只回傳目前階段等於指定 stage 的案件（COMPLETED/CANCELLED 無 currentStage 故排除）",
+    applyGovernanceDashboardFilters(rows, { ...EMPTY_FILTERS, stageIds: ["s1"] }).length === 2,
+  );
+  check(
+    "[8-1b] stageIds 篩選：可同時指定多個真實 WorkflowStage id（巨集階段下鑽情境）",
+    applyGovernanceDashboardFilters(rows, { ...EMPTY_FILTERS, stageIds: ["s1", "does-not-exist"] }).length === 2,
   );
 
   // ---- [8] 日期區間篩選 ----
@@ -742,6 +774,29 @@ function runStaticSourceChecks() {
 
   const queriesSrc = fs.readFileSync(path.join(libDir, "queries.ts"), "utf8");
   check("[19-2] queries.ts 的可見性查詢函式呼叫 requireGovernanceDashboardAccess（服務層現場重新授權）", /requireGovernanceDashboardAccess/.test(queriesSrc));
+
+  // ---- UI 收斂驗收：唯一正式入口／舊 route redirect／正式畫面不得出現 MVP／Mock 字樣 ----
+  const navSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/Nav.tsx"), "utf8");
+  check("[NAV-1] Nav 只有一個治理儀表板入口，指向 /governance", /href:\s*"\/governance",\s*label:\s*"治理儀表板"/.test(navSrc));
+  check("[NAV-2] Nav 不再出現 /dashboard 入口", !/href:\s*"\/dashboard"/.test(navSrc));
+
+  const dashboardPageSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/dashboard/page.tsx"), "utf8");
+  check("[REDIRECT-1] 舊 /dashboard 路由改為 redirect 至 /governance", /redirect\(\s*"\/governance"\s*\)/.test(dashboardPageSrc));
+
+  const noMvpMockScanFiles = [
+    ...uiFiles,
+    path.join(REPO_ROOT, "src/components/Nav.tsx"),
+    path.join(REPO_ROOT, "src/app/dashboard/page.tsx"),
+  ];
+  let mvpTextViolation: string | null = null;
+  let mockTextViolation: string | null = null;
+  for (const file of noMvpMockScanFiles) {
+    const src = stripComments(fs.readFileSync(file, "utf8"));
+    if (mvpTextViolation === null && /MVP/.test(src)) mvpTextViolation = path.relative(REPO_ROOT, file);
+    if (mockTextViolation === null && /Mock/.test(src)) mockTextViolation = path.relative(REPO_ROOT, file);
+  }
+  check("[UI-1] 治理儀表板 UI 程式碼（不含註解）不出現「MVP」字樣", mvpTextViolation === null, mvpTextViolation ?? undefined);
+  check("[UI-2] 治理儀表板 UI 程式碼（不含註解）不出現「Mock」字樣（不得顯示 Mock AI 摘要）", mockTextViolation === null, mockTextViolation ?? undefined);
 }
 
 main().catch(async (err) => {

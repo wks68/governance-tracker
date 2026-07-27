@@ -30,7 +30,7 @@ export async function requireCurrentUser(): Promise<User> {
 // getCurrentUser 內的 User.isActive 檢查（見上方 requireCurrentUser）維持不變。
 export async function requireAdmin(): Promise<User> {
   const user = await requireCurrentUser();
-  if (!(await getUserHasCapability(user, "admin.full"))) redirect("/dashboard");
+  if (!(await getUserHasCapability(user, "admin.full"))) redirect("/governance");
   return user;
 }
 

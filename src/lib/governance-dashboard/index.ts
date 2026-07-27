@@ -8,3 +8,5 @@ export * from "./access";
 export * from "./metrics";
 export * from "./queries";
 export * from "./viewModel";
+export * from "./stagePhase";
+export * from "./labels";

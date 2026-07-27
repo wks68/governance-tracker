@@ -19,7 +19,7 @@ export async function createIssueAction(formData: FormData) {
   const currentUser = await requireCurrentUser();
   const issue = await createIssueForActor(currentUser, formData);
 
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
   revalidatePath("/issues");
   redirect(`/issues/${issue.id}`);
 }
@@ -136,7 +136,7 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
 
   await recalcIssue(issueId);
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
   revalidatePath("/issues");
   redirect(`/issues/${issueId}`);
 }
@@ -179,7 +179,7 @@ export async function updateDynamicFieldsAction(issueId: string, formData: FormD
 
   await recalcIssue(issueId);
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
   revalidatePath("/issues");
 }
 
@@ -212,7 +212,7 @@ export async function transitionStatusAction(issueId: string, direction: "next" 
     });
     await recalcIssue(issueId);
     revalidatePath(`/issues/${issueId}`);
-    revalidatePath("/dashboard");
+    revalidatePath("/governance");
     revalidatePath("/issues");
     return;
   }
@@ -258,7 +258,7 @@ export async function transitionStatusAction(issueId: string, direction: "next" 
 
   await recalcIssue(issueId);
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
   revalidatePath("/issues");
 }
 
@@ -306,7 +306,7 @@ export async function sendBackToRdAction(issueId: string, formData: FormData) {
 
   await recalcIssue(issueId);
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
   revalidatePath("/issues");
 }
 
@@ -333,7 +333,7 @@ export async function addCommentAction(issueId: string, formData: FormData) {
 
   await recalcIssue(issueId);
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +363,7 @@ export async function addEvidenceAction(issueId: string, formData: FormData) {
 
   await recalcIssue(issueId);
   revalidatePath(`/issues/${issueId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/governance");
 }
 
 // ---------------------------------------------------------------------------

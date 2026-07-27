@@ -13,7 +13,7 @@ export default function ReturnOverview({
   filters: GovernanceDashboardFilters;
 }) {
   if (overview.totalReturns === 0) {
-    return <EmptyDashboardState message="目前沒有 RETURN 紀錄。" />;
+    return <EmptyDashboardState message="目前沒有退回重作紀錄。" />;
   }
 
   return (
@@ -23,18 +23,18 @@ export default function ReturnOverview({
           href={withGovernanceFilterOverride(filters, { returnOnly: true })}
           className="block rounded-md border border-gray-200 p-3 hover:border-primary"
         >
-          <div className="text-sm text-gray-500">有 RETURN 紀錄的案件</div>
+          <div className="text-sm text-gray-500">退回重作案件</div>
           <div className="mt-1 text-xl font-semibold text-gray-900">{overview.issuesWithReturn}</div>
         </Link>
         <div className="rounded-md border border-gray-200 p-3">
-          <div className="text-sm text-gray-500">RETURN 總次數</div>
+          <div className="text-sm text-gray-500">退回總次數</div>
           <div className="mt-1 text-xl font-semibold text-gray-900">{overview.totalReturns}</div>
         </div>
         <Link
           href={withGovernanceFilterOverride(filters, { repeatedReturnOnly: true })}
           className="block rounded-md border border-gray-200 p-3 hover:border-primary"
         >
-          <div className="text-sm text-gray-500">重複 RETURN 案件</div>
+          <div className="text-sm text-gray-500">重複退回案件</div>
           <div className="mt-1 text-xl font-semibold text-gov-red">{overview.repeatedReturnIssues}</div>
         </Link>
       </div>

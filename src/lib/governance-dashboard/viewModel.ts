@@ -10,14 +10,16 @@
 
 import { applyGovernanceDashboardFilters, type GovernanceDashboardSearchParams, parseGovernanceDashboardFilters } from "./filters";
 import {
+  computeActionNeededList,
   computeBottleneckSummary,
   computeKpiSummary,
   computeLegacySummary,
-  computeRecentExceptions,
+  computePhaseDistribution,
   computeReturnOverview,
   computeRiskOverview,
   computeStageDistribution,
   computeTeamWorkload,
+  computeTodayOverview,
 } from "./metrics";
 import { getVisibleGovernanceIssueRows } from "./queries";
 import {
@@ -62,12 +64,14 @@ export async function buildGovernanceDashboardViewModel(
     filters,
     filterOptions: buildFilterOptions(allRows),
     kpi: computeKpiSummary(filteredRows, staleDaysThreshold),
+    todayOverview: computeTodayOverview(filteredRows, staleDaysThreshold),
     stageDistribution: computeStageDistribution(filteredRows),
+    phaseDistribution: computePhaseDistribution(filteredRows),
     riskOverview: computeRiskOverview(filteredRows),
     bottleneck: computeBottleneckSummary(filteredRows),
     returnOverview: computeReturnOverview(filteredRows),
     teamWorkload: computeTeamWorkload(filteredRows, staleDaysThreshold),
-    recentExceptions: computeRecentExceptions(filteredRows, staleDaysThreshold),
+    actionNeeded: computeActionNeededList(filteredRows, staleDaysThreshold),
     legacy: computeLegacySummary(filteredRows),
     issueList: filteredRows,
     hasAnyVisibleIssue: allRows.length > 0,

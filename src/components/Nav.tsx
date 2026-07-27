@@ -5,10 +5,9 @@ import { roleLabel } from "@/lib/constants";
 import LogoutButton from "./LogoutButton";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "治理儀表板" },
-  // 治理儀表板 MVP 新增：獨立於既有 /dashboard（工單總覽性質）之外的新版治理儀表板，
-  // 統計來源與可見性規則見 src/lib/governance-dashboard/*。
-  { href: "/governance", label: "治理儀表板 MVP" },
+  // 治理儀表板收斂：/governance 為唯一正式治理儀表板入口，舊 /dashboard 已改為
+  // redirect 至此，不再於導覽中重複出現。
+  { href: "/governance", label: "治理儀表板" },
   { href: "/issues", label: "工單清單" },
   { href: "/issues/new", label: "建立工單" },
   { href: "/settings/approval-governance", label: "核准治理設定" },
@@ -46,7 +45,7 @@ export default async function Nav() {
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="text-base font-bold text-gray-900">
+          <Link href="/governance" className="text-base font-bold text-gray-900">
             DMS Governance Tracker
           </Link>
           <nav className="hidden gap-4 md:flex">

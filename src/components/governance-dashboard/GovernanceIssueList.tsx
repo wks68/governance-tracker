@@ -6,28 +6,7 @@
 
 import Link from "next/link";
 import type { GovernanceIssueRow } from "@/lib/governance-dashboard/types";
-
-const RISK_LABEL: Record<GovernanceIssueRow["riskStatus"], string> = {
-  YES: "Risk: YES",
-  UNKNOWN: "Risk: UNKNOWN",
-  UNANSWERED: "尚未回答",
-  NONE: "—",
-};
-
-const RISK_TONE: Record<GovernanceIssueRow["riskStatus"], string> = {
-  YES: "text-gov-red",
-  UNKNOWN: "text-gov-yellow",
-  UNANSWERED: "text-gov-blue",
-  NONE: "text-gray-400",
-};
-
-const LIFECYCLE_LABEL: Record<GovernanceIssueRow["lifecycleStatus"], string> = {
-  LEGACY: "舊制案件",
-  NOT_STARTED: "尚未啟動",
-  IN_PROGRESS: "進行中",
-  COMPLETED: "已完成",
-  CANCELLED: "已取消",
-};
+import { LIFECYCLE_STATUS_LABEL, RISK_STATUS_LABEL, RISK_STATUS_TONE } from "@/lib/governance-dashboard/labels";
 
 export default function GovernanceIssueList({ issues }: { issues: GovernanceIssueRow[] }) {
   if (issues.length === 0) {
@@ -64,14 +43,14 @@ export default function GovernanceIssueList({ issues }: { issues: GovernanceIssu
               </td>
               <td className="max-w-[220px] truncate px-3 py-2 text-gray-800">{issue.title}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowDefinition?.name ?? "舊制"}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{LIFECYCLE_LABEL[issue.lifecycleStatus]}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{LIFECYCLE_STATUS_LABEL[issue.lifecycleStatus]}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.currentStage?.label ?? "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.assignedTeamName ?? "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">
                 {issue.dwellDays !== null ? `${issue.dwellDays} 天` : "—"}
               </td>
-              <td className={`whitespace-nowrap px-3 py-2 font-medium ${RISK_TONE[issue.riskStatus]}`}>
-                {RISK_LABEL[issue.riskStatus]}
+              <td className={`whitespace-nowrap px-3 py-2 font-medium ${RISK_STATUS_TONE[issue.riskStatus]}`}>
+                {RISK_STATUS_LABEL[issue.riskStatus]}
               </td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.pendingApproval ? "是" : "否"}</td>
             </tr>

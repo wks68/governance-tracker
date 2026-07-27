@@ -27,6 +27,7 @@ export default function TeamWorkloadTable({
             <th className="px-3 py-2">進行中案件</th>
             <th className="px-3 py-2">待核准案件</th>
             <th className="px-3 py-2">停留超過門檻案件</th>
+            <th className="px-3 py-2">最長停留天數</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -56,6 +57,9 @@ export default function TeamWorkloadTable({
                 >
                   {entry.stale} 件
                 </Link>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+                {entry.longestDwellDays !== null ? `${entry.longestDwellDays} 天` : "—"}
               </td>
             </tr>
           ))}
