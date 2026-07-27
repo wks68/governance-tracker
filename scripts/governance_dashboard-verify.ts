@@ -39,7 +39,6 @@ import {
   computePhaseDistribution,
   computeActionNeededList,
   deriveSuggestedAction,
-  computeLegacySummary,
   resolveGovernanceDashboardAccess,
   getVisibleGovernanceIssueRows,
   buildGovernanceDashboardViewModel,
@@ -104,7 +103,6 @@ const EMPTY_FILTERS: GovernanceDashboardFilters = {
   pendingApprovalOnly: false,
   returnOnly: false,
   repeatedReturnOnly: false,
-  legacyOnly: false,
 };
 
 function makeRow(overrides: Partial<GovernanceIssueRow> & Pick<GovernanceIssueRow, "id" | "issueKey">): GovernanceIssueRow {
@@ -143,7 +141,6 @@ function runPureMetricsTests() {
       emptyKpi.pendingApproval === 0 &&
       emptyKpi.highRisk === 0 &&
       emptyKpi.stale === 0 &&
-      emptyKpi.legacyCount === 0 &&
       emptyKpi.totalVisible === 0,
   );
   check("[17-2] computeStageDistribution([]) 回傳空陣列", computeStageDistribution([]).length === 0);
@@ -175,7 +172,6 @@ function runPureMetricsTests() {
   );
   check("[17-7b] computePhaseDistribution([]) 回傳空陣列", computePhaseDistribution([]).length === 0);
   check("[17-7c] computeActionNeededList([]) 回傳空陣列", computeActionNeededList([]).length === 0);
-  check("[17-8] computeLegacySummary([]) count=0", computeLegacySummary([]).count === 0);
 
   // ---- KPI／Stage 分布／風險／RETURN／Team 負載聚合邏輯（單元層級） ----
   const stageA = { id: "stage-a", stageKey: "a", label: "A 關卡", stageType: "WORK", assignedTeamId: "team-1", assignedTeamName: "Team 1" };
@@ -210,7 +206,6 @@ function runPureMetricsTests() {
   check("[3-1] computeKpiSummary：待核准計數（ApprovalRecord PENDING+ACTIVE）", kpi.pendingApproval === 1);
   check("[4-1] computeKpiSummary：高風險計數（Risk=YES）", kpi.highRisk === 1);
   check("[7-1] computeKpiSummary：停留超過 7 天計數（只有 K1 dwellDays=10）", kpi.stale === 1);
-  check("[10-1] computeKpiSummary：舊制案件計數（LEGACY）", kpi.legacyCount === 1);
 
   const stageDist = computeStageDistribution(rows);
   check(
@@ -220,7 +215,10 @@ function runPureMetricsTests() {
   check("[2-2] computeStageDistribution：stage-a 有 3 件（K1/K2/K7），stage-b 有 1 件（K3）", stageDist.find((e) => e.stage.id === "stage-a")?.count === 3 && stageDist.find((e) => e.stage.id === "stage-b")?.count === 1);
 
   const risk = computeRiskOverview(rows);
-  check("[4-2] computeRiskOverview：yes=1 unknown=1（K6 為舊制但仍計入風險統計）", risk.yes === 1 && risk.unknown === 1);
+  check(
+    "[4-2] computeRiskOverview：yes=1 unknown=1（純函式本身不區分 LEGACY，濾除舊制案件是呼叫端 viewModel.ts 的責任，見 [LEGACY-*] 系列 DB 整合測試）",
+    risk.yes === 1 && risk.unknown === 1,
+  );
   check("[4-3] computeRiskOverview：noRecord 計入其餘完全無風險紀錄的案件", risk.noRecord === rows.length - risk.yes - risk.unknown);
 
   const bottleneck = computeBottleneckSummary(rows);
@@ -261,9 +259,6 @@ function runPureMetricsTests() {
   check("[AN-2] deriveSuggestedAction：高風險案件建議確認風險", deriveSuggestedAction(rows.find((r) => r.id === "3")!, 7) === "確認風險項目並決定處理方式");
   check("[AN-3] deriveSuggestedAction：重複退回案件建議檢視退回原因", deriveSuggestedAction(rows.find((r) => r.id === "7")!, 7) === "檢視退回原因，避免重複退回");
   check("[AN-4] deriveSuggestedAction：一般進行中案件回傳「持續處理中」", deriveSuggestedAction(rows.find((r) => r.id === "2")!, 7) === "持續處理中");
-
-  const legacy = computeLegacySummary(rows);
-  check("[10-2] computeLegacySummary：count=1 且不含任何非 LEGACY 案件", legacy.count === 1 && legacy.issues.every((r) => r.lifecycleStatus === "LEGACY"));
 
   // ---- workflowStatus 不是權威來源：即使欄位文字具誤導性，統計仍以正式來源判斷 ----
   const misleadingRow = makeRow({ id: "8", issueKey: "K8", lifecycleStatus: "IN_PROGRESS", currentStage: stageA });
@@ -572,11 +567,17 @@ async function main() {
     check("[1-6] ViewModel KPI 進行中＝10（triage4+work4+review2）", viewModel.kpi.inProgress === 10, `實際 ${viewModel.kpi.inProgress}`);
     check("[1-7] ViewModel KPI 已完成＝1", viewModel.kpi.completed === 1);
     check("[1-8] ViewModel KPI 已取消＝1", viewModel.kpi.cancelled === 1);
-    check("[3-3] ViewModel KPI 待核准＝2（1 新版＋1 舊制）", viewModel.kpi.pendingApproval === 2);
+    check(
+      "[3-3] ViewModel KPI 待核准＝1（僅新版 issuePendingApproval；legacyIssue1 的 PENDING ApprovalRecord 不得計入，舊制案件已在 viewModel 層被濾除）",
+      viewModel.kpi.pendingApproval === 1,
+    );
     check("[4-5] ViewModel KPI 高風險＝1", viewModel.kpi.highRisk === 1);
     check(`[7-7] ViewModel KPI 停留超過 ${DEFAULT_STALE_DAYS_THRESHOLD} 天＝1`, viewModel.kpi.stale === 1);
-    check("[10-3] ViewModel KPI 舊制案件＝2", viewModel.kpi.legacyCount === 2);
-    check("[14-1] ViewModel KPI 可見總數＝14（Admin 全域可見）", viewModel.kpi.totalVisible === 14);
+    check(
+      "[LEGACY-1] ViewModel KPI 可見總數＝12（14 筆可見 Issue 中排除 2 筆舊制，只計已啟動新版 Workflow 的案件）",
+      viewModel.kpi.totalVisible === 12,
+      `實際 ${viewModel.kpi.totalVisible}`,
+    );
 
     check("[2-3] ViewModel Stage 分布：triage=4 work=4 review=2", (() => {
       const byId = new Map(viewModel.stageDistribution.map((e) => [e.stage.id, e.count]));
@@ -584,7 +585,11 @@ async function main() {
     })());
     check("[2-4] ViewModel Stage 分布：work 關卡帶出範本預設負責 Team（TeamA）", viewModel.stageDistribution.find((e) => e.stage.id === stageWork.id)?.stage.assignedTeamName?.includes("TeamA") === true);
 
-    check("[4-6] ViewModel 風險監控：yes=1 unknown=1 unanswered=1 noRecord=11", viewModel.riskOverview.yes === 1 && viewModel.riskOverview.unknown === 1 && viewModel.riskOverview.unanswered === 1 && viewModel.riskOverview.noRecord === 11, JSON.stringify(viewModel.riskOverview));
+    check(
+      "[LEGACY-2] ViewModel 風險監控：yes=1 unknown=1 unanswered=1 noRecord=9（舊制案件不得計入「尚無風險紀錄」，14 筆中 2 筆舊制已被排除）",
+      viewModel.riskOverview.yes === 1 && viewModel.riskOverview.unknown === 1 && viewModel.riskOverview.unanswered === 1 && viewModel.riskOverview.noRecord === 9,
+      JSON.stringify(viewModel.riskOverview),
+    );
 
     check("[5-6] ViewModel RETURN 監控：issuesWithReturn=2 totalReturns=3 repeatedReturnIssues=1", viewModel.returnOverview.issuesWithReturn === 2 && viewModel.returnOverview.totalReturns === 3 && viewModel.returnOverview.repeatedReturnIssues === 1, JSON.stringify(viewModel.returnOverview));
     check("[5-7] ViewModel RETURN 監控：主要退回關卡聚合到 work，count=3", viewModel.returnOverview.topReturnStages.find((s) => s.stageId === stageWork.id)?.count === 3);
@@ -598,19 +603,34 @@ async function main() {
     check("[7-8] ViewModel 流程瓶頸：門檻 1/3/7 各 1 件，14 天 0 件", viewModel.bottleneck.thresholdCounts[1] === 1 && viewModel.bottleneck.thresholdCounts[7] === 1 && viewModel.bottleneck.thresholdCounts[14] === 0);
     check("[7-9] ViewModel 流程瓶頸：停留最久案件第一筆為 issueStale", viewModel.bottleneck.longestDwelling[0]?.id === issueStale.id);
 
-    check("[10-4] ViewModel Legacy 摘要：count=2 且包含兩筆舊制 Issue", viewModel.legacy.count === 2 && [legacyIssue1.id, legacyIssue2.id].every((id) => viewModel.legacy.issues.some((r) => r.id === id)));
+    check(
+      "[LEGACY-3] ViewModel 案件清單完全不含舊制案件（治理儀表板不顯示「舊制／歷史案件」區塊，也不在任何查詢結果中出現）",
+      !viewModel.issueList.some((r) => r.id === legacyIssue1.id || r.id === legacyIssue2.id) &&
+        viewModel.issueList.every((r) => r.lifecycleStatus !== "LEGACY"),
+    );
+    check(
+      "[LEGACY-4] ViewModel 現在需要處理清單完全不含舊制案件",
+      !viewModel.actionNeeded.some((r) => r.id === legacyIssue1.id || r.id === legacyIssue2.id),
+    );
+    check(
+      "[LEGACY-5] ViewModel 篩選選項不含只有舊制案件才有的 issueType（Incident，僅 legacyIssue2 持有）",
+      !viewModel.filterOptions.issueTypes.includes("Incident"),
+    );
 
     check("[11-2] issueFresh.workflowStatus 為誤導文字「已完成」，但 lifecycleStatus 仍判定為 IN_PROGRESS（不採信 workflowStatus）", viewModel.issueList.find((r) => r.id === issueFresh.id)?.lifecycleStatus === "IN_PROGRESS");
 
     // ---- [8][9] 篩選＋下鑽一致性（對照實際 UI 下鑽連結會加上的篩選組合） ----
-    await checkAsync("[8-4] workflowDefinitionId 篩選：只回傳新版 Workflow 案件（12 筆，排除 2 筆舊制）", async () => {
+    await checkAsync("[8-4] workflowDefinitionId 篩選：在已排除舊制案件的 12 筆治理範圍內正確篩選（12 筆皆屬同一 WorkflowDefinition）", async () => {
       const vm = await buildGovernanceDashboardViewModel(admin.id, { workflowDefinitionId: definition.id });
       return vm.issueList.length === 12;
     });
-    await checkAsync("[8-5] issueType 篩選：Incident 只有 legacyIssue2 一筆", async () => {
-      const vm = await buildGovernanceDashboardViewModel(admin.id, { issueType: "Incident" });
-      return vm.issueList.length === 1 && vm.issueList[0].id === legacyIssue2.id;
-    });
+    await checkAsync(
+      "[LEGACY-6] issueType 篩選：即使明確篩選「Incident」（僅舊制 legacyIssue2 持有此 issueType），也回傳 0 筆——舊制案件無法透過任何篩選條件被找出",
+      async () => {
+        const vm = await buildGovernanceDashboardViewModel(admin.id, { issueType: "Incident" });
+        return vm.issueList.length === 0;
+      },
+    );
     await checkAsync("[8-6] dateTo 篩選：只回傳 30 天前建立的 issueCompleted", async () => {
       const cutoff = new Date(Date.now() - 20 * 86_400_000).toISOString().slice(0, 10);
       const vm = await buildGovernanceDashboardViewModel(admin.id, { dateTo: cutoff });
@@ -634,10 +654,13 @@ async function main() {
       const vm = await buildGovernanceDashboardViewModel(admin.id, { repeatedReturnOnly: "1" });
       return vm.issueList.length === viewModel.returnOverview.repeatedReturnIssues;
     });
-    await checkAsync("[9-8] 下鑽 legacyOnly 筆數＝KPI 舊制案件數字", async () => {
-      const vm = await buildGovernanceDashboardViewModel(admin.id, { legacyOnly: "1" });
-      return vm.issueList.length === viewModel.kpi.legacyCount;
-    });
+    await checkAsync(
+      "[LEGACY-7] getVisibleGovernanceIssueRows（存取層）仍完整回傳舊制案件（14 筆，含 legacyIssue1／legacyIssue2）——舊制案件只是治理儀表板選擇不顯示，不是資料被刪除或不可見；仍可在 /issues 一般工單清單查閱",
+      async () => {
+        const rows = await getVisibleGovernanceIssueRows(admin.id);
+        return rows.length === 14 && rows.some((r) => r.id === legacyIssue1.id) && rows.some((r) => r.id === legacyIssue2.id);
+      },
+    );
 
     // ---- [16] 空資料畫面（DB 層級）：無 issue.view 的 actor 觸發存取拒絕、有 issue.view
     //      但完全無案件時 hasAnyVisibleIssue=false（此處以篩選條件濾成 0 筆驗證欄位存在，
@@ -751,6 +774,24 @@ function runStaticSourceChecks() {
     }
   }
   check("[7-10] src/lib/governance-dashboard/* 程式碼層級不使用 Issue.stageEnteredAt（M1 相容欄位）推算停留天數（註解中的說明文字不算違規）", stageEnteredAtViolation === null, stageEnteredAtViolation ?? undefined);
+
+  // ---- 治理儀表板整個模組必須是唯讀的：隱藏舊制案件是「查詢層不回傳」，絕不能是
+  // 「順手把資料改掉」。任何 .create(/.update(/.upsert(/.delete(/.updateMany(/.deleteMany(
+  // 呼叫都視為違規（stripComments 後比對，避免文件化的說明文字誤判）。 ----
+  const mutatingCallPattern = /\.(create|update|upsert|delete|updateMany|deleteMany)\s*\(/;
+  let mutationViolation: string | null = null;
+  for (const file of libFiles) {
+    const src = stripComments(fs.readFileSync(file, "utf8"));
+    if (mutatingCallPattern.test(src)) {
+      mutationViolation = path.relative(REPO_ROOT, file);
+      break;
+    }
+  }
+  check(
+    "[LEGACY-8] src/lib/governance-dashboard/* 完全不呼叫任何 Prisma 寫入方法（create／update／upsert／delete 系列），治理儀表板對既有資料（含舊制案件）一律唯讀，隱藏舊制案件不得靠修改或補寫資料達成",
+    mutationViolation === null,
+    mutationViolation ?? undefined,
+  );
 
   const serverOnlyImportPattern = /from\s*["']@\/lib\/(prisma|governanceDashboardService)["']|from\s*["']@\/lib\/governance-dashboard\/(queries|access|viewModel)["']/;
   let clientBoundaryViolation: string | null = null;

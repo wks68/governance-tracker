@@ -103,7 +103,6 @@ export interface GovernanceDashboardFilters {
   pendingApprovalOnly: boolean;
   returnOnly: boolean;
   repeatedReturnOnly: boolean;
-  legacyOnly: boolean;
 }
 
 export interface GovernanceKpiSummary {
@@ -114,7 +113,6 @@ export interface GovernanceKpiSummary {
   highRisk: number;
   stale: number;
   staleDaysThreshold: StaleDaysOption;
-  legacyCount: number;
   totalVisible: number;
 }
 
@@ -168,11 +166,6 @@ export interface GovernanceFilterOptions {
   teams: { id: string; name: string }[];
 }
 
-export interface GovernanceLegacySummary {
-  count: number;
-  issues: GovernanceIssueRow[];
-}
-
 // 今日治理總覽：首頁最上方最多 6 張主要 KPI（管理者語意，非技術語意）。
 export interface GovernanceTodayOverview {
   hotfixInProgress: number;
@@ -205,7 +198,9 @@ export interface GovernanceDashboardViewModel {
   returnOverview: GovernanceReturnOverview;
   teamWorkload: GovernanceTeamWorkloadEntry[];
   actionNeeded: GovernanceIssueRow[];
-  legacy: GovernanceLegacySummary;
+  // 只涵蓋已啟動新版 Workflow 的案件（workflowVersionId 不為 null）；舊制案件完全不
+  // 出現於治理儀表板的任何統計或清單，一律只能在 /issues 一般工單清單／明細頁查閱
+  // （見 viewModel.ts 對 governedRows 的篩選）。
   issueList: GovernanceIssueRow[];
   hasAnyVisibleIssue: boolean;
 }

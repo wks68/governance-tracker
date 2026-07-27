@@ -11,7 +11,6 @@ import {
   type GovernanceDashboardFilters,
   type GovernanceIssueRow,
   type GovernanceKpiSummary,
-  type GovernanceLegacySummary,
   type GovernancePhaseDistributionEntry,
   type GovernanceReturnOverview,
   type GovernanceReturnStageAggregate,
@@ -78,7 +77,6 @@ export function computeKpiSummary(
     highRisk: rows.filter(isHighRiskIssue).length,
     stale: rows.filter((r) => isStaleIssue(r, staleDaysThreshold)).length,
     staleDaysThreshold,
-    legacyCount: rows.filter(isLegacyIssue).length,
     totalVisible: rows.length,
   };
 }
@@ -278,13 +276,4 @@ export function computeTeamWorkload(
     byTeam.set(row.assignedTeamId, entry);
   }
   return [...byTeam.values()].sort((a, b) => b.inProgress - a.inProgress || a.teamName.localeCompare(b.teamName));
-}
-
-// ---------------------------------------------------------------------------
-// Legacy（舊制案件）：獨立統計，不混入以上任何新版 Workflow 統計。
-// ---------------------------------------------------------------------------
-
-export function computeLegacySummary(rows: readonly GovernanceIssueRow[]): GovernanceLegacySummary {
-  const issues = rows.filter(isLegacyIssue);
-  return { count: issues.length, issues };
 }

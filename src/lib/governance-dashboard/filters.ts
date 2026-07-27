@@ -17,7 +17,6 @@ import {
   isCancelledIssue,
   isCompletedIssue,
   isInProgressIssue,
-  isLegacyIssue,
   isPendingApprovalIssue,
   isStaleIssue,
 } from "./metrics";
@@ -68,7 +67,6 @@ export function parseGovernanceDashboardFilters(searchParams: GovernanceDashboar
     pendingApprovalOnly: parseFlag(firstValue(searchParams.pendingApprovalOnly)),
     returnOnly: parseFlag(firstValue(searchParams.returnOnly)),
     repeatedReturnOnly: parseFlag(firstValue(searchParams.repeatedReturnOnly)),
-    legacyOnly: parseFlag(firstValue(searchParams.legacyOnly)),
   };
 }
 
@@ -86,7 +84,6 @@ export function governanceDashboardFiltersToSearchParams(filters: GovernanceDash
   if (filters.pendingApprovalOnly) params.set("pendingApprovalOnly", "1");
   if (filters.returnOnly) params.set("returnOnly", "1");
   if (filters.repeatedReturnOnly) params.set("repeatedReturnOnly", "1");
-  if (filters.legacyOnly) params.set("legacyOnly", "1");
   return params;
 }
 
@@ -128,7 +125,6 @@ export function applyGovernanceDashboardFilters(
     if (filters.pendingApprovalOnly && !isPendingApprovalIssue(row)) return false;
     if (filters.returnOnly && !hasReturnIssue(row)) return false;
     if (filters.repeatedReturnOnly && !hasRepeatedReturnIssue(row)) return false;
-    if (filters.legacyOnly && !isLegacyIssue(row)) return false;
 
     return true;
   });

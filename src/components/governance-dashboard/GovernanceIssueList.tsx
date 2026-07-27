@@ -42,7 +42,7 @@ export default function GovernanceIssueList({ issues }: { issues: GovernanceIssu
                 </Link>
               </td>
               <td className="max-w-[220px] truncate px-3 py-2 text-gray-800">{issue.title}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowDefinition?.name ?? "舊制"}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowDefinition?.name ?? "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{LIFECYCLE_STATUS_LABEL[issue.lifecycleStatus]}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.currentStage?.label ?? "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.assignedTeamName ?? "—"}</td>

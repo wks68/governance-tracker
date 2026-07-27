@@ -1,5 +1,5 @@
-// 治理儀表板 UI 收斂：今日治理總覽（A 節）。最多 6 張主要 KPI，管理者語意，不將舊制
-// 案件放入主要 KPI（舊制案件統計見頁面下方「舊制／歷史案件」收合區塊）。
+// 治理儀表板 UI 收斂：今日治理總覽（A 節）。最多 6 張主要 KPI，管理者語意，只統計已
+// 啟動新版 Workflow 的案件（見 viewModel.ts 的 governedRows 篩選）。
 
 import Link from "next/link";
 import clsx from "clsx";

@@ -10,7 +10,6 @@ import RiskOverview from "@/components/governance-dashboard/RiskOverview";
 import ReturnOverview from "@/components/governance-dashboard/ReturnOverview";
 import TeamWorkloadTable from "@/components/governance-dashboard/TeamWorkloadTable";
 import GovernanceIssueList from "@/components/governance-dashboard/GovernanceIssueList";
-import LegacyIssuesSection from "@/components/governance-dashboard/LegacyIssuesSection";
 import EmptyDashboardState from "@/components/governance-dashboard/EmptyDashboardState";
 
 export const dynamic = "force-dynamic";
@@ -51,15 +50,13 @@ export default async function GovernanceDashboardPage({
     );
   }
 
-  const mainIssueList = viewModel.issueList.filter((row) => row.lifecycleStatus !== "LEGACY");
-
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-bold text-gray-900">治理儀表板</h1>
         <p className="mt-0.5 text-sm text-gray-500">
-          Hotfix 流程進度、卡點、風險與責任落點總覽（可見範圍 {viewModel.kpi.totalVisible} 筆・已完成{" "}
-          {viewModel.kpi.completed} 筆・已取消 {viewModel.kpi.cancelled} 筆・舊制案件 {viewModel.kpi.legacyCount} 筆，詳見頁面底部）
+          Hotfix 流程進度、卡點、風險與責任落點總覽（已啟動新版流程案件 {viewModel.kpi.totalVisible} 筆・已完成{" "}
+          {viewModel.kpi.completed} 筆・已取消 {viewModel.kpi.cancelled} 筆）
         </p>
       </div>
 
@@ -108,12 +105,8 @@ export default async function GovernanceDashboardPage({
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-gray-700">全部案件（共 {mainIssueList.length} 筆，依目前篩選）</h2>
-        <GovernanceIssueList issues={mainIssueList} />
-      </section>
-
-      <section id="legacy-issues">
-        <LegacyIssuesSection legacy={viewModel.legacy} />
+        <h2 className="mb-2 text-sm font-semibold text-gray-700">全部案件（共 {viewModel.issueList.length} 筆，依目前篩選）</h2>
+        <GovernanceIssueList issues={viewModel.issueList} />
       </section>
     </div>
   );
