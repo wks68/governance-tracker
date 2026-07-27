@@ -9,6 +9,7 @@ import BottleneckList from "@/components/governance-dashboard/BottleneckList";
 import ReturnOverview from "@/components/governance-dashboard/ReturnOverview";
 import TeamWorkloadTable from "@/components/governance-dashboard/TeamWorkloadTable";
 import RecentExceptions from "@/components/governance-dashboard/RecentExceptions";
+import GovernanceIssueList from "@/components/governance-dashboard/GovernanceIssueList";
 import EmptyDashboardState from "@/components/governance-dashboard/EmptyDashboardState";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +17,6 @@ export const dynamic = "force-dynamic";
 // 治理儀表板 MVP 首頁（Plan 全文）。Server Component 只呼叫
 // buildGovernanceDashboardViewModel 取得 ViewModel，不直接 import Prisma、不自行計算
 // 統計或篩選邏輯——所有邏輯集中在 src/lib/governance-dashboard/*。
-//
-// 本輪（commit 2）先建立總覽卡片；下鑽清單見下一輪 commit（GovernanceIssueList）。
 export default async function GovernanceDashboardPage({
   searchParams,
 }: {
@@ -99,6 +98,11 @@ export default async function GovernanceDashboardPage({
       <section>
         <h2 className="mb-2 text-sm font-semibold text-gray-700">最近異常</h2>
         <RecentExceptions exceptions={viewModel.recentExceptions} />
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-gray-700">下鑽清單（共 {viewModel.issueList.length} 筆）</h2>
+        <GovernanceIssueList issues={viewModel.issueList} />
       </section>
     </div>
   );
