@@ -62,6 +62,8 @@ export async function getIssueWorkflowHistory(issueId: string, actorId: string) 
       fromStage: true,
       toStage: true,
       transition: true,
+      assignedTeamBefore: true,
+      assignedTeamAfter: true,
     },
   });
 }

@@ -11,7 +11,9 @@ import {
   getIssueWorkflowHistory,
   hasExecutionCapability,
   listSelectablePublishedVersionsForIssueType,
+  type AvailableTransitionPreview,
 } from "@/lib/workflowExecutionService";
+import CurrentStagePanel from "@/components/workflow-execution/CurrentStagePanel";
 import StatusBadge from "@/components/StatusBadge";
 import WorkflowProgress from "@/components/WorkflowProgress";
 import DynamicFieldsEditForm from "@/components/DynamicFieldsEditForm";
@@ -22,14 +24,17 @@ import EvidenceList from "@/components/EvidenceList";
 import CommentList from "@/components/CommentList";
 import AuditLogList from "@/components/AuditLogList";
 import AiAssistantPanel from "@/components/AiAssistantPanel";
-import WorkflowRuntimeSummary from "@/components/workflow-execution/WorkflowRuntimeSummary";
-import CurrentStagePanel from "@/components/workflow-execution/CurrentStagePanel";
 import StageRequirementsPanel from "@/components/workflow-execution/StageRequirementsPanel";
-import AvailableTransitionList from "@/components/workflow-execution/AvailableTransitionList";
-import ReturnActionPanel from "@/components/workflow-execution/ReturnActionPanel";
-import CancelActionPanel from "@/components/workflow-execution/CancelActionPanel";
-import WorkflowHistoryTimeline from "@/components/workflow-execution/WorkflowHistoryTimeline";
 import StartWorkflowPanel from "@/components/workflow-execution/StartWorkflowPanel";
+import HotfixStatusHeader from "@/components/hotfix-execution/HotfixStatusHeader";
+import HotfixTodoList from "@/components/hotfix-execution/HotfixTodoList";
+import HotfixApprovalPanel from "@/components/hotfix-execution/HotfixApprovalPanel";
+import HotfixRiskCheckPanel from "@/components/hotfix-execution/HotfixRiskCheckPanel";
+import HotfixActionPanels from "@/components/hotfix-execution/HotfixActionPanels";
+import HotfixHistoryTimeline from "@/components/hotfix-execution/HotfixHistoryTimeline";
+import { buildHotfixRuntimeView, getRiskCheckItemsForStage } from "@/lib/hotfix-ui/runtimeView";
+import { transitionCopyOf } from "@/lib/hotfix-ui/transitionCopy";
+import type { ActionTransitionItem } from "@/components/hotfix-execution/HotfixActionPanels";
 
 export const dynamic = "force-dynamic";
 
@@ -65,12 +70,15 @@ export default async function IssueDetailPage({ params }: { params: { id: string
   let historyItems: Array<{
     id: string;
     transitionType: string;
+    actionKey: string | null;
     fromStageLabel: string | null;
     toStageLabel: string;
     transitionLabel: string | null;
     actorName: string;
     reasonCode: string | null;
     terminalOutcome: string | null;
+    assignedTeamNameBefore: string | null;
+    assignedTeamNameAfter: string | null;
     executedAt: string;
   }> = [];
   let canAssignTeam = false;
@@ -78,6 +86,14 @@ export default async function IssueDetailPage({ params }: { params: { id: string
   let assignedTeamName: string | null = null;
   let startableVersions: Array<{ id: string; versionNo: number; definitionName: string }> = [];
   let canStartWorkflow = false;
+  let hotfixView: Awaited<ReturnType<typeof buildHotfixRuntimeView>> | null = null;
+  let approvalInfo: { approvalRecordId: string; requestedByName: string; requestedAt: string } | null = null;
+  let riskCheckTargetStageKey: string | null = null;
+  let riskCheckItems: Awaited<ReturnType<typeof getRiskCheckItemsForStage>> = [];
+  let primaryForwardActionLabel: string | null = null;
+  let forwardActions: ActionTransitionItem[] = [];
+  let returnActions: ActionTransitionItem[] = [];
+  let cancelActions: ActionTransitionItem[] = [];
 
   if (onVersionedWorkflow) {
     runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
@@ -88,12 +104,15 @@ export default async function IssueDetailPage({ params }: { params: { id: string
     historyItems = historyRows.map((h) => ({
       id: h.id,
       transitionType: h.transitionType,
+      actionKey: h.transition?.actionKey ?? null,
       fromStageLabel: h.fromStage?.label ?? null,
       toStageLabel: h.toStage.label,
       transitionLabel: h.transition?.label ?? null,
       actorName: actorNameById.get(h.actorUserId) ?? "（未知使用者）",
       reasonCode: h.reasonCode,
       terminalOutcome: h.terminalOutcome,
+      assignedTeamNameBefore: h.assignedTeamBefore?.name ?? null,
+      assignedTeamNameAfter: h.assignedTeamAfter?.name ?? null,
       executedAt: h.executedAt.toISOString(),
     }));
     canAssignTeam = await hasExecutionCapability(currentUser.id, "issue.assignTeam");
@@ -103,6 +122,58 @@ export default async function IssueDetailPage({ params }: { params: { id: string
     if (issue.assignedTeamId) {
       const assignedTeam = await prisma.team.findUnique({ where: { id: issue.assignedTeamId }, select: { name: true } });
       assignedTeamName = assignedTeam?.name ?? null;
+    }
+
+    if (runtime.onVersionedWorkflow) {
+      const pendingApprovalDecision =
+        runtime.pendingApproval && runtime.pendingApproval.decision === "PENDING" ? "PENDING" : (runtime.pendingApproval?.decision as "APPROVED" | "REJECTED" | undefined) ?? null;
+
+      hotfixView = await buildHotfixRuntimeView({
+        issueId: issue.id,
+        actorId: currentUser.id,
+        currentStage: {
+          stageKey: runtime.currentStage.stageKey,
+          label: runtime.currentStage.label,
+          stageType: runtime.currentStage.stageType,
+          requiredMembershipRole: runtime.currentStage.requiredMembershipRole,
+        },
+        assignedTeamId: issue.assignedTeamId,
+        assignedTeamName,
+        availableTransitions: runtime.availableTransitions,
+        stageRequirements: runtime.stageRequirements,
+        pendingApprovalDecision,
+        pendingApprovalExpectedApproverUserId: runtime.pendingApproval?.expectedApproverUserId ?? null,
+      });
+
+      if (runtime.pendingApproval && runtime.pendingApproval.decision === "PENDING") {
+        const requester = await prisma.user.findUnique({ where: { id: runtime.pendingApproval.requestedByUserId }, select: { name: true } });
+        approvalInfo = {
+          approvalRecordId: runtime.pendingApproval.id,
+          requestedByName: requester?.name ?? "（未知使用者）",
+          requestedAt: runtime.pendingApproval.requestedAt.toISOString(),
+        };
+      }
+
+      const primaryForward = runtime.availableTransitions.find((t) => t.transition.transitionType === "FORWARD");
+      if (primaryForward) {
+        riskCheckTargetStageKey = primaryForward.transition.toStage.stageKey;
+        riskCheckItems = await getRiskCheckItemsForStage(issue.id, riskCheckTargetStageKey);
+        primaryForwardActionLabel = transitionCopyOf(primaryForward.transition.actionKey, primaryForward.transition.label).label;
+      }
+
+      const toActionItem = (t: AvailableTransitionPreview): ActionTransitionItem => ({
+        id: t.transition.id,
+        actionKey: t.transition.actionKey,
+        label: t.transition.label,
+        requireReason: t.transition.requireReason,
+        targetLabel: t.transition.toStage.label,
+        targetIsCompleted: t.transition.toStage.isEnd && t.transition.toStage.terminalOutcome === "COMPLETED",
+        allowed: t.allowed,
+        blockedReasons: t.blockedReasons.map((r) => r.message),
+      });
+      forwardActions = runtime.availableTransitions.filter((t) => t.transition.transitionType === "FORWARD").map(toActionItem);
+      returnActions = runtime.availableTransitions.filter((t) => t.transition.transitionType === "RETURN").map(toActionItem);
+      cancelActions = runtime.availableTransitions.filter((t) => t.transition.transitionType === "CANCEL").map(toActionItem);
     }
   } else {
     canStartWorkflow = await hasExecutionCapability(currentUser.id, "admin.full");
@@ -239,89 +310,87 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             </div>
           </section>
 
-          {onVersionedWorkflow && runtime && runtime.onVersionedWorkflow ? (
+          {onVersionedWorkflow && runtime && runtime.onVersionedWorkflow && hotfixView ? (
             <>
-              {/* 6.3 流程執行（新版 Workflow 執行引擎） */}
+              {/* 需求一／二：目前工作狀態摘要＋7 階段流程進度 */}
               <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">流程執行</h2>
-                <WorkflowRuntimeSummary
-                  definitionName={runtime.version.workflowDefinition.name}
-                  versionNo={runtime.version.versionNo}
-                  versionStatus={runtime.version.status}
-                  currentStageLabel={runtime.currentStage.label}
-                  currentStageType={runtime.currentStage.stageType}
-                  assignedTeamName={assignedTeamName}
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">目前工作狀態</h2>
+                <HotfixStatusHeader
+                  view={hotfixView}
+                  isTerminal={runtime.currentStage.isEnd}
+                  terminalLabel={runtime.currentStage.isEnd ? (runtime.currentStage.terminalOutcome === "COMPLETED" ? "已完成" : "已取消") : null}
                 />
-                <div className="mt-4">
-                  <CurrentStagePanel
-                    issueId={issue.id}
-                    stageKey={runtime.currentStage.stageKey}
-                    stageLabel={runtime.currentStage.label}
-                    stageType={runtime.currentStage.stageType}
-                    requiredExecutionRole={runtime.currentStage.requiredExecutionRole}
-                    requiredMembershipRole={runtime.currentStage.requiredMembershipRole}
-                    assignedTeamId={issue.assignedTeamId}
-                    assignedTeamName={assignedTeamName}
-                    canAssignTeam={canAssignTeam}
-                    teamOptions={teamOptions}
-                  />
-                </div>
+                {canAssignTeam && runtime.currentStage.stageType === "TRIAGE" && (
+                  <div className="mt-4 border-t border-gray-100 pt-4">
+                    <CurrentStagePanel
+                      issueId={issue.id}
+                      stageKey={runtime.currentStage.stageKey}
+                      stageLabel={runtime.currentStage.label}
+                      stageType={runtime.currentStage.stageType}
+                      requiredExecutionRole={runtime.currentStage.requiredExecutionRole}
+                      requiredMembershipRole={runtime.currentStage.requiredMembershipRole}
+                      assignedTeamId={issue.assignedTeamId}
+                      assignedTeamName={assignedTeamName}
+                      canAssignTeam={canAssignTeam}
+                      teamOptions={teamOptions}
+                    />
+                  </div>
+                )}
               </section>
 
-              {/* 關卡完成條件 */}
+              {/* 需求四：目前待完成事項（取代舊「關卡卡控檢查」） */}
               <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">關卡完成條件</h2>
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">目前待完成事項</h2>
+                <HotfixTodoList items={hotfixView.todoItems} nextActionLabel={primaryForwardActionLabel} />
+              </section>
+
+              {/* 需求六：本階段工作內容（OP 上版階段顯示為「上版與回復資訊」） */}
+              <section id="field-section" className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">
+                  {hotfixView.businessStageLabel === "OP 上版" ? "上版與回復資訊" : "本階段工作內容"}
+                </h2>
                 <StageRequirementsPanel issueId={issue.id} requirements={runtime.stageRequirements} />
               </section>
 
-              {/* 前進動作 */}
-              <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">前進動作</h2>
-                <AvailableTransitionList
+              {/* 需求五：主管核准（僅目前責任角色可操作，其餘唯讀） */}
+              {approvalInfo && (
+                <HotfixApprovalPanel
                   issueId={issue.id}
-                  transitions={runtime.availableTransitions
-                    .filter((t) => t.transition.transitionType === "FORWARD")
-                    .map((t) => ({
-                      id: t.transition.id,
-                      label: t.transition.label,
-                      requireReason: t.transition.requireReason,
-                      targetLabel: t.transition.toStage.label,
-                      targetIsCompleted: t.transition.toStage.isEnd && t.transition.toStage.terminalOutcome === "COMPLETED",
-                      allowed: t.allowed,
-                      blockedReasons: t.blockedReasons.map((r) => r.message),
-                    }))}
+                  roleLabel={hotfixView.responsibleRoleLabel}
+                  approval={approvalInfo}
+                  isResponsible={hotfixView.isCurrentActorResponsible}
+                />
+              )}
+
+              {/* 需求四／六：風險／例外——送核前必須完成的風險確認 */}
+              {riskCheckTargetStageKey && (
+                <section className="rounded-lg border border-gray-200 bg-white p-5">
+                  <h2 className="mb-3 text-sm font-semibold text-gray-700">風險／例外</h2>
+                  <HotfixRiskCheckPanel
+                    issueId={issue.id}
+                    stageKey={riskCheckTargetStageKey}
+                    items={riskCheckItems}
+                    disabled={!hotfixView.isCurrentActorResponsible}
+                  />
+                </section>
+              )}
+
+              {/* 需求三：前進／退回／取消動作，一律使用工作語意文案 */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">下一步操作</h2>
+                <HotfixActionPanels
+                  issueId={issue.id}
+                  forward={forwardActions}
+                  ret={returnActions}
+                  cancel={cancelActions}
+                  isResponsible={hotfixView.isCurrentActorResponsible}
                 />
               </section>
 
-              <ReturnActionPanel
-                issueId={issue.id}
-                transitions={runtime.availableTransitions
-                  .filter((t) => t.transition.transitionType === "RETURN")
-                  .map((t) => ({
-                    id: t.transition.id,
-                    label: t.transition.label,
-                    targetLabel: t.transition.toStage.label,
-                    allowed: t.allowed,
-                    blockedReasons: t.blockedReasons.map((r) => r.message),
-                  }))}
-              />
-
-              <CancelActionPanel
-                issueId={issue.id}
-                transitions={runtime.availableTransitions
-                  .filter((t) => t.transition.transitionType === "CANCEL")
-                  .map((t) => ({
-                    id: t.transition.id,
-                    label: t.transition.label,
-                    allowed: t.allowed,
-                    blockedReasons: t.blockedReasons.map((r) => r.message),
-                  }))}
-              />
-
-              {/* 執行歷程 */}
+              {/* 需求七：處理紀錄時間軸 */}
               <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">Workflow 執行歷程</h2>
-                <WorkflowHistoryTimeline items={historyItems} />
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">處理紀錄</h2>
+                <HotfixHistoryTimeline items={historyItems} />
               </section>
             </>
           ) : (
