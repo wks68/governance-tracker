@@ -95,7 +95,13 @@ async function executeTransitionCore(tx: Tx, input: ExecuteTransitionInput, kind
 
   const now = new Date();
   const assignedTeamIdBefore = issue.assignedTeamId;
-  const assignedTeamIdAfter = transition.toStage.assignedTeamId ?? issue.assignedTeamId;
+  // RD/QA/OP 接單流程新增：進入 TRIAGE 關卡代表「這一輪處理團隊尚未認領」，即使
+  // Issue.assignedTeamId 先前帶著上一階段（例如草稿建立時的 PM 團隊，或前一個 RD/QA/OP
+  // 輪次的處理團隊）的值，也必須在此重置為 null，claimService 的「assignedTeamId 為 null」
+  // 併發檢查前提才有意義——否則 assignedTeamId 會一路沿用舊值，永遠無法反映「尚待接單」。
+  // 若範本明確設定 toStage.assignedTeamId（目前 Hotfix v1 未使用此欄位），仍優先採用範本值。
+  const assignedTeamIdAfter =
+    transition.toStage.assignedTeamId ?? (transition.toStage.stageType === "TRIAGE" ? null : issue.assignedTeamId);
   const terminalOutcome = transition.toStage.isEnd ? transition.toStage.terminalOutcome : null;
 
   await closeOpenHistoryRow(tx, issue.id, issue.currentWorkflowStageId, now);
@@ -161,6 +167,16 @@ async function executeTransitionCore(tx: Tx, input: ExecuteTransitionInput, kind
 
 export async function executeIssueTransition(input: ExecuteTransitionInput) {
   return prisma.$transaction((tx) => executeTransitionCore(tx, input, "FORWARD"));
+}
+
+// RD/QA/OP 接單流程新增：供 claimService／assignmentService 在自己既有的 transaction 內
+// （已完成接單／指派資格重新驗證＋寫入）緊接著執行同一個 FORWARD Transition，兩者要嘛
+// 全部成功、要嘛全部回滾，不得分成兩個各自獨立的 transaction（否則會出現「已接單但未離開
+// TRIAGE 關卡」或「已離開關卡但未記錄承接團隊」的半套狀態）。比照 approvalService.ts
+// 既有「可選外部 transaction client」慣例，這裡固定必須傳入呼叫端的 tx（而非可選），
+// 因為呼叫端一定是在自己開啟的 transaction 內才會需要這個入口。
+export async function executeIssueTransitionInTx(tx: Tx, input: ExecuteTransitionInput) {
+  return executeTransitionCore(tx, input, "FORWARD");
 }
 
 export async function returnIssueToStage(input: ExecuteTransitionInput) {
