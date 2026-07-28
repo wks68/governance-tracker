@@ -1,16 +1,12 @@
-import { prisma } from "@/lib/prisma";
 import { requireCurrentUser } from "@/lib/auth";
+import { listCreatableTeamsForActor } from "@/lib/team-applicant/teamApplicantService";
 import NewIssueForm from "@/components/NewIssueForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewIssuePage() {
   const currentUser = await requireCurrentUser();
-  const users = await prisma.user.findMany({
-    where: { isActive: true },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, role: true },
-  });
+  const teams = await listCreatableTeamsForActor(currentUser.id);
 
-  return <NewIssueForm users={users} currentUserId={currentUser.id} />;
+  return <NewIssueForm teams={teams} />;
 }

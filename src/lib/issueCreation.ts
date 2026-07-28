@@ -21,6 +21,9 @@ import { calculateStatusLight, suggestWaitingRole } from "./statusLight";
 import { evaluateGateRules } from "./gateRules";
 import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, isClosed, statusLabel } from "./workflow";
 import { ISSUE_TYPE_PREFIX } from "./constants";
+import { requireCapability } from "./permissions";
+import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
+import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./hotfix-ui/priority";
 import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx } from "./workflowExecutionService";
 import type { User } from "@prisma/client";
 
@@ -138,6 +141,10 @@ export async function createIssueForActor(actor: User | null | undefined, formDa
   if (!actor || !actor.isActive) {
     throw new UnauthorizedIssueCreationError();
   }
+  // 建立工單／團隊整合修正：建立工單需要 issue.edit 能力（依 active UserRole 判斷，不得
+  // 依 User.role），與其他所有寫入路徑（updateIssueAction／workflow-execution）採同一套
+  // 授權入口一致。
+  await requireCapability(actor, "issue.edit");
 
   const issueType = String(formData.get("issueType") || "");
   const workflow = getWorkflow(issueType);
@@ -151,17 +158,18 @@ export async function createIssueForActor(actor: User | null | undefined, formDa
   const environment = String(formData.get("environment") || "");
   const riskLevel = String(formData.get("riskLevel") || "");
   const priority = String(formData.get("priority") || "");
-  const ownerUserId = String(formData.get("ownerUserId") || "");
-  const reporterUserId = String(formData.get("reporterUserId") || "");
   const dueDateRaw = String(formData.get("dueDate") || "");
-  const alertLevel = String(formData.get("alertLevel") || "");
-  const needRca = formData.get("needRca") === "on";
-  const needRiskException = formData.get("needRiskException") === "on";
-  const impactProduction = formData.get("impactProduction") === "on";
+  const hotfixPriority = String(formData.get("hotfixPriority") || "");
 
-  // 負責人、建立人一律只能從已啟用的使用者資料中選擇，不接受任意輸入
-  const owner = await findActiveUserOrNull(ownerUserId);
-  const reporterUser = await findActiveUserOrNull(reporterUserId);
+  // 團隊名稱／申請人一律伺服器端重新驗證，不信任前端下拉選單結果或任何 hidden input：
+  // teamId 必須存在，applicantId 必須是該 team 目前 active 的成員，actor 必須有權以此
+  // team 建立工單（Admin 可任選；非 Admin 僅能選自己是 active 成員的團隊）。
+  const teamId = String(formData.get("teamId") || "");
+  const applicantId = String(formData.get("applicantId") || "");
+  if (!teamId) throw new Error("請選擇團隊名稱");
+  if (!applicantId) throw new Error("請選擇申請人");
+  await assertActorCanUseTeam(actor.id, teamId);
+  const applicant = await assertValidApplicantForTeam(teamId, applicantId);
 
   const issueKey = await generateIssueKey(issueType);
   const initialStatus = workflow[0].key;
@@ -187,18 +195,12 @@ export async function createIssueForActor(actor: User | null | undefined, formDa
         environment,
         riskLevel,
         priority,
-        ownerUserId: owner?.id ?? null,
-        ownerName: owner?.name ?? "",
-        ownerRole: owner?.role ?? "",
-        reporterUserId: reporterUser?.id ?? null,
-        reporter: reporterUser?.name ?? "",
+        reporterUserId: applicant.id,
+        reporter: applicant.name,
+        assignedTeamId: teamId,
         workflowStatus: initialStatus,
         statusLight: "Green",
         dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
-        needRca,
-        needRiskException,
-        impactProduction,
-        alertLevel,
         waitingRole,
       },
     });
@@ -226,11 +228,23 @@ export async function createIssueForActor(actor: User | null | undefined, formDa
     }
   }
 
+  if (issueType === "Hotfix" && HOTFIX_PRIORITIES.some((p) => p.value === hotfixPriority)) {
+    await prisma.issueFieldValue.create({
+      data: { issueId: issue.id, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "Hotfix 工單優先級", fieldValue: hotfixPriority },
+    });
+  }
+
+  // AuditLog 必須能回答：誰建立這張工單（actorUserId＝actor）、代表哪位申請人建立
+  // （summary 內的申請人姓名）、選擇哪個團隊、建立時間（createdAt）、工單編號（entityId／
+  // issueKey）。actor 與 applicant 可能不同（例如 Admin 代團隊成員建立），這裡明確分開記錄，
+  // 不得把申請人當成登入 actor、也不得反過來把 actor 覆寫成申請人。
+  const team = await prisma.team.findUnique({ where: { id: teamId } });
+  const actorVsApplicantNote = actor.id === applicant.id ? "" : `，實際建立者：${actor.name}`;
   await writeAuditLog({
     entityType: "Issue",
     entityId: issue.id,
     actionType: "IssueCreated",
-    summary: `建立工單「${issue.title}」，初始關卡：${statusLabel(issueType, initialStatus)}`,
+    summary: `建立工單「${issue.issueKey}」「${issue.title}」，申請人：${applicant.name}${actorVsApplicantNote}，團隊：${team?.name ?? teamId}，初始關卡：${statusLabel(issueType, initialStatus)}`,
     actorUserId: actor.id,
   });
 

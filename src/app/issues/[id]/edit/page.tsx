@@ -1,10 +1,13 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { updateIssueAction } from "@/lib/actions";
 import { requireCurrentUser } from "@/lib/auth";
-import { issueTypeLabel, roleLabel, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, ALERT_LEVELS, SYSTEM_NAME_EXAMPLES } from "@/lib/constants";
+import { issueTypeLabel, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, SYSTEM_NAME_EXAMPLES } from "@/lib/constants";
 import { getVisibleFieldTemplate } from "@/lib/workflow";
+import { isIssueOnVersionedWorkflow } from "@/lib/workflowExecutionService";
+import { listCreatableTeamsForActor } from "@/lib/team-applicant/teamApplicantService";
 import DynamicFieldsForm, { DynamicOption } from "@/components/DynamicFieldsForm";
+import EditIssueTeamApplicantField from "./EditIssueTeamApplicantField";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +15,22 @@ const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm foc
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
 
 export default async function EditIssuePage({ params }: { params: { id: string } }) {
-  await requireCurrentUser();
+  const actor = await requireCurrentUser();
   const issue = await prisma.issue.findUnique({ where: { id: params.id }, include: { fieldValues: true } });
   if (!issue) notFound();
+
+  // 建立工單／團隊整合修正：Hotfix 已啟動新版流程引擎者，一律只能透過九階段獨立頁面編輯
+  // （stage1「Hotfix 建立工單」草稿頁，或 Admin 專用改派面板），不得再透過這個通用編輯頁
+  // 繞過關卡限制直接修改團隊／申請人／基本欄位。
+  if (issue.issueType === "Hotfix" && isIssueOnVersionedWorkflow(issue)) {
+    redirect(`/issues/${issue.id}`);
+  }
 
   const fieldsMap: Record<string, string> = {};
   for (const f of issue.fieldValues) fieldsMap[f.fieldKey] = f.fieldValue;
   const template = getVisibleFieldTemplate(issue.issueType, issue.workflowStatus);
   const updateWithId = updateIssueAction.bind(null, issue.id);
-  const users = await prisma.user.findMany({
-    where: { isActive: true },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, role: true },
-  });
+  const teams = await listCreatableTeamsForActor(actor.id);
 
   // 動態欄位若設定 dynamicOptionsRole（例如 RD 自測人下拉選單），依角色從已啟用使用者中查詢選項
   const dynamicOptions: Record<string, DynamicOption[]> = {};
@@ -106,58 +112,16 @@ export default async function EditIssuePage({ params }: { params: { id: string }
               </select>
             </div>
             <div>
-              <label className={labelCls}>負責人</label>
-              <select name="ownerUserId" defaultValue={issue.ownerUserId ?? ""} className={inputCls}>
-                <option value="">維持原負責人（{issue.ownerName || "—"}）</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}（{roleLabel(u.role)}）
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-400">轉派時僅可選擇已啟用的使用者。</p>
-            </div>
-            <div>
-              <label className={labelCls}>建立人</label>
-              <select name="reporterUserId" defaultValue={issue.reporterUserId ?? ""} className={inputCls}>
-                <option value="">維持原建立人（{issue.reporter || "—"}）</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}（{roleLabel(u.role)}）
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
               <label className={labelCls}>到期日</label>
               <input type="date" name="dueDate" defaultValue={issue.dueDate ? issue.dueDate.toISOString().slice(0, 10) : ""} className={inputCls} />
             </div>
-            <div>
-              <label className={labelCls}>告警等級</label>
-              <select name="alertLevel" defaultValue={issue.alertLevel} className={inputCls}>
-                <option value="">不適用</option>
-                {ALERT_LEVELS.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
-          <div className="flex flex-wrap gap-6 pt-2">
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" name="needRca" defaultChecked={issue.needRca} className="h-4 w-4" />
-              是否需 RCA
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" name="needRiskException" defaultChecked={issue.needRiskException} className="h-4 w-4" />
-              是否需風險例外
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" name="impactProduction" defaultChecked={issue.impactProduction} className="h-4 w-4" />
-              是否影響正式環境
-            </label>
-          </div>
+          <EditIssueTeamApplicantField
+            teams={teams}
+            initialTeamId={issue.assignedTeamId ?? ""}
+            initialApplicantId={issue.reporterUserId ?? ""}
+            initialApplicantName={issue.reporter}
+          />
         </section>
 
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">

@@ -9,7 +9,8 @@ import { getVisibleFieldTemplate, nextStatusOf, prevStatusOf, isClosed, statusLa
 import { generateAiSuggestion, AiSuggestionType, AiContext } from "./mockAi";
 import { requireCurrentUser } from "./auth";
 import { isIssueOnVersionedWorkflow } from "./workflowExecutionService";
-import { createIssueForActor, findActiveUserOrNull, getFieldsMap, readDynFieldValue, recalcIssue } from "./issueCreation";
+import { createIssueForActor, getFieldsMap, readDynFieldValue, recalcIssue } from "./issueCreation";
+import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
 
 // ---------------------------------------------------------------------------
 // 建立工單
@@ -34,19 +35,6 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
 
   const changes: string[] = [];
 
-  const ownerUserIdRaw = String(formData.get("ownerUserId") || "");
-  const reporterUserIdRaw = String(formData.get("reporterUserId") || "");
-
-  // 工單轉派時，只能從已啟用的使用者中選擇；若選擇的使用者已停用或不存在則維持原負責人
-  const owner = ownerUserIdRaw ? await findActiveUserOrNull(ownerUserIdRaw) : null;
-  const reporterUser = reporterUserIdRaw ? await findActiveUserOrNull(reporterUserIdRaw) : null;
-
-  const newOwnerName = owner?.name ?? issue.ownerName;
-  const newOwnerRole = owner?.role ?? issue.ownerRole;
-  const newOwnerUserId = owner?.id ?? issue.ownerUserId;
-  const newReporterName = reporterUser?.name ?? issue.reporter;
-  const newReporterUserId = reporterUser?.id ?? issue.reporterUserId;
-
   const baseFields: Record<string, string> = {
     title: String(formData.get("title") || issue.title),
     description: String(formData.get("description") || issue.description),
@@ -54,10 +42,6 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
     environment: String(formData.get("environment") || issue.environment),
     riskLevel: String(formData.get("riskLevel") || issue.riskLevel),
     priority: String(formData.get("priority") || issue.priority),
-    ownerRole: newOwnerRole,
-    ownerName: newOwnerName,
-    reporter: newReporterName,
-    alertLevel: String(formData.get("alertLevel") || issue.alertLevel),
   };
 
   const labelMap: Record<string, string> = {
@@ -67,10 +51,6 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
     environment: "環境",
     riskLevel: "風險等級",
     priority: "優先級",
-    ownerRole: "負責角色",
-    ownerName: "負責人",
-    reporter: "建立人",
-    alertLevel: "告警等級",
   };
 
   for (const key of Object.keys(baseFields)) {
@@ -86,23 +66,37 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
     changes.push(`到期日：「${issue.dueDate ? issue.dueDate.toISOString().slice(0, 10) : "（空白）"}」→「${newDueDate ? newDueDate.toISOString().slice(0, 10) : "（空白）"}」`);
   }
 
-  const needRca = formData.get("needRca") === "on";
-  const needRiskException = formData.get("needRiskException") === "on";
-  const impactProduction = formData.get("impactProduction") === "on";
-  if (needRca !== issue.needRca) changes.push(`是否需 RCA：「${issue.needRca ? "是" : "否"}」→「${needRca ? "是" : "否"}」`);
-  if (needRiskException !== issue.needRiskException) changes.push(`是否需風險例外：「${issue.needRiskException ? "是" : "否"}」→「${needRiskException ? "是" : "否"}」`);
-  if (impactProduction !== issue.impactProduction) changes.push(`是否影響正式環境：「${issue.impactProduction ? "是" : "否"}」→「${impactProduction ? "是" : "否"}」`);
+  // 團隊／申請人：一律伺服器端重新驗證，不信任前端下拉選單結果。此頁只服務尚未啟動新版
+  // Hotfix 流程引擎的工單（見 EditIssuePage 的 redirect 守門），沒有 pending ApprovalRecord
+  // 需要作廢／重建的概念，純粹是欄位更新。
+  const teamId = String(formData.get("teamId") || "");
+  const applicantId = String(formData.get("applicantId") || "");
+  let newReporterUserId = issue.reporterUserId;
+  let newReporterName = issue.reporter;
+  let newAssignedTeamId = issue.assignedTeamId;
+  if (teamId && applicantId) {
+    await assertActorCanUseTeam(currentUser.id, teamId);
+    const applicant = await assertValidApplicantForTeam(teamId, applicantId);
+    if (teamId !== issue.assignedTeamId) {
+      const team = await prisma.team.findUnique({ where: { id: teamId } });
+      changes.push(`團隊：「${issue.assignedTeamId ?? "（未指派）"}」→「${team?.name ?? teamId}」`);
+      newAssignedTeamId = teamId;
+    }
+    if (applicant.id !== issue.reporterUserId) {
+      changes.push(`申請人：「${issue.reporter || "（空白）"}」→「${applicant.name}」`);
+      newReporterUserId = applicant.id;
+      newReporterName = applicant.name;
+    }
+  }
 
   await prisma.issue.update({
     where: { id: issueId },
     data: {
       ...baseFields,
-      ownerUserId: newOwnerUserId,
       reporterUserId: newReporterUserId,
+      reporter: newReporterName,
+      assignedTeamId: newAssignedTeamId,
       dueDate: newDueDate,
-      needRca,
-      needRiskException,
-      impactProduction,
     },
   });
 
