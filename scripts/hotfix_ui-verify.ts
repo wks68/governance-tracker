@@ -27,9 +27,10 @@ import {
   executeIssueTransition,
   returnIssueToStage,
   cancelIssueWorkflow,
-  setIssueAssignedTeamAtTriage,
   submitStageRiskCheckAnswer,
   getIssueWorkflowRuntime,
+  claimIssueForTeam,
+  assignIssueExecutor,
   WorkflowExecutionAccessDeniedError,
 } from "../src/lib/workflowExecutionService";
 import { decideApprovalRecord, ApprovalAuthorityMismatchError } from "../src/lib/approvalService";
@@ -37,6 +38,7 @@ import { SelfApprovalError } from "../src/lib/permissions";
 import { NINE_STAGES, nineStageIndexOfStageKey, routeForStageKey } from "../src/lib/hotfix-ui/nineStage";
 import { uploadHotfixAttachment, deleteHotfixAttachment, AttachmentAuthorizationError } from "../src/lib/hotfix-ui/attachmentService";
 import { saveExecutionFieldValues } from "../src/lib/hotfix-ui/executionFields";
+import { setTeamDomain } from "../src/lib/team-applicant/teamManagementService";
 
 let passCount = 0;
 let failCount = 0;
@@ -259,16 +261,19 @@ async function runDbIntegrationChecks() {
     data: { userId: pm.id, supervisorUserId: supervisor.id, validFrom: new Date(Date.now() - 86_400_000), isPrimary: true, isActive: true, createdByUserId: admin.id },
   });
   const rdTeam = await createTeam("RdTeam");
+  await setTeamDomain({ teamId: rdTeam.id, domain: "RD", actorId: admin.id, reasonCode: "V" });
   const rdMember = await createUser("RdMember", "RD");
   const rdLead = await createUser("RdLead", "RD");
   await addMember(rdTeam.id, rdMember.id, "MEMBER");
   await addMember(rdTeam.id, rdLead.id, "LEAD");
   const qaTeam = await createTeam("QaTeam");
+  await setTeamDomain({ teamId: qaTeam.id, domain: "QA", actorId: admin.id, reasonCode: "V" });
   const qaMember = await createUser("QaMember", "QA");
   const qaLead = await createUser("QaLead", "QA");
   await addMember(qaTeam.id, qaMember.id, "MEMBER");
   await addMember(qaTeam.id, qaLead.id, "LEAD");
   const opTeam = await createTeam("OpTeam");
+  await setTeamDomain({ teamId: opTeam.id, domain: "OP", actorId: admin.id, reasonCode: "V" });
   const opMember = await createUser("OpMember", "OP");
   const opLead = await createUser("OpLead", "OP");
   await addMember(opTeam.id, opMember.id, "MEMBER");
@@ -323,13 +328,8 @@ async function runDbIntegrationChecks() {
   }
   check("[15] 申請人主管同意後落在第 3 階段（RD修正與自測）", (await stageIndexOf(main.id)) === 3);
 
-  await setIssueAssignedTeamAtTriage({ issueId: main.id, teamId: rdTeam.id, actorId: admin.id, reasonCode: "V" });
-  {
-    const t2 = await findTransition(hotfix.version.id, s.pendingRdTriage, "rdAssign");
-    await executeIssueTransition({ issueId: main.id, transitionId: t2.id, actorId: admin.id, reasonCode: "V" });
-    const t3 = await findTransition(hotfix.version.id, s.pendingRdClaim, "rdClaim");
-    await executeIssueTransition({ issueId: main.id, transitionId: t3.id, actorId: rdMember.id, reasonCode: "V" });
-  }
+  await claimIssueForTeam({ issueId: main.id, teamId: rdTeam.id, actorId: rdLead.id, reasonCode: "V" });
+  await assignIssueExecutor({ issueId: main.id, executorUserId: rdMember.id, actorId: rdLead.id, reasonCode: "V" });
 
   // [16] 附件僅能於目前關卡上傳，且僅能刪除「目前這一關」上傳的附件
   const rdAttachment = await uploadHotfixAttachment({ issueId: main.id, actorId: rdMember.id, actorName: rdMember.name, fileName: "note.txt", mimeType: "text/plain", bytes: Buffer.from("hello") });
@@ -389,13 +389,8 @@ async function runDbIntegrationChecks() {
   }
   check("[20] RD 主管同意後落在第 5 階段（QA驗證）", (await stageIndexOf(main.id)) === 5);
 
-  await setIssueAssignedTeamAtTriage({ issueId: main.id, teamId: qaTeam.id, actorId: admin.id, reasonCode: "V" });
-  {
-    const qaAssignT = await findTransition(hotfix.version.id, s.pendingQaTriage, "qaAssign");
-    await executeIssueTransition({ issueId: main.id, transitionId: qaAssignT.id, actorId: admin.id, reasonCode: "V" });
-    const qaClaimT = await findTransition(hotfix.version.id, s.pendingQaClaim, "qaClaim");
-    await executeIssueTransition({ issueId: main.id, transitionId: qaClaimT.id, actorId: qaMember.id, reasonCode: "V" });
-  }
+  await claimIssueForTeam({ issueId: main.id, teamId: qaTeam.id, actorId: qaLead.id, reasonCode: "V" });
+  await assignIssueExecutor({ issueId: main.id, executorUserId: qaMember.id, actorId: qaLead.id, reasonCode: "V" });
   await saveExecutionFieldValues({ issueId: main.id, actorId: qaMember.id, values: { qaTestScope: "全功能", qaTestEnvironment: "UAT", qaTestResult: "驗證通過" } });
   {
     await answerAll(main.id, "pendingQaLeadApproval", qaMember.id);
@@ -423,13 +418,8 @@ async function runDbIntegrationChecks() {
   }
   check("[23] QA 主管同意後落在第 7 階段（OP上版）", (await stageIndexOf(main.id)) === 7);
 
-  await setIssueAssignedTeamAtTriage({ issueId: main.id, teamId: opTeam.id, actorId: admin.id, reasonCode: "V" });
-  {
-    const opAssignT = await findTransition(hotfix.version.id, s.pendingOpTriage, "opAssign");
-    await executeIssueTransition({ issueId: main.id, transitionId: opAssignT.id, actorId: admin.id, reasonCode: "V" });
-    const opClaimT = await findTransition(hotfix.version.id, s.pendingOpClaim, "opClaim");
-    await executeIssueTransition({ issueId: main.id, transitionId: opClaimT.id, actorId: opMember.id, reasonCode: "V" });
-  }
+  await claimIssueForTeam({ issueId: main.id, teamId: opTeam.id, actorId: opLead.id, reasonCode: "V" });
+  await assignIssueExecutor({ issueId: main.id, executorUserId: opMember.id, actorId: opLead.id, reasonCode: "V" });
   await saveExecutionFieldValues({
     issueId: main.id,
     actorId: opMember.id,
