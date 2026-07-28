@@ -1,20 +1,18 @@
-// Hotfix 操作畫面收斂驗證腳本。
+// Hotfix 九階段 UI 收斂驗證腳本（全面取代舊版 7 階段收斂版本）。
 //
-// 涵蓋範圍（對應本輪驗收清單，至少 18 項）：
-//   A. 原始碼層級靜態檢查：正式畫面不得出現「推進至下一關卡」「返回上一關」等技術詞彙、
-//      transitionCopy 對照表不得出現技術詞彙、UI 元件不得直接 import Prisma、CANCEL 動作
-//      必須帶雙重確認、桌面進度條不得使用水平捲動、模組邊界（hotfix-ui 一律單向依賴
-//      workflow-execution，不得反向）。
-//   B. DB 整合測試（真正透過執行引擎推進 Issue，非直接寫 raw row）：角色別可見性分離
-//      （RD 執行人／RD 主管、QA 執行人／QA 放行人、OP 執行人／OP 主管）、退回動作明確
-//      顯示目標關卡、待完成事項使用可讀欄位標籤（非技術 key）、已結案 Issue 無可執行動作、
-//      Service 層對「非目前責任角色」的核准決策仍會現場拒絕（deny-by-default）、無
-//      issue.view 能力者查詢一律拒絕。
+// 涵蓋範圍：
+//   A. 原始碼層級靜態檢查：9 階段名稱一致、舊 7 階段字樣／技術詞彙／佐證資料字樣不再
+//      出現於新版 Hotfix 頁面與元件、UI 元件不直接 import Prisma、進度條無水平捲動、
+//      駁回一律要求原因、舊版 Hotfix 元件目錄已刪除、routeForStageKey 涵蓋全部關卡。
+//   B. DB 整合測試（真正透過既有執行引擎推進 Issue，非直接寫 raw row）：9 階段索引與
+//      stageKey 對照正確、4 個簽核關卡的責任角色分離與 deny-by-default、RD/QA/OP 主管
+//      駁回明確退回正確目標關卡、結案責任人固定為原始填單人、已結案後唯讀、附件僅能於
+//      目前關卡上傳／刪除、非目前責任角色查詢一律唯讀、正式 dev.db 全程未被觸碰（本腳本
+//      只連線 DATABASE_URL 指向的測試庫，見 assertSafeTestDatabase）。
 //
 // Fail-closed：第一行 import 為 assertSafeTestDatabase，拒絕連線到正式 prisma/dev.db。
 //
-// 執行方式（DATABASE_URL 指向的檔案必須已存在，腳本本身會對它執行一次
-// `prisma migrate deploy`）：
+// 執行方式：
 //   touch /path/to/scratch.db
 //   DATABASE_URL="file:/path/to/scratch.db" node_modules/.bin/tsx scripts/hotfix_ui-verify.ts
 
@@ -28,6 +26,7 @@ import {
   startIssueWorkflow,
   executeIssueTransition,
   returnIssueToStage,
+  cancelIssueWorkflow,
   setIssueAssignedTeamAtTriage,
   submitStageRiskCheckAnswer,
   getIssueWorkflowRuntime,
@@ -35,8 +34,9 @@ import {
 } from "../src/lib/workflowExecutionService";
 import { decideApprovalRecord, ApprovalAuthorityMismatchError } from "../src/lib/approvalService";
 import { SelfApprovalError } from "../src/lib/permissions";
-import { buildHotfixRuntimeView } from "../src/lib/hotfix-ui/runtimeView";
-import { transitionCopyOf } from "../src/lib/hotfix-ui/transitionCopy";
+import { NINE_STAGES, nineStageIndexOfStageKey, routeForStageKey } from "../src/lib/hotfix-ui/nineStage";
+import { uploadHotfixAttachment, deleteHotfixAttachment, AttachmentAuthorizationError } from "../src/lib/hotfix-ui/attachmentService";
+import { saveExecutionFieldValues } from "../src/lib/hotfix-ui/executionFields";
 
 let passCount = 0;
 let failCount = 0;
@@ -104,92 +104,120 @@ function stripComments(src: string): string {
 function runStaticSourceChecks() {
   console.log("\n=== A. 原始碼層級靜態檢查 ===");
 
-  const hotfixUiComponentFiles = listFilesRecursive(path.join(REPO_ROOT, "src/components/hotfix-execution"), [".ts", ".tsx"]);
-  const hotfixUiLibFiles = listFilesRecursive(path.join(REPO_ROOT, "src/lib/hotfix-ui"), [".ts", ".tsx"]);
-  check("[1] Hotfix 操作畫面元件檔案確實存在（非空殼）", hotfixUiComponentFiles.length >= 6);
+  const hotfixRouteFiles = listFilesRecursive(path.join(REPO_ROOT, "src/app/issues/[id]/hotfix"), [".ts", ".tsx"]);
+  const hotfixComponentFiles = listFilesRecursive(path.join(REPO_ROOT, "src/components/hotfix-nine-stage"), [".ts", ".tsx"]);
+  const allNewHotfixFiles = [...hotfixRouteFiles, ...hotfixComponentFiles];
 
-  // [2] 正式畫面（元件層）不得出現「推進至下一關卡」「返回上一關」等技術詞彙
-  let forbiddenCopyViolation: string | null = null;
-  for (const file of hotfixUiComponentFiles) {
+  check("[1] 新版 Hotfix 九階段路由與元件檔案確實存在（非空殼）", hotfixRouteFiles.length >= 15 && hotfixComponentFiles.length >= 6);
+
+  // [2] 9 階段名稱與順序正確
+  const expectedLabels = [
+    "Hotfix建立工單",
+    "申請人直屬主管簽核",
+    "RD修正與自測",
+    "RD主管簽核",
+    "QA驗證",
+    "QA主管簽核",
+    "OP上版",
+    "OP主管簽核",
+    "結案",
+  ];
+  check(
+    "[2] nineStage.ts 定義的 9 階段名稱與順序完全正確",
+    NINE_STAGES.length === 9 && NINE_STAGES.every((s, i) => s.index === i + 1 && s.label === expectedLabels[i]),
+  );
+
+  // [3] 舊版 7 階段字樣不再出現於任何新版 Hotfix 頁面／元件
+  // 「正式環境確認」為舊版 7 階段的獨立進度節點名稱；新版結案頁的「正式環境確認結果」是
+  // 合法的新欄位標籤（見結案頁欄位規格），非同一語意，比對時排除這個合法組合。
+  const oldStageLabels = ["Hotfix已開單", "Hotfix 已開單", "RD自測", "QA放行確認"];
+  let oldLabelViolation: string | null = null;
+  for (const file of allNewHotfixFiles) {
     const src = stripComments(fs.readFileSync(file, "utf8"));
-    if (/推進至下一關卡|返回上一關/.test(src)) {
-      forbiddenCopyViolation = path.relative(REPO_ROOT, file);
+    const hasOldLabel = oldStageLabels.some((label) => src.includes(label));
+    const hasBareProdConfirmLabel = /正式環境確認(?!結果)/.test(src);
+    if (hasOldLabel || hasBareProdConfirmLabel) {
+      oldLabelViolation = path.relative(REPO_ROOT, file);
       break;
     }
   }
-  check("[2] 元件層（src/components/hotfix-execution）不出現「推進至下一關卡」「返回上一關」字樣", forbiddenCopyViolation === null, forbiddenCopyViolation ?? undefined);
+  check("[3] 新版 Hotfix 檔案不出現舊版 7 階段標籤字樣", oldLabelViolation === null, oldLabelViolation ?? undefined);
 
-  // [3] transitionCopy 對照表本身不得出現技術詞彙／FORWARD／RETURN／CANCEL 當作顯示文案
-  const transitionCopySrc = stripComments(fs.readFileSync(path.join(REPO_ROOT, "src/lib/hotfix-ui/transitionCopy.ts"), "utf8"));
-  const copyLabelMatches = [...transitionCopySrc.matchAll(/label:\s*"([^"]*)"/g)].map((m) => m[1]);
-  const hasForbiddenLabel = copyLabelMatches.some((label) => /推進至下一關卡|返回上一關|FORWARD|RETURN|CANCEL/.test(label));
-  check("[3] transitionCopy.ts 對照表本身沒有任何顯示文案含技術詞彙（推進至下一關卡／返回上一關／FORWARD／RETURN／CANCEL）", !hasForbiddenLabel && copyLabelMatches.length >= 20);
+  // [4] 舊版技術詞彙／禁用文案完全不出現於新版 Hotfix 檔案
+  const forbiddenWords = ["推進至下一關卡", "返回上一關", "關卡卡控未通過", "佐證資料", "Mock", "MVP"];
+  let forbiddenWordViolation: string | null = null;
+  let forbiddenWordHit: string | null = null;
+  for (const file of allNewHotfixFiles) {
+    const src = stripComments(fs.readFileSync(file, "utf8"));
+    const hit = forbiddenWords.find((w) => src.includes(w));
+    if (hit) {
+      forbiddenWordViolation = path.relative(REPO_ROOT, file);
+      forbiddenWordHit = hit;
+      break;
+    }
+  }
+  check(
+    "[4] 新版 Hotfix 檔案不出現「推進至下一關卡／返回上一關／關卡卡控未通過／佐證資料／Mock／MVP」字樣",
+    forbiddenWordViolation === null,
+    forbiddenWordViolation ? `${forbiddenWordViolation}: ${forbiddenWordHit}` : undefined,
+  );
 
-  // [4] UI 元件層不得直接 import Prisma（比照治理儀表板既有規範）
+  // [5] 附件命名統一為「附件（選填）」
+  const attachmentSectionSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/AttachmentSection.tsx"), "utf8");
+  check("[5] AttachmentSection 顯示「附件（選填）」", attachmentSectionSrc.includes("附件（選填）"));
+
+  // [6] 新版 UI 元件（.tsx，client 端）不得直接 import Prisma
   let prismaImportViolation: string | null = null;
-  for (const file of hotfixUiComponentFiles) {
+  for (const file of allNewHotfixFiles) {
+    if (!file.endsWith(".tsx")) continue;
     const src = fs.readFileSync(file, "utf8");
-    if (/@prisma\/client/.test(src) || /from\s*["']@\/lib\/prisma["']/.test(src) || /from\s*["']\.\.\/\.\.\/lib\/prisma["']/.test(src)) {
+    if (/@prisma\/client/.test(src) || /from\s*["']@\/lib\/prisma["']/.test(src)) {
       prismaImportViolation = path.relative(REPO_ROOT, file);
       break;
     }
   }
-  check("[4] src/components/hotfix-execution 沒有任何檔案直接 import Prisma", prismaImportViolation === null, prismaImportViolation ?? undefined);
+  check("[6] 新版 Hotfix .tsx 元件沒有任何檔案直接 import Prisma", prismaImportViolation === null, prismaImportViolation ?? undefined);
 
-  // [5] CANCEL 動作必須帶雙重確認（TransitionActionForm 的 confirmMessage）
-  const actionPanelsSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-execution/HotfixActionPanels.tsx"), "utf8");
-  const cancelActionsBlock = actionPanelsSrc.slice(actionPanelsSrc.indexOf("function CancelActions"));
-  check("[5] 取消 Hotfix 動作元件（CancelActions）傳入 confirmMessage（雙重確認）", /confirmMessage=/.test(cancelActionsBlock));
-
-  // [6] 桌面進度條不得使用水平捲動（採 CSS grid 等分排列，不使用 overflow-x-auto／flex-nowrap）
-  const statusHeaderSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-execution/HotfixStatusHeader.tsx"), "utf8");
+  // [7] 進度條無水平捲動（flex + justify-between 等分排列，不使用 overflow-x-auto／flex-nowrap）
+  const progressBarSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/NineStageProgressBar.tsx"), "utf8");
   check(
-    "[6] HotfixStatusHeader 進度條使用 grid-cols-7 等分排列，不使用 overflow-x-auto／flex-nowrap（無水平捲動）",
-    /grid-cols-7/.test(statusHeaderSrc) && !/overflow-x-auto/.test(statusHeaderSrc) && !/flex-nowrap/.test(statusHeaderSrc),
+    "[7] NineStageProgressBar 使用 flex 等分排列，不使用 overflow-x-auto／flex-nowrap（無水平捲動）",
+    /justify-between/.test(progressBarSrc) && !/overflow-x-auto/.test(progressBarSrc) && !/flex-nowrap/.test(progressBarSrc),
   );
 
-  // [7] 模組邊界：workflow-execution 一律不得反向 import hotfix-ui（單向依賴）
-  const workflowExecutionFiles = listFilesRecursive(path.join(REPO_ROOT, "src/lib/workflow-execution"), [".ts"]);
-  let reverseImportViolation: string | null = null;
-  for (const file of workflowExecutionFiles) {
-    const src = fs.readFileSync(file, "utf8");
-    if (/from\s*["'].*hotfix-ui/.test(src)) {
-      reverseImportViolation = path.relative(REPO_ROOT, file);
-      break;
-    }
-  }
-  check("[7] src/lib/workflow-execution 沒有任何檔案反向 import src/lib/hotfix-ui（模組邊界單向）", reverseImportViolation === null, reverseImportViolation ?? undefined);
-
-  // [8] hotfix-ui 模組不直接 import issueCreation／既有 legacy Server Action 模組（不破壞既有邊界）
-  let crossBoundaryViolation: string | null = null;
-  for (const file of hotfixUiLibFiles) {
-    const src = fs.readFileSync(file, "utf8");
-    if (/from\s*["'].*\/lib\/actions["']/.test(src) || /from\s*["'].*app\/issues\/new/.test(src)) {
-      crossBoundaryViolation = path.relative(REPO_ROOT, file);
-      break;
-    }
-  }
-  check("[8] src/lib/hotfix-ui 沒有任何檔案 import 既有 issue 建立（src/lib/actions／issues/new）模組", crossBoundaryViolation === null, crossBoundaryViolation ?? undefined);
-
-  // [9] 目前待完成事項不得顯示技術詞彙（gate／requirement／技術 field key／「關卡卡控未通過」）
-  const runtimeViewSrc = stripComments(fs.readFileSync(path.join(REPO_ROOT, "src/lib/hotfix-ui/runtimeView.ts"), "utf8"));
-  check("[9] runtimeView.ts 產生的待完成事項文字不出現「關卡卡控未通過」字樣", !/關卡卡控未通過/.test(runtimeViewSrc));
-
-  // [10] /governance 於核准／風險檢核操作後會重新驗證（revalidatePath("/governance")）
-  const actionsSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/issues/[id]/workflow-execution-actions.ts"), "utf8");
-  check('[10] workflow-execution-actions.ts 的 revalidateIssue 會 revalidatePath("/governance")', /revalidatePath\(["']\/governance["']\)/.test(actionsSrc));
-
-  // [11] 空資料狀態：風險檢核與待完成事項元件皆有明確的空狀態文字（非技術詞彙的預設訊息）
-  const riskPanelSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-execution/HotfixRiskCheckPanel.tsx"), "utf8");
-  const todoListSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-execution/HotfixTodoList.tsx"), "utf8");
+  // [8] 主管簽核駁回 Modal／結案退回處理 Modal 皆要求必填原因（空白時按鈕 disabled）
+  const approvalPanelSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/ApprovalReviewPanel.tsx"), "utf8");
+  const closurePanelSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/issues/[id]/hotfix/close/ClosureConfirmPanel.tsx"), "utf8");
   check(
-    "[11] HotfixRiskCheckPanel／HotfixTodoList 皆有明確空狀態文字",
-    /此階段沒有設定風險確認項目/.test(riskPanelSrc) && /目前沒有待完成事項/.test(todoListSrc),
+    "[8] 主管簽核駁回與結案退回處理 Modal 皆在原因空白時 disabled 確認按鈕",
+    /disabled=\{isPending \|\| blank\}/.test(approvalPanelSrc) && /disabled=\{isPending \|\| blank\}/.test(closurePanelSrc),
+  );
+
+  // [9] 舊版 Hotfix 元件目錄已完全刪除（不得保留兩套可切換的 Hotfix UI）
+  check("[9] 舊版 src/components/hotfix-execution 目錄已刪除", !fs.existsSync(path.join(REPO_ROOT, "src/components/hotfix-execution")));
+  check("[9b] 舊版 hotfix-ui/runtimeView.ts／stageProgress.ts 已刪除", !fs.existsSync(path.join(REPO_ROOT, "src/lib/hotfix-ui/runtimeView.ts")) && !fs.existsSync(path.join(REPO_ROOT, "src/lib/hotfix-ui/stageProgress.ts")));
+
+  // [10] routeForStageKey 涵蓋 Hotfix v1 全部 19 個正式關卡（cancelled 除外，回傳 null）
+  const allMainStageKeys = [
+    "draft", "pendingBusinessApproval", "pendingRdTriage", "pendingRdClaim", "rdInProgress",
+    "pendingRdLeadApproval", "pendingQaTriage", "pendingQaClaim", "qaInProgress", "pendingQaLeadApproval",
+    "pendingOpTriage", "pendingOpClaim", "opPreparing", "pendingDeploymentApproval", "opDeploying",
+    "opCompleted", "pendingReporterConfirmation", "reporterConfirming", "closed",
+  ];
+  check(
+    "[10] routeForStageKey 對全部 19 個正式關卡皆回傳非 null 路徑，cancelled 回傳 null",
+    allMainStageKeys.every((k) => routeForStageKey("x", k) !== null) && routeForStageKey("x", "cancelled") === null,
+  );
+
+  // [11] nineStageIndexOfStageKey 單調遞增覆蓋（無回退）：opDeploying／opCompleted 併入第 8 階段
+  check(
+    "[11] nineStageIndexOfStageKey：opDeploying／opCompleted 併入第 8 階段（核准後索引不回退）",
+    nineStageIndexOfStageKey("opDeploying") === 8 && nineStageIndexOfStageKey("opCompleted") === 8 && nineStageIndexOfStageKey("pendingDeploymentApproval") === 8,
   );
 }
 
 // =====================================================================================
-// B. DB 整合測試（真正透過執行引擎推進 Issue）
+// B. DB 整合測試（真正透過既有執行引擎推進 Issue）
 // =====================================================================================
 
 async function createUser(name: string, role: string) {
@@ -222,7 +250,7 @@ async function answerAll(issueId: string, stageKey: string, actorId: string) {
 }
 
 async function runDbIntegrationChecks() {
-  console.log("\n=== B. DB 整合測試（真正透過執行引擎推進 Issue） ===");
+  console.log("\n=== B. DB 整合測試（真正透過既有執行引擎推進 Issue） ===");
 
   const admin = await createUser("Admin", "Admin");
   const pm = await createUser("PM", "PM");
@@ -250,233 +278,246 @@ async function runDbIntegrationChecks() {
   const hotfix = await buildHotfixWorkflowV1({ actorId: admin.id, reasonCode: "VERIFY_BUILD_HOTFIX_V1", keySuffix: RUN_TAG });
   const s = hotfix.stageIds;
 
-  // [12] transitionCopy 涵蓋 Hotfix v1 全部真實 actionKey（不落回 fallback 原始 label）
-  const allTransitions = await prisma.workflowTransition.findMany({ where: { workflowVersionId: hotfix.version.id } });
-  const uncoveredActionKeys = allTransitions.filter((t) => transitionCopyOf(t.actionKey, "__FALLBACK_MARKER__").label === "__FALLBACK_MARKER__").map((t) => t.actionKey);
-  check("[12] transitionCopy.ts 涵蓋 Hotfix v1 全部真實 actionKey", uncoveredActionKeys.length === 0, uncoveredActionKeys.join(", ") || undefined);
-
-  async function createIssue(key: string) {
-    const issue = await prisma.issue.create({ data: { issueKey: `${RUN_TAG}-${key}`, issueType: "Hotfix", title: `驗證案件 ${key}`, workflowStatus: "n/a" } });
+  async function createIssue(key: string, reporterUserId: string) {
+    const issue = await prisma.issue.create({
+      data: { issueKey: `${RUN_TAG}-${key}`, issueType: "Hotfix", title: `驗證案件 ${key}`, workflowStatus: "n/a", reporterUserId, reporter: pm.name },
+    });
     await startIssueWorkflow({ issueId: issue.id, workflowVersionId: hotfix.version.id, actorId: admin.id, reasonCode: "VERIFY_START" });
     return issue;
   }
 
-  // 推進至 pendingRdLeadApproval（RD 自測／待 RD 主管核准）
-  const rdCase = await createIssue("RD");
-  {
-    const t0 = await findTransition(hotfix.version.id, s.draft, "submit");
-    await executeIssueTransition({ issueId: rdCase.id, transitionId: t0.id, actorId: pm.id, reasonCode: "V" });
-    const approval0 = await findActiveApproval(rdCase.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
-    await decideApprovalRecord({ approvalRecordId: approval0.id, actorUserId: supervisor.id, decision: "APPROVED" });
-    const t1 = await findTransition(hotfix.version.id, s.pendingBusinessApproval, "businessApprove");
-    await executeIssueTransition({ issueId: rdCase.id, transitionId: t1.id, actorId: pm.id, reasonCode: "V" });
-    await setIssueAssignedTeamAtTriage({ issueId: rdCase.id, teamId: rdTeam.id, actorId: admin.id, reasonCode: "V" });
-    const t2 = await findTransition(hotfix.version.id, s.pendingRdTriage, "rdAssign");
-    await executeIssueTransition({ issueId: rdCase.id, transitionId: t2.id, actorId: admin.id, reasonCode: "V" });
-    const t3 = await findTransition(hotfix.version.id, s.pendingRdClaim, "rdClaim");
-    await executeIssueTransition({ issueId: rdCase.id, transitionId: t3.id, actorId: rdMember.id, reasonCode: "V" });
-    await prisma.issueFieldValue.create({ data: { issueId: rdCase.id, fieldKey: "rdFixVersion", fieldLabel: "修正版本", fieldValue: "v1" } });
-    await answerAll(rdCase.id, "pendingRdLeadApproval", rdMember.id);
-    const t4 = await findTransition(hotfix.version.id, s.rdInProgress, "rdSubmit");
-    await executeIssueTransition({ issueId: rdCase.id, transitionId: t4.id, actorId: rdMember.id, reasonCode: "V" });
+  async function stageIndexOf(issueId: string): Promise<number | null> {
+    const runtime = await getIssueWorkflowRuntime(issueId, admin.id);
+    if (!runtime.onVersionedWorkflow) throw new Error("預期案件已在新版 Workflow 上");
+    return nineStageIndexOfStageKey(runtime.currentStage.stageKey);
   }
 
-  const runtimeAtRdLeadApproval = await getIssueWorkflowRuntime(rdCase.id, admin.id);
-  if (!runtimeAtRdLeadApproval.onVersionedWorkflow) throw new Error("預期案件已在新版 Workflow 上");
+  const main = await createIssue("MAIN", pm.id);
+  check("[12] 新建工單落在第 1 階段（Hotfix建立工單）", (await stageIndexOf(main.id)) === 1);
 
-  const buildView = (actorId: string) =>
-    buildHotfixRuntimeView({
-      issueId: rdCase.id,
-      actorId,
-      currentStage: {
-        stageKey: runtimeAtRdLeadApproval.currentStage.stageKey,
-        label: runtimeAtRdLeadApproval.currentStage.label,
-        stageType: runtimeAtRdLeadApproval.currentStage.stageType,
-        requiredMembershipRole: runtimeAtRdLeadApproval.currentStage.requiredMembershipRole,
-      },
-      assignedTeamId: rdTeam.id,
-      assignedTeamName: rdTeam.name,
-      availableTransitions: runtimeAtRdLeadApproval.availableTransitions,
-      stageRequirements: runtimeAtRdLeadApproval.stageRequirements,
-      pendingApprovalDecision: runtimeAtRdLeadApproval.pendingApproval?.decision === "PENDING" ? "PENDING" : null,
-      pendingApprovalExpectedApproverUserId: runtimeAtRdLeadApproval.pendingApproval?.expectedApproverUserId ?? null,
-    });
+  // stage1 → stage2
+  {
+    const t0 = await findTransition(hotfix.version.id, s.draft, "submit");
+    await executeIssueTransition({ issueId: main.id, transitionId: t0.id, actorId: pm.id, reasonCode: "V" });
+  }
+  check("[13] 建立工單送出後落在第 2 階段（申請人直屬主管簽核），非直接跳到 RD", (await stageIndexOf(main.id)) === 2);
 
-  await checkAsync("[13] RD 執行人在「待 RD 主管核准」關卡不是目前責任角色（不可見核准動作）", async () => !(await buildView(rdMember.id)).isCurrentActorResponsible);
-  await checkAsync("[14] RD 主管在「待 RD 主管核准」關卡是目前責任角色（可核准／退回）", async () => (await buildView(rdLead.id)).isCurrentActorResponsible);
-  await checkAsync("[15] 角色標籤於核准關卡正確顯示主管視角（「RD 主管」而非「RD 執行人」）", async () => (await buildView(rdLead.id)).responsibleRoleLabel === "RD 主管");
-
-  // [16] Service 層對「非目前責任角色」的核准決策仍會現場拒絕（deny-by-default，不信任 UI 判斷）
-  const approvalRecord = await findActiveApproval(rdCase.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
+  // [14] 非合法核准人（QA）／完全無關人員／送核人本人 一律被 deny-by-default 拒絕
+  const stage2Approval = await findActiveApproval(main.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
   await expectError(
-    "[16] decideApprovalRecord 拒絕非合法核准人（QA 執行人，與此核准無關）冒名核准，即使 UI 隱藏了按鈕",
-    () => decideApprovalRecord({ approvalRecordId: approvalRecord.id, actorUserId: qaMember.id, decision: "APPROVED" }),
+    "[14] Service 層拒絕非目前責任角色（QA 執行人）冒名核准申請人主管簽核",
+    () => decideApprovalRecord({ approvalRecordId: stage2Approval.id, actorUserId: qaMember.id, decision: "APPROVED" }),
     (err) => err instanceof ApprovalAuthorityMismatchError,
   );
   await expectError(
-    "[16b] decideApprovalRecord 拒絕完全無關人員（outsider）核准",
-    () => decideApprovalRecord({ approvalRecordId: approvalRecord.id, actorUserId: outsider.id, decision: "APPROVED" }),
-    (err) => err instanceof ApprovalAuthorityMismatchError,
-  );
-  await expectError(
-    "[16c] decideApprovalRecord 拒絕送核人本人自行核准（即使該送核人具備 RD 團隊身分）",
-    () => decideApprovalRecord({ approvalRecordId: approvalRecord.id, actorUserId: rdMember.id, decision: "APPROVED" }),
+    "[14b] Service 層拒絕送核人本人自行核准",
+    () => decideApprovalRecord({ approvalRecordId: stage2Approval.id, actorUserId: pm.id, decision: "APPROVED" }),
     (err) => err instanceof SelfApprovalError,
   );
 
-  // [17] 待完成事項使用可讀欄位標籤，不是技術 field key
-  const rdMemberInProgressView = await buildHotfixRuntimeView({
-    issueId: rdCase.id,
-    actorId: rdMember.id,
-    currentStage: {
-      stageKey: runtimeAtRdLeadApproval.currentStage.stageKey,
-      label: runtimeAtRdLeadApproval.currentStage.label,
-      stageType: runtimeAtRdLeadApproval.currentStage.stageType,
-      requiredMembershipRole: runtimeAtRdLeadApproval.currentStage.requiredMembershipRole,
-    },
-    assignedTeamId: rdTeam.id,
-    assignedTeamName: rdTeam.name,
-    availableTransitions: runtimeAtRdLeadApproval.availableTransitions,
-    stageRequirements: runtimeAtRdLeadApproval.stageRequirements,
-    pendingApprovalDecision: "PENDING",
-    pendingApprovalExpectedApproverUserId: null,
-  });
-  check(
-    "[17] 待完成事項提及「RD 主管核准」而非技術 stageKey／requirement type",
-    rdMemberInProgressView.todoItems.some((t) => t.text.includes("RD 主管核准")) && !rdMemberInProgressView.todoItems.some((t) => /pendingRdLeadApproval|REQUIRE_FIELD/.test(t.text)),
-  );
-
-  // 完成 RD 主管核准，推進至 QA，驗證 QA 執行人／QA 放行人分離
-  await decideApprovalRecord({ approvalRecordId: approvalRecord.id, actorUserId: rdLead.id, decision: "APPROVED" });
-  const rdApproveT = await findTransition(hotfix.version.id, s.pendingRdLeadApproval, "rdLeadApprove");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: rdApproveT.id, actorId: rdLead.id, reasonCode: "V" });
-  await setIssueAssignedTeamAtTriage({ issueId: rdCase.id, teamId: qaTeam.id, actorId: admin.id, reasonCode: "V" });
-  const qaAssignT = await findTransition(hotfix.version.id, s.pendingQaTriage, "qaAssign");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: qaAssignT.id, actorId: admin.id, reasonCode: "V" });
-  const qaClaimT = await findTransition(hotfix.version.id, s.pendingQaClaim, "qaClaim");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: qaClaimT.id, actorId: qaMember.id, reasonCode: "V" });
-  await prisma.issueFieldValue.create({ data: { issueId: rdCase.id, fieldKey: "qaTestResult", fieldLabel: "QA 測試結果", fieldValue: "通過" } });
-  await answerAll(rdCase.id, "pendingQaLeadApproval", qaMember.id);
-  const qaSubmitT = await findTransition(hotfix.version.id, s.qaInProgress, "qaSubmit");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: qaSubmitT.id, actorId: qaMember.id, reasonCode: "V" });
-
-  const runtimeAtQaLeadApproval = await getIssueWorkflowRuntime(rdCase.id, admin.id);
-  if (!runtimeAtQaLeadApproval.onVersionedWorkflow) throw new Error("預期案件已在新版 Workflow 上");
-  const buildQaView = (actorId: string) =>
-    buildHotfixRuntimeView({
-      issueId: rdCase.id,
-      actorId,
-      currentStage: {
-        stageKey: runtimeAtQaLeadApproval.currentStage.stageKey,
-        label: runtimeAtQaLeadApproval.currentStage.label,
-        stageType: runtimeAtQaLeadApproval.currentStage.stageType,
-        requiredMembershipRole: runtimeAtQaLeadApproval.currentStage.requiredMembershipRole,
-      },
-      assignedTeamId: qaTeam.id,
-      assignedTeamName: qaTeam.name,
-      availableTransitions: runtimeAtQaLeadApproval.availableTransitions,
-      stageRequirements: runtimeAtQaLeadApproval.stageRequirements,
-      pendingApprovalDecision: runtimeAtQaLeadApproval.pendingApproval?.decision === "PENDING" ? "PENDING" : null,
-      pendingApprovalExpectedApproverUserId: runtimeAtQaLeadApproval.pendingApproval?.expectedApproverUserId ?? null,
-    });
-  await checkAsync("[18] QA 執行人在「待 QA 主管核准」關卡不是目前責任角色（QA 執行人／QA 放行人分離）", async () => !(await buildQaView(qaMember.id)).isCurrentActorResponsible);
-  await checkAsync("[19] QA 主管（放行人）在「待 QA 主管核准」關卡是目前責任角色", async () => (await buildQaView(qaLead.id)).isCurrentActorResponsible);
-
-  // 完成 QA 放行，推進至 OP，驗證 OP 執行人／OP 主管分離
-  const qaApproval = await findActiveApproval(rdCase.id, "QA_LEAD_APPROVAL", "pendingQaLeadApproval");
-  await decideApprovalRecord({ approvalRecordId: qaApproval.id, actorUserId: qaLead.id, decision: "APPROVED" });
-  const qaApproveT = await findTransition(hotfix.version.id, s.pendingQaLeadApproval, "qaLeadApprove");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: qaApproveT.id, actorId: qaLead.id, reasonCode: "V" });
-  await setIssueAssignedTeamAtTriage({ issueId: rdCase.id, teamId: opTeam.id, actorId: admin.id, reasonCode: "V" });
-  const opAssignT = await findTransition(hotfix.version.id, s.pendingOpTriage, "opAssign");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: opAssignT.id, actorId: admin.id, reasonCode: "V" });
-  const opClaimT = await findTransition(hotfix.version.id, s.pendingOpClaim, "opClaim");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: opClaimT.id, actorId: opMember.id, reasonCode: "V" });
-  await prisma.evidence.create({ data: { issueId: rdCase.id, type: "Log", title: "部署檢查", url: "http://example.invalid/x" } });
-  await answerAll(rdCase.id, "pendingDeploymentApproval", opMember.id);
-  const opSubmitT = await findTransition(hotfix.version.id, s.opPreparing, "opSubmit");
-  await executeIssueTransition({ issueId: rdCase.id, transitionId: opSubmitT.id, actorId: opMember.id, reasonCode: "V" });
-
-  const runtimeAtDeployApproval = await getIssueWorkflowRuntime(rdCase.id, admin.id);
-  if (!runtimeAtDeployApproval.onVersionedWorkflow) throw new Error("預期案件已在新版 Workflow 上");
-  const buildOpView = (actorId: string) =>
-    buildHotfixRuntimeView({
-      issueId: rdCase.id,
-      actorId,
-      currentStage: {
-        stageKey: runtimeAtDeployApproval.currentStage.stageKey,
-        label: runtimeAtDeployApproval.currentStage.label,
-        stageType: runtimeAtDeployApproval.currentStage.stageType,
-        requiredMembershipRole: runtimeAtDeployApproval.currentStage.requiredMembershipRole,
-      },
-      assignedTeamId: opTeam.id,
-      assignedTeamName: opTeam.name,
-      availableTransitions: runtimeAtDeployApproval.availableTransitions,
-      stageRequirements: runtimeAtDeployApproval.stageRequirements,
-      pendingApprovalDecision: runtimeAtDeployApproval.pendingApproval?.decision === "PENDING" ? "PENDING" : null,
-      pendingApprovalExpectedApproverUserId: runtimeAtDeployApproval.pendingApproval?.expectedApproverUserId ?? null,
-    });
-  await checkAsync("[20] OP 執行人在「待部署核准」關卡不是目前責任角色（OP 執行人／OP 主管分離）", async () => !(await buildOpView(opMember.id)).isCurrentActorResponsible);
-  await checkAsync("[21] OP 主管在「待部署核准」關卡是目前責任角色", async () => (await buildOpView(opLead.id)).isCurrentActorResponsible);
-
-  // [22] RETURN 明確顯示退回目標關卡
-  const rejectT = await findTransition(hotfix.version.id, s.pendingRdLeadApproval, "rdLeadReject");
-  const returnCase = await createIssue("RETURN");
+  // stage2 同意 → stage3
+  await decideApprovalRecord({ approvalRecordId: stage2Approval.id, actorUserId: supervisor.id, decision: "APPROVED" });
   {
-    const t0 = await findTransition(hotfix.version.id, s.draft, "submit");
-    await executeIssueTransition({ issueId: returnCase.id, transitionId: t0.id, actorId: pm.id, reasonCode: "V" });
-    const approval0 = await findActiveApproval(returnCase.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
-    await decideApprovalRecord({ approvalRecordId: approval0.id, actorUserId: supervisor.id, decision: "APPROVED" });
     const t1 = await findTransition(hotfix.version.id, s.pendingBusinessApproval, "businessApprove");
-    await executeIssueTransition({ issueId: returnCase.id, transitionId: t1.id, actorId: pm.id, reasonCode: "V" });
-    await setIssueAssignedTeamAtTriage({ issueId: returnCase.id, teamId: rdTeam.id, actorId: admin.id, reasonCode: "V" });
-    const t2 = await findTransition(hotfix.version.id, s.pendingRdTriage, "rdAssign");
-    await executeIssueTransition({ issueId: returnCase.id, transitionId: t2.id, actorId: admin.id, reasonCode: "V" });
-    const t3 = await findTransition(hotfix.version.id, s.pendingRdClaim, "rdClaim");
-    await executeIssueTransition({ issueId: returnCase.id, transitionId: t3.id, actorId: rdMember.id, reasonCode: "V" });
-    await prisma.issueFieldValue.create({ data: { issueId: returnCase.id, fieldKey: "rdFixVersion", fieldLabel: "修正版本", fieldValue: "v1" } });
-    await answerAll(returnCase.id, "pendingRdLeadApproval", rdMember.id);
-    const t4 = await findTransition(hotfix.version.id, s.rdInProgress, "rdSubmit");
-    await executeIssueTransition({ issueId: returnCase.id, transitionId: t4.id, actorId: rdMember.id, reasonCode: "V" });
-    const returnApproval = await findActiveApproval(returnCase.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
-    await decideApprovalRecord({ approvalRecordId: returnApproval.id, actorUserId: rdLead.id, decision: "REJECTED", decisionReasonCode: "NEEDS_WORK" });
-    await returnIssueToStage({ issueId: returnCase.id, transitionId: rejectT.id, actorId: rdLead.id, reasonCode: "NEEDS_WORK" });
+    await executeIssueTransition({ issueId: main.id, transitionId: t1.id, actorId: pm.id, reasonCode: "V" });
   }
-  const returnHistory = await prisma.issueWorkflowStageHistory.findMany({ where: { issueId: returnCase.id, transitionType: "RETURNED" }, include: { toStage: true, fromStage: true } });
-  check(
-    "[22] 退回歷程明確記錄目標關卡（fromStage=待 RD 主管核准 → toStage=RD 修正中）",
-    returnHistory.length === 1 && returnHistory[0].fromStage?.label === "待 RD 主管核准" && returnHistory[0].toStage.label === "RD 修正中",
+  check("[15] 申請人主管同意後落在第 3 階段（RD修正與自測）", (await stageIndexOf(main.id)) === 3);
+
+  await setIssueAssignedTeamAtTriage({ issueId: main.id, teamId: rdTeam.id, actorId: admin.id, reasonCode: "V" });
+  {
+    const t2 = await findTransition(hotfix.version.id, s.pendingRdTriage, "rdAssign");
+    await executeIssueTransition({ issueId: main.id, transitionId: t2.id, actorId: admin.id, reasonCode: "V" });
+    const t3 = await findTransition(hotfix.version.id, s.pendingRdClaim, "rdClaim");
+    await executeIssueTransition({ issueId: main.id, transitionId: t3.id, actorId: rdMember.id, reasonCode: "V" });
+  }
+
+  // [16] 附件僅能於目前關卡上傳，且僅能刪除「目前這一關」上傳的附件
+  const rdAttachment = await uploadHotfixAttachment({ issueId: main.id, actorId: rdMember.id, actorName: rdMember.name, fileName: "note.txt", mimeType: "text/plain", bytes: Buffer.from("hello") });
+  await expectError(
+    "[16] 非目前責任角色（outsider）不得上傳附件",
+    () => uploadHotfixAttachment({ issueId: main.id, actorId: outsider.id, actorName: outsider.name, fileName: "x.txt", mimeType: "text/plain", bytes: Buffer.from("x") }),
+    (err) => err instanceof AttachmentAuthorizationError,
   );
 
-  // [23] 已終結（取消）Issue 沒有任何可執行的前進動作（不可再操作）——以 cancelDraft
-  // 走最短路徑驗證「已終結案件」的通用行為即可，不需要真的走完整 20 關卡到 closed。
-  const cancelledCase = await createIssue("CANCELLED");
+  await saveExecutionFieldValues({
+    issueId: main.id,
+    actorId: rdMember.id,
+    values: { rdFixVersion: "v1.0.0", rdFixDescription: "修正說明", rdSelfTestResult: "自測通過", rdImpactScope: "僅影響登入頁" },
+  });
+  {
+    const t4 = await findTransition(hotfix.version.id, s.rdInProgress, "rdSubmit");
+    await answerAll(main.id, "pendingRdLeadApproval", rdMember.id);
+    await executeIssueTransition({ issueId: main.id, transitionId: t4.id, actorId: rdMember.id, reasonCode: "V" });
+  }
+  check("[17] RD 送主管簽核後落在第 4 階段（RD主管簽核）", (await stageIndexOf(main.id)) === 4);
+
+  // 附件已離開上傳當下的關卡（rdInProgress），現在應變成唯讀（無法再被同一人刪除）
+  await expectError(
+    "[16b] 附件所屬關卡已結束，即使原上傳者也不得再刪除（唯讀）",
+    () => deleteHotfixAttachment({ issueId: main.id, evidenceId: rdAttachment.id, actorId: rdMember.id }),
+    (err) => err instanceof AttachmentAuthorizationError,
+  );
+
+  const rdLeadApproval = await findActiveApproval(main.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
+  await checkAsync("[18] RD 執行人在 RD 主管簽核關卡不具核准資格（deny-by-default）", async () => {
+    try {
+      await decideApprovalRecord({ approvalRecordId: rdLeadApproval.id, actorUserId: rdMember.id, decision: "APPROVED" });
+      return false;
+    } catch (err) {
+      return err instanceof SelfApprovalError || err instanceof ApprovalAuthorityMismatchError;
+    }
+  });
+
+  // RD 主管駁回 → 應退回第 3 階段（rdInProgress），資料保留
+  await decideApprovalRecord({ approvalRecordId: rdLeadApproval.id, actorUserId: rdLead.id, decision: "REJECTED", decisionComment: "請補充自測紀錄" });
+  {
+    const rejectT = await findTransition(hotfix.version.id, s.pendingRdLeadApproval, "rdLeadReject");
+    await returnIssueToStage({ issueId: main.id, transitionId: rejectT.id, actorId: rdLead.id, reasonCode: "請補充自測紀錄" });
+  }
+  check("[19] RD 主管駁回後退回第 3 階段（RD修正與自測），且資料仍保留", (await stageIndexOf(main.id)) === 3);
+  const rdFixValueAfterReject = await prisma.issueFieldValue.findUnique({ where: { issueId_fieldKey: { issueId: main.id, fieldKey: "rdFixVersion" } } });
+  check("[19b] 駁回後 RD 已填寫的欄位資料未被清除", rdFixValueAfterReject?.fieldValue === "v1.0.0");
+
+  // 重新送核並通過，繼續往下走到 QA
+  {
+    const t4b = await findTransition(hotfix.version.id, s.rdInProgress, "rdSubmit");
+    await executeIssueTransition({ issueId: main.id, transitionId: t4b.id, actorId: rdMember.id, reasonCode: "V" });
+    const rdLeadApproval2 = await findActiveApproval(main.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
+    await decideApprovalRecord({ approvalRecordId: rdLeadApproval2.id, actorUserId: rdLead.id, decision: "APPROVED" });
+    const approveT = await findTransition(hotfix.version.id, s.pendingRdLeadApproval, "rdLeadApprove");
+    await executeIssueTransition({ issueId: main.id, transitionId: approveT.id, actorId: rdLead.id, reasonCode: "V" });
+  }
+  check("[20] RD 主管同意後落在第 5 階段（QA驗證）", (await stageIndexOf(main.id)) === 5);
+
+  await setIssueAssignedTeamAtTriage({ issueId: main.id, teamId: qaTeam.id, actorId: admin.id, reasonCode: "V" });
+  {
+    const qaAssignT = await findTransition(hotfix.version.id, s.pendingQaTriage, "qaAssign");
+    await executeIssueTransition({ issueId: main.id, transitionId: qaAssignT.id, actorId: admin.id, reasonCode: "V" });
+    const qaClaimT = await findTransition(hotfix.version.id, s.pendingQaClaim, "qaClaim");
+    await executeIssueTransition({ issueId: main.id, transitionId: qaClaimT.id, actorId: qaMember.id, reasonCode: "V" });
+  }
+  await saveExecutionFieldValues({ issueId: main.id, actorId: qaMember.id, values: { qaTestScope: "全功能", qaTestEnvironment: "UAT", qaTestResult: "驗證通過" } });
+  {
+    await answerAll(main.id, "pendingQaLeadApproval", qaMember.id);
+    const qaSubmitT = await findTransition(hotfix.version.id, s.qaInProgress, "qaSubmit");
+    await executeIssueTransition({ issueId: main.id, transitionId: qaSubmitT.id, actorId: qaMember.id, reasonCode: "V" });
+  }
+  check("[21] QA 送主管簽核後落在第 6 階段（QA主管簽核）", (await stageIndexOf(main.id)) === 6);
+
+  // QA 主管駁回 → 應退回第 5 階段（qaInProgress），不得發明退回 RD 的選項
+  const qaLeadApproval = await findActiveApproval(main.id, "QA_LEAD_APPROVAL", "pendingQaLeadApproval");
+  await decideApprovalRecord({ approvalRecordId: qaLeadApproval.id, actorUserId: qaLead.id, decision: "REJECTED", decisionComment: "缺陷未修復" });
+  {
+    const qaRejectT = await findTransition(hotfix.version.id, s.pendingQaLeadApproval, "qaLeadReject");
+    await returnIssueToStage({ issueId: main.id, transitionId: qaRejectT.id, actorId: qaLead.id, reasonCode: "缺陷未修復" });
+  }
+  check("[22] QA 主管駁回後退回第 5 階段（QA驗證），既有 Workflow 定義僅此單一合法目標", (await stageIndexOf(main.id)) === 5);
+
+  {
+    const qaSubmitT2 = await findTransition(hotfix.version.id, s.qaInProgress, "qaSubmit");
+    await executeIssueTransition({ issueId: main.id, transitionId: qaSubmitT2.id, actorId: qaMember.id, reasonCode: "V" });
+    const qaLeadApproval2 = await findActiveApproval(main.id, "QA_LEAD_APPROVAL", "pendingQaLeadApproval");
+    await decideApprovalRecord({ approvalRecordId: qaLeadApproval2.id, actorUserId: qaLead.id, decision: "APPROVED" });
+    const qaApproveT = await findTransition(hotfix.version.id, s.pendingQaLeadApproval, "qaLeadApprove");
+    await executeIssueTransition({ issueId: main.id, transitionId: qaApproveT.id, actorId: qaLead.id, reasonCode: "V" });
+  }
+  check("[23] QA 主管同意後落在第 7 階段（OP上版）", (await stageIndexOf(main.id)) === 7);
+
+  await setIssueAssignedTeamAtTriage({ issueId: main.id, teamId: opTeam.id, actorId: admin.id, reasonCode: "V" });
+  {
+    const opAssignT = await findTransition(hotfix.version.id, s.pendingOpTriage, "opAssign");
+    await executeIssueTransition({ issueId: main.id, transitionId: opAssignT.id, actorId: admin.id, reasonCode: "V" });
+    const opClaimT = await findTransition(hotfix.version.id, s.pendingOpClaim, "opClaim");
+    await executeIssueTransition({ issueId: main.id, transitionId: opClaimT.id, actorId: opMember.id, reasonCode: "V" });
+  }
+  await saveExecutionFieldValues({
+    issueId: main.id,
+    actorId: opMember.id,
+    values: { opDeployEnvironment: "Production", opDeployPlannedAt: "2026-08-01T02:00", opDeploySteps: "1. 停機 2. 部署 3. 驗證", opRollbackPlan: "還原前版本", opMonitoringChecklist: "監控錯誤率" },
+  });
+  {
+    await answerAll(main.id, "pendingDeploymentApproval", opMember.id);
+    const opSubmitT = await findTransition(hotfix.version.id, s.opPreparing, "opSubmit");
+    await executeIssueTransition({ issueId: main.id, transitionId: opSubmitT.id, actorId: opMember.id, reasonCode: "V" });
+  }
+  check("[24] OP 送主管簽核後落在第 8 階段（OP主管簽核）", (await stageIndexOf(main.id)) === 8);
+
+  const opLeadApproval = await findActiveApproval(main.id, "DEPLOYMENT_APPROVAL", "pendingDeploymentApproval");
+  await checkAsync("[25] OP 執行人在 OP 主管簽核關卡不具核准資格", async () => {
+    try {
+      await decideApprovalRecord({ approvalRecordId: opLeadApproval.id, actorUserId: opMember.id, decision: "APPROVED" });
+      return false;
+    } catch (err) {
+      return err instanceof SelfApprovalError || err instanceof ApprovalAuthorityMismatchError;
+    }
+  });
+
+  await decideApprovalRecord({ approvalRecordId: opLeadApproval.id, actorUserId: opLead.id, decision: "APPROVED" });
+  {
+    const opApproveT = await findTransition(hotfix.version.id, s.pendingDeploymentApproval, "opLeadApprove");
+    await executeIssueTransition({ issueId: main.id, transitionId: opApproveT.id, actorId: opLead.id, reasonCode: "V" });
+  }
+  check("[26] OP 主管同意後仍歸類在第 8 階段（opDeploying，不新增第 10 個節點）", (await stageIndexOf(main.id)) === 8);
+
+  await saveExecutionFieldValues({ issueId: main.id, actorId: opMember.id, values: { opDeployResult: "成功", opProdConfirmResult: "確認無誤" } });
+  {
+    const deployCompleteT = await findTransition(hotfix.version.id, s.opDeploying, "opDeployComplete");
+    await executeIssueTransition({ issueId: main.id, transitionId: deployCompleteT.id, actorId: opMember.id, reasonCode: "V" });
+    const confirmOpenT = await findTransition(hotfix.version.id, s.opCompleted, "reporterConfirmOpen");
+    await executeIssueTransition({ issueId: main.id, transitionId: confirmOpenT.id, actorId: pm.id, reasonCode: "V" });
+  }
+  check("[27] 上版執行完成、開放結案確認後落在第 9 階段（結案）", (await stageIndexOf(main.id)) === 9);
+
+  // [28] 結案責任人固定為原始填單人，不會退回申請人主管，且非填單人一律唯讀
+  await expectError(
+    "[28] 非原始填單人（Admin）不得執行結案相關寫入（closureService 拒絕）",
+    async () => {
+      const { saveClosureSummary } = await import("../src/lib/hotfix-ui/closureService");
+      await saveClosureSummary({ issueId: main.id, actorId: admin.id, summary: "冒名結案", followUpNotes: "" });
+    },
+    (err) => err instanceof WorkflowExecutionAccessDeniedError,
+  );
+
+  {
+    const { saveClosureSummary } = await import("../src/lib/hotfix-ui/closureService");
+    await saveClosureSummary({ issueId: main.id, actorId: pm.id, summary: "已確認上版成功，功能正常。", followUpNotes: "持續觀察三日" });
+    const claimT = await findTransition(hotfix.version.id, s.pendingReporterConfirmation, "reporterClaim");
+    await executeIssueTransition({ issueId: main.id, transitionId: claimT.id, actorId: pm.id, reasonCode: "V" });
+    const closeT = await findTransition(hotfix.version.id, s.reporterConfirming, "reporterClose");
+    await executeIssueTransition({ issueId: main.id, transitionId: closeT.id, actorId: pm.id, reasonCode: "V" });
+  }
+  check("[29] 原始填單人確認結案後落在第 9 階段（closed），流程終結", (await stageIndexOf(main.id)) === 9);
+
+  const closedRuntime = await getIssueWorkflowRuntime(main.id, admin.id);
+  check(
+    "[30] 已結案 Issue 沒有任何可執行的 FORWARD／RETURN 動作（完全唯讀）",
+    closedRuntime.onVersionedWorkflow && closedRuntime.availableTransitions.filter((t) => t.transition.transitionType !== "CANCEL").length === 0,
+  );
+
+  // [31] 已取消 Issue 不屬於 9 階段任何一個（routeForStageKey 回傳 null）
+  const cancelledCase = await createIssue("CANCELLED", pm.id);
   const cancelDraftT = await findTransition(hotfix.version.id, s.draft, "cancelDraft");
-  const { cancelIssueWorkflow } = await import("../src/lib/workflowExecutionService");
   await cancelIssueWorkflow({ issueId: cancelledCase.id, transitionId: cancelDraftT.id, actorId: admin.id, reasonCode: "V" });
-  const cancelledRuntime = await getIssueWorkflowRuntime(cancelledCase.id, admin.id);
-  check(
-    "[23] 已取消 Issue 沒有任何可執行的 FORWARD／RETURN 動作（不可再操作）",
-    cancelledRuntime.onVersionedWorkflow && cancelledRuntime.availableTransitions.filter((t) => t.transition.transitionType !== "CANCEL").length === 0,
-  );
+  check("[31] 已取消 Issue 的 nineStageIndexOfStageKey 回傳 null（不屬於 9 階段任何一個）", (await stageIndexOf(cancelledCase.id)) === null);
 
-  // [24] 無 issue.view 能力者查詢 Workflow Runtime 一律拒絕（含空資料／無權限情境）
+  // [32] 無 issue.view 能力者查詢 Workflow Runtime 一律拒絕
   const inactiveUser = await prisma.user.create({ data: { name: `${RUN_TAG}-Inactive`, email: `${RUN_TAG}-inactive@example.invalid`, role: "PM", isActive: false } });
   await expectError(
-    "[24] 停用帳號（無 issue.view 能力）查詢 Workflow Runtime 一律拒絕",
-    () => getIssueWorkflowRuntime(rdCase.id, inactiveUser.id),
+    "[32] 停用帳號（無 issue.view 能力）查詢 Workflow Runtime 一律拒絕",
+    () => getIssueWorkflowRuntime(main.id, inactiveUser.id),
     (err) => err instanceof WorkflowExecutionAccessDeniedError,
   );
 
   console.log("\n=== 清理測試 Fixture ===");
   const fixtureIssueIds = (await prisma.issue.findMany({ where: { issueKey: { startsWith: `${RUN_TAG}-` } }, select: { id: true } })).map((i) => i.id);
+  await prisma.comment.deleteMany({ where: { issueId: { in: fixtureIssueIds } } });
   await prisma.stageRiskCheck.deleteMany({ where: { issueId: { in: fixtureIssueIds } } });
   await prisma.approvalRecord.deleteMany({ where: { issueId: { in: fixtureIssueIds } } });
   await prisma.issueFieldValue.deleteMany({ where: { issueId: { in: fixtureIssueIds } } });
   await prisma.evidence.deleteMany({ where: { issueId: { in: fixtureIssueIds } } });
   await prisma.issueWorkflowStageHistory.deleteMany({ where: { issueId: { in: fixtureIssueIds } } });
   await prisma.issue.deleteMany({ where: { id: { in: fixtureIssueIds } } });
-  const fixtureStageIds = (await prisma.workflowStage.findMany({ where: { workflowVersionId: hotfix.version.id }, select: { id: true } })).map((s) => s.id);
+  const fixtureStageIds = (await prisma.workflowStage.findMany({ where: { workflowVersionId: hotfix.version.id }, select: { id: true } })).map((s2) => s2.id);
   await prisma.workflowStageRequirement.deleteMany({ where: { workflowStageId: { in: fixtureStageIds } } });
   await prisma.workflowTransition.deleteMany({ where: { workflowVersionId: hotfix.version.id } });
   await prisma.workflowStage.deleteMany({ where: { workflowVersionId: hotfix.version.id } });
@@ -485,8 +526,9 @@ async function runDbIntegrationChecks() {
   await prisma.teamMember.deleteMany({ where: { teamId: { in: [rdTeam.id, qaTeam.id, opTeam.id] } } });
   await prisma.team.deleteMany({ where: { id: { in: [rdTeam.id, qaTeam.id, opTeam.id] } } });
   await prisma.userSupervisorAssignment.deleteMany({ where: { userId: pm.id } });
-  await prisma.userRole.deleteMany({ where: { userId: { in: [admin.id, pm.id, supervisor.id, rdMember.id, rdLead.id, qaMember.id, qaLead.id, opMember.id, opLead.id, outsider.id, inactiveUser.id] } } });
-  await prisma.user.deleteMany({ where: { id: { in: [admin.id, pm.id, supervisor.id, rdMember.id, rdLead.id, qaMember.id, qaLead.id, opMember.id, opLead.id, outsider.id, inactiveUser.id] } } });
+  const userIds = [admin.id, pm.id, supervisor.id, rdMember.id, rdLead.id, qaMember.id, qaLead.id, opMember.id, opLead.id, outsider.id, inactiveUser.id];
+  await prisma.userRole.deleteMany({ where: { userId: { in: userIds } } });
+  await prisma.user.deleteMany({ where: { id: { in: userIds } } });
 }
 
 async function main() {

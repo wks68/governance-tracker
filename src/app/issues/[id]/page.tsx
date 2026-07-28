@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireCurrentUser } from "@/lib/auth";
 import { issueTypeLabel } from "@/lib/constants";
@@ -8,12 +8,9 @@ import { evaluateGateRules } from "@/lib/gateRules";
 import {
   isIssueOnVersionedWorkflow,
   getIssueWorkflowRuntime,
-  getIssueWorkflowHistory,
   hasExecutionCapability,
   listSelectablePublishedVersionsForIssueType,
-  type AvailableTransitionPreview,
 } from "@/lib/workflowExecutionService";
-import CurrentStagePanel from "@/components/workflow-execution/CurrentStagePanel";
 import StatusBadge from "@/components/StatusBadge";
 import WorkflowProgress from "@/components/WorkflowProgress";
 import DynamicFieldsEditForm from "@/components/DynamicFieldsEditForm";
@@ -24,17 +21,8 @@ import EvidenceList from "@/components/EvidenceList";
 import CommentList from "@/components/CommentList";
 import AuditLogList from "@/components/AuditLogList";
 import AiAssistantPanel from "@/components/AiAssistantPanel";
-import StageRequirementsPanel from "@/components/workflow-execution/StageRequirementsPanel";
 import StartWorkflowPanel from "@/components/workflow-execution/StartWorkflowPanel";
-import HotfixStatusHeader from "@/components/hotfix-execution/HotfixStatusHeader";
-import HotfixTodoList from "@/components/hotfix-execution/HotfixTodoList";
-import HotfixApprovalPanel from "@/components/hotfix-execution/HotfixApprovalPanel";
-import HotfixRiskCheckPanel from "@/components/hotfix-execution/HotfixRiskCheckPanel";
-import HotfixActionPanels from "@/components/hotfix-execution/HotfixActionPanels";
-import HotfixHistoryTimeline from "@/components/hotfix-execution/HotfixHistoryTimeline";
-import { buildHotfixRuntimeView, getRiskCheckItemsForStage } from "@/lib/hotfix-ui/runtimeView";
-import { transitionCopyOf } from "@/lib/hotfix-ui/transitionCopy";
-import type { ActionTransitionItem } from "@/components/hotfix-execution/HotfixActionPanels";
+import { routeForStageKey } from "@/lib/hotfix-ui/nineStage";
 
 export const dynamic = "force-dynamic";
 
@@ -61,119 +49,24 @@ export default async function IssueDetailPage({ params }: { params: { id: string
   const onVersionedWorkflow = isIssueOnVersionedWorkflow(issue);
 
   // ---------------------------------------------------------------------------
-  // M2-B：新流程 Issue 一律走 workflowExecutionService（Server Component 讀取 ViewModel，
-  // 見 Plan 第九節）；舊流程 Issue 完全維持原本 workflow.ts／gateRules.ts 行為，兩者互斥，
-  // 不混用同一套資料。
+  // Hotfix 九階段 UI 收斂：已啟動新版流程引擎的 Hotfix 工單，一律轉址到對應的九階段
+  // 獨立頁面（見 src/lib/hotfix-ui/nineStage.ts），本頁不再自行渲染 Hotfix 專屬區塊——
+  // 舊版單頁 7 階段進度／內嵌主管核准／技術性下一步操作等區塊已全面移除。cancelled（已
+  // 取消）不屬於 9 階段任何一頁，改在本頁顯示最小化的唯讀終態說明。非 Hotfix、或尚未啟動
+  // 新版流程引擎的 Issue，完全維持原本 workflow.ts／gateRules.ts 行為，不受影響。
   // ---------------------------------------------------------------------------
 
   let runtime: Awaited<ReturnType<typeof getIssueWorkflowRuntime>> | null = null;
-  let historyItems: Array<{
-    id: string;
-    transitionType: string;
-    actionKey: string | null;
-    fromStageLabel: string | null;
-    toStageLabel: string;
-    transitionLabel: string | null;
-    actorName: string;
-    reasonCode: string | null;
-    terminalOutcome: string | null;
-    assignedTeamNameBefore: string | null;
-    assignedTeamNameAfter: string | null;
-    executedAt: string;
-  }> = [];
-  let canAssignTeam = false;
-  let teamOptions: Array<{ id: string; name: string }> = [];
-  let assignedTeamName: string | null = null;
   let startableVersions: Array<{ id: string; versionNo: number; definitionName: string }> = [];
   let canStartWorkflow = false;
-  let hotfixView: Awaited<ReturnType<typeof buildHotfixRuntimeView>> | null = null;
-  let approvalInfo: { approvalRecordId: string; requestedByName: string; requestedAt: string } | null = null;
-  let riskCheckTargetStageKey: string | null = null;
-  let riskCheckItems: Awaited<ReturnType<typeof getRiskCheckItemsForStage>> = [];
-  let primaryForwardActionLabel: string | null = null;
-  let forwardActions: ActionTransitionItem[] = [];
-  let returnActions: ActionTransitionItem[] = [];
-  let cancelActions: ActionTransitionItem[] = [];
+  let hotfixCancelledStageLabel: string | null = null;
 
   if (onVersionedWorkflow) {
     runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
-    const historyRows = await getIssueWorkflowHistory(issue.id, currentUser.id);
-    const actorIds = Array.from(new Set(historyRows.map((h) => h.actorUserId)));
-    const actors = actorIds.length > 0 ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } }) : [];
-    const actorNameById = new Map(actors.map((a) => [a.id, a.name]));
-    historyItems = historyRows.map((h) => ({
-      id: h.id,
-      transitionType: h.transitionType,
-      actionKey: h.transition?.actionKey ?? null,
-      fromStageLabel: h.fromStage?.label ?? null,
-      toStageLabel: h.toStage.label,
-      transitionLabel: h.transition?.label ?? null,
-      actorName: actorNameById.get(h.actorUserId) ?? "（未知使用者）",
-      reasonCode: h.reasonCode,
-      terminalOutcome: h.terminalOutcome,
-      assignedTeamNameBefore: h.assignedTeamBefore?.name ?? null,
-      assignedTeamNameAfter: h.assignedTeamAfter?.name ?? null,
-      executedAt: h.executedAt.toISOString(),
-    }));
-    canAssignTeam = await hasExecutionCapability(currentUser.id, "issue.assignTeam");
-    if (runtime.onVersionedWorkflow && runtime.currentStage.stageType === "TRIAGE") {
-      teamOptions = await prisma.team.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
-    }
-    if (issue.assignedTeamId) {
-      const assignedTeam = await prisma.team.findUnique({ where: { id: issue.assignedTeamId }, select: { name: true } });
-      assignedTeamName = assignedTeam?.name ?? null;
-    }
-
-    if (runtime.onVersionedWorkflow) {
-      const pendingApprovalDecision =
-        runtime.pendingApproval && runtime.pendingApproval.decision === "PENDING" ? "PENDING" : (runtime.pendingApproval?.decision as "APPROVED" | "REJECTED" | undefined) ?? null;
-
-      hotfixView = await buildHotfixRuntimeView({
-        issueId: issue.id,
-        actorId: currentUser.id,
-        currentStage: {
-          stageKey: runtime.currentStage.stageKey,
-          label: runtime.currentStage.label,
-          stageType: runtime.currentStage.stageType,
-          requiredMembershipRole: runtime.currentStage.requiredMembershipRole,
-        },
-        assignedTeamId: issue.assignedTeamId,
-        assignedTeamName,
-        availableTransitions: runtime.availableTransitions,
-        stageRequirements: runtime.stageRequirements,
-        pendingApprovalDecision,
-        pendingApprovalExpectedApproverUserId: runtime.pendingApproval?.expectedApproverUserId ?? null,
-      });
-
-      if (runtime.pendingApproval && runtime.pendingApproval.decision === "PENDING") {
-        const requester = await prisma.user.findUnique({ where: { id: runtime.pendingApproval.requestedByUserId }, select: { name: true } });
-        approvalInfo = {
-          approvalRecordId: runtime.pendingApproval.id,
-          requestedByName: requester?.name ?? "（未知使用者）",
-          requestedAt: runtime.pendingApproval.requestedAt.toISOString(),
-        };
-      }
-
-      const primaryForward = runtime.availableTransitions.find((t) => t.transition.transitionType === "FORWARD");
-      if (primaryForward) {
-        riskCheckTargetStageKey = primaryForward.transition.toStage.stageKey;
-        riskCheckItems = await getRiskCheckItemsForStage(issue.id, riskCheckTargetStageKey);
-        primaryForwardActionLabel = transitionCopyOf(primaryForward.transition.actionKey, primaryForward.transition.label).label;
-      }
-
-      const toActionItem = (t: AvailableTransitionPreview): ActionTransitionItem => ({
-        id: t.transition.id,
-        actionKey: t.transition.actionKey,
-        label: t.transition.label,
-        requireReason: t.transition.requireReason,
-        targetLabel: t.transition.toStage.label,
-        targetIsCompleted: t.transition.toStage.isEnd && t.transition.toStage.terminalOutcome === "COMPLETED",
-        allowed: t.allowed,
-        blockedReasons: t.blockedReasons.map((r) => r.message),
-      });
-      forwardActions = runtime.availableTransitions.filter((t) => t.transition.transitionType === "FORWARD").map(toActionItem);
-      returnActions = runtime.availableTransitions.filter((t) => t.transition.transitionType === "RETURN").map(toActionItem);
-      cancelActions = runtime.availableTransitions.filter((t) => t.transition.transitionType === "CANCEL").map(toActionItem);
+    if (issue.issueType === "Hotfix" && runtime.onVersionedWorkflow) {
+      const target = routeForStageKey(issue.id, runtime.currentStage.stageKey);
+      if (target) redirect(target);
+      hotfixCancelledStageLabel = runtime.currentStage.label;
     }
   } else {
     canStartWorkflow = await hasExecutionCapability(currentUser.id, "admin.full");
@@ -310,89 +203,11 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             </div>
           </section>
 
-          {onVersionedWorkflow && runtime && runtime.onVersionedWorkflow && hotfixView ? (
-            <>
-              {/* 需求一／二：目前工作狀態摘要＋7 階段流程進度 */}
-              <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">目前工作狀態</h2>
-                <HotfixStatusHeader
-                  view={hotfixView}
-                  isTerminal={runtime.currentStage.isEnd}
-                  terminalLabel={runtime.currentStage.isEnd ? (runtime.currentStage.terminalOutcome === "COMPLETED" ? "已完成" : "已取消") : null}
-                />
-                {canAssignTeam && runtime.currentStage.stageType === "TRIAGE" && (
-                  <div className="mt-4 border-t border-gray-100 pt-4">
-                    <CurrentStagePanel
-                      issueId={issue.id}
-                      stageKey={runtime.currentStage.stageKey}
-                      stageLabel={runtime.currentStage.label}
-                      stageType={runtime.currentStage.stageType}
-                      requiredExecutionRole={runtime.currentStage.requiredExecutionRole}
-                      requiredMembershipRole={runtime.currentStage.requiredMembershipRole}
-                      assignedTeamId={issue.assignedTeamId}
-                      assignedTeamName={assignedTeamName}
-                      canAssignTeam={canAssignTeam}
-                      teamOptions={teamOptions}
-                    />
-                  </div>
-                )}
-              </section>
-
-              {/* 需求四：目前待完成事項（取代舊「關卡卡控檢查」） */}
-              <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">目前待完成事項</h2>
-                <HotfixTodoList items={hotfixView.todoItems} nextActionLabel={primaryForwardActionLabel} />
-              </section>
-
-              {/* 需求六：本階段工作內容（OP 上版階段顯示為「上版與回復資訊」） */}
-              <section id="field-section" className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">
-                  {hotfixView.businessStageLabel === "OP 上版" ? "上版與回復資訊" : "本階段工作內容"}
-                </h2>
-                <StageRequirementsPanel issueId={issue.id} requirements={runtime.stageRequirements} />
-              </section>
-
-              {/* 需求五：主管核准（僅目前責任角色可操作，其餘唯讀） */}
-              {approvalInfo && (
-                <HotfixApprovalPanel
-                  issueId={issue.id}
-                  roleLabel={hotfixView.responsibleRoleLabel}
-                  approval={approvalInfo}
-                  isResponsible={hotfixView.isCurrentActorResponsible}
-                />
-              )}
-
-              {/* 需求四／六：風險／例外——送核前必須完成的風險確認 */}
-              {riskCheckTargetStageKey && (
-                <section className="rounded-lg border border-gray-200 bg-white p-5">
-                  <h2 className="mb-3 text-sm font-semibold text-gray-700">風險／例外</h2>
-                  <HotfixRiskCheckPanel
-                    issueId={issue.id}
-                    stageKey={riskCheckTargetStageKey}
-                    items={riskCheckItems}
-                    disabled={!hotfixView.isCurrentActorResponsible}
-                  />
-                </section>
-              )}
-
-              {/* 需求三：前進／退回／取消動作，一律使用工作語意文案 */}
-              <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">下一步操作</h2>
-                <HotfixActionPanels
-                  issueId={issue.id}
-                  forward={forwardActions}
-                  ret={returnActions}
-                  cancel={cancelActions}
-                  isResponsible={hotfixView.isCurrentActorResponsible}
-                />
-              </section>
-
-              {/* 需求七：處理紀錄時間軸 */}
-              <section className="rounded-lg border border-gray-200 bg-white p-5">
-                <h2 className="mb-3 text-sm font-semibold text-gray-700">處理紀錄</h2>
-                <HotfixHistoryTimeline items={historyItems} />
-              </section>
-            </>
+          {hotfixCancelledStageLabel ? (
+            <section className="rounded-lg border border-gray-200 bg-gray-50 p-5">
+              <h2 className="mb-1 text-sm font-semibold text-gray-700">此 Hotfix 工單已取消</h2>
+              <p className="text-sm text-gray-500">目前關卡：{hotfixCancelledStageLabel}。已取消不屬於正式九階段流程，不再提供任何操作，僅供查閱基本資訊與歷程。</p>
+            </section>
           ) : (
             <>
               {/* 6.3 流程進度條（舊版線性流程） */}
