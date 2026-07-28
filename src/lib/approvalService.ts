@@ -55,6 +55,20 @@ export class ApprovalValidationError extends Error {
   }
 }
 
+// 建立工單／團隊整合修正新增：找不到任何合格核准來源（例如申請人尚未設定直屬主管，
+// 或處理團隊尚未設定 LEAD）時使用的專用錯誤類別，訊息一律是可直接顯示給使用者的中文
+// 友善訊息，不暴露 ApprovalRecord／Prisma 等技術字眼；不得以「猜一個核准人」代替。
+export class NoEligibleApproverError extends Error {
+  constructor(public readonly approvalType: string) {
+    super(
+      approvalType === "BUSINESS_APPROVAL"
+        ? "所選申請人尚未設定直屬主管或授權代理人，暫時無法送出簽核。請聯絡系統管理員完成設定。"
+        : "此關卡目前找不到合格的核准人員，暫時無法送出簽核。請聯絡系統管理員完成設定。",
+    );
+    this.name = "NoEligibleApproverError";
+  }
+}
+
 export class ApprovalNotFoundError extends Error {
   constructor(approvalRecordId: string) {
     super(`找不到核准紀錄：${approvalRecordId}`);
@@ -388,7 +402,7 @@ async function resolveExpectedAuthorityForCreation(
 
   const eligible = await fetchEligibleApproversInTx(tx, { approvalType, requestedByUserId, teamId, now });
   if (eligible.length === 0) {
-    throw new ApprovalValidationError(["找不到合格的核准資格來源，不得建立核准紀錄"]);
+    throw new NoEligibleApproverError(approvalType);
   }
 
   const expectedApproverUserId = pickExpectedApproverUserId(eligible);
@@ -608,27 +622,39 @@ export async function decideApprovalRecord(input: DecideApprovalInput) {
 // 決策：CANCELLED（不涉及核准資格判斷，不受本輪信任邊界調整影響）
 // ---------------------------------------------------------------------------
 
-export async function cancelApprovalRecord(
+async function cancelApprovalRecordTx(
+  tx: Tx,
   approvalRecordId: string,
   decisionReasonCode?: string | null,
   decisionComment?: string | null,
 ) {
-  return prisma.$transaction(async (tx) => {
-    const record = await tx.approvalRecord.findUnique({ where: { id: approvalRecordId } });
-    if (!record) throw new ApprovalNotFoundError(approvalRecordId);
-    if (record.recordStatus !== "ACTIVE" || record.decision !== "PENDING") {
-      throw new ApprovalStateError("僅 recordStatus=ACTIVE 且 decision=PENDING 的核准紀錄可被取消");
-    }
-    return tx.approvalRecord.update({
-      where: { id: record.id },
-      data: {
-        decision: "CANCELLED",
-        decidedAt: new Date(),
-        decisionReasonCode: decisionReasonCode ?? null,
-        decisionComment: decisionComment ?? null,
-      },
-    });
+  const record = await tx.approvalRecord.findUnique({ where: { id: approvalRecordId } });
+  if (!record) throw new ApprovalNotFoundError(approvalRecordId);
+  if (record.recordStatus !== "ACTIVE" || record.decision !== "PENDING") {
+    throw new ApprovalStateError("僅 recordStatus=ACTIVE 且 decision=PENDING 的核准紀錄可被取消");
+  }
+  return tx.approvalRecord.update({
+    where: { id: record.id },
+    data: {
+      decision: "CANCELLED",
+      decidedAt: new Date(),
+      decisionReasonCode: decisionReasonCode ?? null,
+      decisionComment: decisionComment ?? null,
+    },
   });
+}
+
+// M2-B1 相同慣例新增：可選的外部 transaction client——Admin 改派申請人／團隊時，需要在同一
+// transaction 內「取消舊 PENDING 核准紀錄＋更新 Issue＋建立新 PENDING 核准紀錄」，三者要嘛
+// 全部成功、要嘛全部回滾，不得另開 transaction。呼叫端不傳入 client 時行為與過去完全相同。
+export async function cancelApprovalRecord(
+  approvalRecordId: string,
+  decisionReasonCode?: string | null,
+  decisionComment?: string | null,
+  client?: Tx,
+) {
+  if (client) return cancelApprovalRecordTx(client, approvalRecordId, decisionReasonCode, decisionComment);
+  return prisma.$transaction((tx) => cancelApprovalRecordTx(tx, approvalRecordId, decisionReasonCode, decisionComment));
 }
 
 // ---------------------------------------------------------------------------

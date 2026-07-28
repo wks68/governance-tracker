@@ -252,6 +252,22 @@ export async function createRequiredApprovalRecordIfNeeded(
     throw new WorkflowExecutionStateError(`WorkflowStage「${targetStage.stageKey}」為 APPROVAL 類型但 approvalType 不合法，資料異常`);
   }
 
+  // 建立工單／團隊整合修正：BUSINESS_APPROVAL（申請人直屬主管簽核）的核准資格解析必須依
+  // 「所選申請人」（Issue.reporterUserId），不得依「實際執行送出動作的 actor」——Admin 代
+  // 申請人建立／送出 Hotfix 工單時，第 2 關必須解析申請人本人的主管，不得誤解析成 Admin 的
+  // 主管（Admin 通常沒有設定直屬主管，會直接送出「找不到合格核准資格來源」）。其餘
+  // approvalType（RD/QA/OP 主管簽核）的核准資格只看處理團隊 LEAD，requestedByUserId 只影響
+  // 自我核准檢查與稽核追溯，維持既有語意（= 實際送出當下這一關工作的 actor），不受本次調整
+  // 影響。
+  let requestedByUserId = actorId;
+  if (targetStage.approvalType === "BUSINESS_APPROVAL") {
+    const issue = await tx.issue.findUniqueOrThrow({ where: { id: issueId } });
+    if (!issue.reporterUserId) {
+      throw new WorkflowExecutionStateError("此工單尚未設定申請人，無法送出主管簽核");
+    }
+    requestedByUserId = issue.reporterUserId;
+  }
+
   const previous = await tx.approvalRecord.findFirst({
     where: { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, recordStatus: "ACTIVE" },
     orderBy: { revisionNo: "desc" },
@@ -264,13 +280,13 @@ export async function createRequiredApprovalRecordIfNeeded(
             issueId,
             approvalType: targetStage.approvalType,
             relatedStageKey: targetStage.stageKey,
-            requestedByUserId: actorId,
+            requestedByUserId,
             previousApprovalRecordId: previous.id,
           },
           tx,
         )
       : await createPendingApprovalRecord(
-          { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, requestedByUserId: actorId },
+          { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, requestedByUserId },
           tx,
         );
 

@@ -66,7 +66,14 @@ export type ActionType =
   | "IssueWorkflowAdvanced"
   | "IssueWorkflowReturned"
   | "IssueWorkflowCancelled"
-  | "IssueWorkflowStageCompleted";
+  | "IssueWorkflowStageCompleted"
+  // ---- Hotfix 團隊/申請人整合修正新增：團隊 CRUD 與工單刪除事件 ----
+  | "TeamCreated"
+  | "TeamUpdated"
+  | "TeamDeleted"
+  | "IssueDeleted"
+  | "IssueAdminPermanentDeleted"
+  | "IssueApplicantTeamReassigned";
 
 // M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation；
 // C1-B3 新增：UserRole；M2-A 新增：WorkflowDefinition／WorkflowVersion／WorkflowStage／
@@ -83,7 +90,8 @@ export type EntityType =
   | "WorkflowVersion"
   | "WorkflowStage"
   | "WorkflowTransition"
-  | "WorkflowStageRequirement";
+  | "WorkflowStageRequirement"
+  | "Team";
 
 export async function writeAuditLog(
   params: {
