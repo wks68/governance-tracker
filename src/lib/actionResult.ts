@@ -33,6 +33,17 @@ import {
   WorkflowExecutionAccessDeniedError,
   WorkflowExecutionBlockedError,
 } from "./workflowExecutionService";
+import {
+  ApprovalValidationError,
+  ApprovalNotFoundError,
+  ApprovalStateError,
+  ApprovalAuthorityMismatchError,
+  DuplicateActivePendingApprovalError,
+  RiskCheckIncompleteError,
+  UnresolvedUnknownRiskError,
+} from "./approvalService";
+import { AttachmentValidationError, AttachmentAuthorizationError } from "./hotfix-ui/attachmentService";
+import { HotfixPageNotApplicableError } from "./hotfix-ui/pageContext";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T; message: string }
@@ -61,6 +72,16 @@ const KNOWN_DOMAIN_ERRORS = [
   WorkflowExecutionStateError,
   WorkflowExecutionAccessDeniedError,
   WorkflowExecutionBlockedError,
+  ApprovalValidationError,
+  ApprovalNotFoundError,
+  ApprovalStateError,
+  ApprovalAuthorityMismatchError,
+  DuplicateActivePendingApprovalError,
+  RiskCheckIncompleteError,
+  UnresolvedUnknownRiskError,
+  AttachmentValidationError,
+  AttachmentAuthorizationError,
+  HotfixPageNotApplicableError,
 ] as const;
 
 export function toActionResult(err: unknown, fallbackMessage = "操作失敗，請稍後再試"): ActionResult<never> {
