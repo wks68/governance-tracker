@@ -24,6 +24,7 @@ import { saveExecutionFieldValues } from "../src/lib/hotfix-ui/executionFields";
 import { saveHotfixDraft } from "../src/lib/hotfix-ui/draftService";
 import { saveClosureSummary } from "../src/lib/hotfix-ui/closureService";
 import { uploadHotfixAttachment } from "../src/lib/hotfix-ui/attachmentService";
+import { createIssueForActor } from "../src/lib/issueCreation";
 
 const RUN_TAG = "hfui9";
 
@@ -56,6 +57,24 @@ async function answerAllRiskChecks(issueId: string, stageKey: string, actorId: s
   }
 }
 
+// 團隊整合修正：透過真正的 createIssueForActor（與正式建立工單頁同一條路徑）建立 Hotfix
+// 草稿，用來展示「Admin 代團隊成員建立」與「申請人自己建立」兩種情境，並驗證團隊／申請人
+// 伺服器端重新驗證邏輯在真實服務層可正常運作，不繞過驗證直接寫 raw row。
+function buildCreateFormData(input: { title: string; description: string; teamId: string; applicantId: string; hotfixPriority?: string }): FormData {
+  const fd = new FormData();
+  fd.set("issueType", "Hotfix");
+  fd.set("title", input.title);
+  fd.set("description", input.description);
+  fd.set("systemName", "MyDMS");
+  fd.set("environment", "Production");
+  fd.set("riskLevel", "中");
+  fd.set("dueDate", "2026-08-20");
+  fd.set("hotfixPriority", input.hotfixPriority ?? "HIGH");
+  fd.set("teamId", input.teamId);
+  fd.set("applicantId", input.applicantId);
+  return fd;
+}
+
 interface Ctx {
   hotfix: Awaited<ReturnType<typeof buildHotfixWorkflowV1>>;
   admin: { id: string; name: string };
@@ -72,7 +91,7 @@ interface Ctx {
   opLead: { id: string; name: string };
 }
 
-async function createHotfixIssue(key: string, title: string, description: string, ctx: Ctx) {
+async function createHotfixIssue(key: string, title: string, description: string, ctx: Ctx, teamId?: string) {
   const issue = await prisma.issue.create({
     data: {
       issueKey: `${RUN_TAG}-${key}`,
@@ -85,6 +104,7 @@ async function createHotfixIssue(key: string, title: string, description: string
       workflowStatus: "n/a",
       reporterUserId: ctx.pm.id,
       reporter: ctx.pm.name,
+      assignedTeamId: teamId ?? null,
     },
   });
   await startIssueWorkflow({ issueId: issue.id, workflowVersionId: ctx.hotfix.version.id, actorId: ctx.admin.id, reasonCode: "PREVIEW_START" });
@@ -244,18 +264,39 @@ async function main() {
   const rdLead = await createUser("RD主管", "RD", "研發處");
   await addMember(rdTeam.id, rdMember.id, "MEMBER");
   await addMember(rdTeam.id, rdLead.id, "LEAD");
+  const rdInactive = await createUser("RD離職人員", "RD", "研發處");
+  await prisma.teamMember.create({ data: { teamId: rdTeam.id, userId: rdInactive.id, membershipRole: "MEMBER", isActive: false } });
 
   const qaTeam = await createTeam("QA 驗證團隊");
   const qaMember = await createUser("QA執行人", "QA", "品保處");
   const qaLead = await createUser("QA主管", "QA", "品保處");
   await addMember(qaTeam.id, qaMember.id, "MEMBER");
   await addMember(qaTeam.id, qaLead.id, "LEAD");
+  const qaInactive = await createUser("QA離職人員", "QA", "品保處");
+  await prisma.teamMember.create({ data: { teamId: qaTeam.id, userId: qaInactive.id, membershipRole: "MEMBER", isActive: false } });
 
   const opTeam = await createTeam("OP 部署團隊");
   const opMember = await createUser("OP執行人", "OP", "維運處");
   const opLead = await createUser("OP主管", "OP", "維運處");
   await addMember(opTeam.id, opMember.id, "MEMBER");
   await addMember(opTeam.id, opLead.id, "LEAD");
+  const opInactive = await createUser("OP離職人員", "OP", "維運處");
+  await prisma.teamMember.create({ data: { teamId: opTeam.id, userId: opInactive.id, membershipRole: "MEMBER", isActive: false } });
+
+  // PM 團隊：申請人（填單人）與其主管所屬團隊，供「建立工單」頁團隊/申請人連動示範使用。
+  const pmTeam = await createTeam("PM 團隊");
+  await addMember(pmTeam.id, pm.id, "MEMBER");
+  await addMember(pmTeam.id, supervisor.id, "LEAD");
+  const pmInactive = await createUser("PM離職人員", "PM", "業務處");
+  await prisma.teamMember.create({ data: { teamId: pmTeam.id, userId: pmInactive.id, membershipRole: "MEMBER", isActive: false } });
+
+  // 無主管設定示範帳號：屬 PM 團隊 active 成員，但刻意不建立 UserSupervisorAssignment，
+  // 用來示範「所選申請人尚未設定直屬主管...」友善失敗訊息。
+  const noSupervisorUser = await createUser("無主管設定人員", "PM", "業務處");
+  await addMember(pmTeam.id, noSupervisorUser.id, "MEMBER");
+
+  // 空白（無任何引用）團隊：示範 Admin 永久刪除團隊。
+  const emptyTeam = await createTeam("測試用空團隊（可永久刪除）");
 
   const outsider = await createUser("無關使用者", "PM", "其他處");
 
@@ -339,6 +380,58 @@ async function main() {
   }
   // 停在 rdInProgress，尚未送出，風險確認已填答且其中一項為「是（有風險）」——「有風險案件」展示案例。
 
+  console.log("[2b/3] 建立團隊／申請人整合示範案件（真實 createIssueForActor 路徑）...");
+
+  // 情境 1：Admin 代 PM 團隊成員（填單人）建立的草稿——applicant／actor 分別保存的示範案例。
+  const adminCreatedDraft = await createIssueForActor(
+    admin,
+    buildCreateFormData({ title: "[Hotfix][MyDMS][Admin代建] 訂閱通知重複發送", description: "Admin 代填單人建立，示範 applicant 與實際建立者分開保存。", teamId: pmTeam.id, applicantId: pm.id }),
+  );
+
+  // 情境 2：申請人自己建立的草稿。
+  const selfCreatedDraft = await createIssueForActor(
+    pm,
+    buildCreateFormData({ title: "[Hotfix][MyDMS][自建] 訂單匯出檔名亂碼", description: "申請人本人登入並自行建立。", teamId: pmTeam.id, applicantId: pm.id }),
+  );
+
+  // 情境 3：被申請人主管駁回、退回第 1 關的工單——申請人可修改後重新送簽，暫存不會產生第二筆
+  // active pending ApprovalRecord。
+  const rejectedToStage1 = await createIssueForActor(
+    pm,
+    buildCreateFormData({ title: "[Hotfix][MyDMS][待補件] 匯款帳號驗證失敗", description: "初次送簽資訊不足，將由主管駁回退回第 1 關。", teamId: pmTeam.id, applicantId: pm.id }),
+  );
+  {
+    await saveHotfixDraft({ issueId: rejectedToStage1.id, actorId: pm.id, fields: { hotfixPriority: "HIGH", dueDate: "2026-08-18" } });
+    const submitT = await findTransition(hotfix.version.id, hotfix.stageIds.draft, "submit");
+    await executeIssueTransition({ issueId: rejectedToStage1.id, transitionId: submitT.id, actorId: pm.id, reasonCode: "PREVIEW_SUBMIT" });
+    const approval = await findActiveApproval(rejectedToStage1.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+    await decideApprovalRecord({ approvalRecordId: approval.id, actorUserId: supervisor.id, decision: "REJECTED", decisionComment: "請補充問題重現步驟與影響範圍" });
+    const rejectT = await findTransition(hotfix.version.id, hotfix.stageIds.pendingBusinessApproval, "businessReject");
+    await returnIssueToStage({ issueId: rejectedToStage1.id, transitionId: rejectT.id, actorId: supervisor.id, reasonCode: "請補充問題重現步驟與影響範圍" });
+  }
+  // 結束時回到 draft，歷程上有一筆申請人主管駁回紀錄——「被駁回後回第 1 關」展示案例，申請人
+  // 可於此重新暫存／送簽，也符合申請人可刪除的條件。
+
+  // 情境 4：有附件的草稿（尚未送出）。
+  const draftWithAttachment = await createIssueForActor(
+    pm,
+    buildCreateFormData({ title: "[Hotfix][MyDMS][有附件草稿] 對帳單合計金額誤差", description: "草稿階段已上傳佐證附件，尚未送出。", teamId: pmTeam.id, applicantId: pm.id }),
+  );
+  await uploadHotfixAttachment({
+    issueId: draftWithAttachment.id,
+    actorId: pm.id,
+    actorName: pm.name,
+    fileName: "reconciliation-screenshot-note.txt",
+    mimeType: "text/plain",
+    bytes: Buffer.from("附件說明：對帳單合計金額誤差案例的截圖描述與初步排查紀錄。"),
+  });
+
+  // 情境 5：申請人尚未設定直屬主管，送簽會顯示友善失敗訊息（不暴露 ApprovalRecord／Prisma 技術訊息）。
+  const noSupervisorDraft = await createIssueForActor(
+    noSupervisorUser,
+    buildCreateFormData({ title: "[Hotfix][MyDMS][無主管示範] 定期報表寄送失敗", description: "示範申請人尚未設定直屬主管時，送簽的友善失敗訊息。", teamId: pmTeam.id, applicantId: noSupervisorUser.id }),
+  );
+
   console.log("[3/3] 完成。");
   console.log("\n=== 各階段展示工單編號 ===");
   console.log(`  1 Hotfix建立工單（草稿，尚未送出）：${stage1.issueKey}`);
@@ -356,6 +449,15 @@ async function main() {
   console.log(`  有附件案件（現停 RD修正與自測）：${withAttachment.issueKey}`);
   console.log(`  無附件案件（例如）：${stage3.issueKey}`);
   console.log(`  有風險案件（現停 RD修正與自測，待送出）：${riskCase.issueKey}`);
+  console.log("\n=== 團隊／申請人整合示範案件（真實 createIssueForActor 路徑）===");
+  console.log(`  Admin 代團隊成員建立的草稿：${adminCreatedDraft.issueKey}`);
+  console.log(`  申請人自己建立的草稿：${selfCreatedDraft.issueKey}`);
+  console.log(`  被駁回後回第 1 關（可刪除）：${rejectedToStage1.issueKey}`);
+  console.log(`  有附件草稿：${draftWithAttachment.issueKey}`);
+  console.log(`  無主管設定（送簽會友善失敗）：${noSupervisorDraft.issueKey}（請以「無主管設定人員」登入後於 Hotfix 建立工單頁按下「建立工單」）`);
+  console.log("\n=== 團隊（PM／RD／QA／OP 各團隊皆有 2 位 active 成員＋1 位已停用成員；「無關使用者」不屬於任何團隊）===");
+  console.log(`  ${pmTeam.name}／${rdTeam.name}／${qaTeam.name}／${opTeam.name}`);
+  console.log(`  ${emptyTeam.name}：空白無引用，可示範 Admin 永久刪除團隊（無法示範「停用團隊」——目前資料模型 Team 無 isActive 欄位，詳見最終報告）`);
   console.log("\n=== 可登入角色帳號（於 /login 頁面點選登入，無繞過授權的角色切換器）===");
   console.log(`  Admin：${admin.name}`);
   console.log(`  填單人：${pm.name}`);
@@ -363,6 +465,7 @@ async function main() {
   console.log(`  RD 執行人：${rdMember.name}／RD 主管：${rdLead.name}`);
   console.log(`  QA 執行人：${qaMember.name}／QA 主管：${qaLead.name}`);
   console.log(`  OP 執行人：${opMember.name}／OP 主管：${opLead.name}`);
+  console.log(`  無主管設定人員：${noSupervisorUser.name}（PM 團隊成員，但未設定直屬主管）`);
   console.log(`  無關使用者：${outsider.name}`);
 }
 
