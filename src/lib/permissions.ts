@@ -42,6 +42,10 @@ export type Capability =
   | "user.assignRole"
   | "user.removeRole"
   | "team.view"
+  // ---- RD/QA/OP 接單流程新增：Team.domain（RD/QA/OP 領域）設定能力。只決定「能不能設定
+  // Team 的領域分類」，跟「這個 Team 的領域是否讓某人取得接單資格」是兩件事——後者一律由
+  // 接單服務層依 TeamMember.membershipRole=LEAD 現場判斷，不受本能力影響。 ----
+  | "team.manageDomain"
   // ---- M2-A 新增：Workflow 定義／版本管理能力（只管「誰能編輯流程定義」，
   // 跟「誰能在某張 Issue 上執行某個 transition」（M2-B validateActorForCurrentStage
   // 現場判斷）是兩層，互不影響） ----
@@ -83,6 +87,8 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
     "user.assignRole",
     "user.removeRole",
     "team.view",
+    // ---- RD/QA/OP 接單流程新增 ----
+    "team.manageDomain",
     // ---- M2-A 新增：Workflow 定義／版本管理，Admin 全開 ----
     "workflow.view",
     "workflow.manageDraft",

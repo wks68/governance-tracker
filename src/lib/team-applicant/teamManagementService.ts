@@ -12,6 +12,7 @@
 import { prisma } from "../prisma";
 import { requireCapability } from "../permissions";
 import { writeAuditLog } from "../audit";
+import { isTeamDomain, type TeamDomain } from "../constants";
 
 export class TeamManagementValidationError extends Error {
   constructor(message: string) {
@@ -83,6 +84,55 @@ export async function updateTeam(input: { teamId: string; name: string; descript
       actorUserId: input.actorId,
     });
   }
+
+  return team;
+}
+
+// RD/QA/OP 接單流程新增：Team.domain（RD/QA/OP/BUSINESS/OTHER）設定入口。
+//
+// domain 是業務判斷（哪個 Team 實際負責 RD/QA/OP），不是程式可以從既有資料推導出來的事實——
+// 本函式只提供「設定」入口本身，不提供任何自動判斷／建議／依名稱字串猜測的邏輯。設定或清除
+// （傳入 null）domain 皆須明確填寫 reasonCode，並寫入 AuditLog，供稽核追溯「這個 Team 什麼
+// 時候被誰分類成什麼領域」。
+//
+// 授權沿用本檔案既有慣例：僅具備 "team.manageDomain" 能力者（目前僅 Admin）可呼叫，見
+// src/lib/permissions.ts。與 admin.full／team CRUD 分開宣告獨立能力，因為兩者語意不同——
+// 「能不能管理 Team CRUD」跟「能不能分類 Team 領域」是可以分開授權的兩件事，即使目前兩者的
+// 實際持有者集合相同。
+async function requireManageDomainCapability(actorId: string) {
+  try {
+    await requireCapability({ id: actorId }, "team.manageDomain");
+  } catch {
+    throw new TeamManagementAccessDeniedError('僅具備 "team.manageDomain" 能力者可設定 Team 領域分類');
+  }
+}
+
+export async function setTeamDomain(input: { teamId: string; domain: TeamDomain | null; actorId: string; reasonCode: string }) {
+  await requireManageDomainCapability(input.actorId);
+  if (!input.reasonCode?.trim()) throw new TeamManagementValidationError("reasonCode 不得為空");
+  if (input.domain !== null && !isTeamDomain(input.domain)) {
+    throw new TeamManagementValidationError("domain 不在合法值域（RD/QA/OP/BUSINESS/OTHER）");
+  }
+
+  const existing = await prisma.team.findUnique({ where: { id: input.teamId } });
+  if (!existing) throw new TeamManagementStateError("找不到此團隊");
+
+  if (existing.domain === input.domain) {
+    return existing;
+  }
+
+  const team = await prisma.team.update({ where: { id: input.teamId }, data: { domain: input.domain } });
+
+  await writeAuditLog({
+    entityType: "Team",
+    entityId: team.id,
+    actionType: "TeamDomainChanged",
+    summary: `設定團隊「${team.name}」領域分類：「${existing.domain ?? "（未分類）"}」→「${input.domain ?? "（未分類）"}」`,
+    actorUserId: input.actorId,
+    fromValue: existing.domain ?? undefined,
+    toValue: input.domain ?? undefined,
+    reasonCode: input.reasonCode,
+  });
 
   return team;
 }

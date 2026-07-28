@@ -124,6 +124,13 @@ model Team {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // ---- RD/QA/OP 接單流程新增：Team 領域正式判斷來源 ----
+  // RD / QA / OP / BUSINESS / OTHER；null＝尚未分類。既有 Team 一律維持 null，不得依名稱字串
+  // （例如 contains("RD")）猜測回填——domain 是業務判斷，只能由被授權者透過
+  // src/lib/teamLeadService.ts 的 setTeamDomain 明確逐筆設定。domain=null 的 Team 不得出現在
+  // 任何「可接單 RD/QA/OP 團隊」清單中（deny-by-default）。
+  domain String?
+
   members        TeamMember[]
   systemMappings SystemTeamMapping[]
   assignedIssues Issue[]             @relation("IssueAssignedTeam")
@@ -141,6 +148,8 @@ model Team {
   // ---- M2-B 新增：Issue 轉移前後 assignedTeamId 快照歷程 ----
   stageHistoryAssignedBefore IssueWorkflowStageHistory[] @relation("AssignedTeamBeforeHistory")
   stageHistoryAssignedAfter  IssueWorkflowStageHistory[] @relation("AssignedTeamAfterHistory")
+
+  @@index([domain])
 }
 
 // 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分

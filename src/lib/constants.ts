@@ -140,6 +140,15 @@ export function isSystemResponsibilityType(value: string): value is SystemRespon
   return (SYSTEM_RESPONSIBILITY_TYPES as readonly string[]).includes(value);
 }
 
+// RD/QA/OP 接單流程新增：Team.domain 值域（見 prisma/schema.prisma Team model 註解）。
+// 與 SYSTEM_RESPONSIBILITY_TYPES 刻意分開宣告——後者是「System＋Team 配對」的自動路由設定，
+// 語意上不是 Team 本身的固定屬性；Team.domain 才是 Team 本身領域的正式判斷來源，兩者不得混用。
+export const TEAM_DOMAINS = ["RD", "QA", "OP", "BUSINESS", "OTHER"] as const;
+export type TeamDomain = (typeof TEAM_DOMAINS)[number];
+export function isTeamDomain(value: string): value is TeamDomain {
+  return (TEAM_DOMAINS as readonly string[]).includes(value);
+}
+
 export const CHANGE_SUB_TYPES = ["QUARTERLY_RELEASE", "GENERAL_CHANGE"] as const;
 export type ChangeSubType = (typeof CHANGE_SUB_TYPES)[number];
 export function isChangeSubType(value: string): value is ChangeSubType {

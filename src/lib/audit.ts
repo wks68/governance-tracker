@@ -73,7 +73,9 @@ export type ActionType =
   | "TeamDeleted"
   | "IssueDeleted"
   | "IssueAdminPermanentDeleted"
-  | "IssueApplicantTeamReassigned";
+  | "IssueApplicantTeamReassigned"
+  // ---- RD/QA/OP 接單流程新增 ----
+  | "TeamDomainChanged";
 
 // M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation；
 // C1-B3 新增：UserRole；M2-A 新增：WorkflowDefinition／WorkflowVersion／WorkflowStage／
