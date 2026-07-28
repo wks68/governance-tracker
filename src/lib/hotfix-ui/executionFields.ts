@@ -9,7 +9,7 @@
 
 import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
-import { evaluateActorEligibilityForStage } from "../workflowExecutionService";
+import { evaluateActorEligibilityForStage, assertActorIsCurrentExecutor } from "../workflowExecutionService";
 import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError, WorkflowExecutionValidationError } from "../workflow-execution/types";
 
 export interface ExecutionFieldDef {
@@ -92,6 +92,9 @@ export async function saveExecutionFieldValues(input: { issueId: string; actorId
   if (!eligibility.eligible) {
     throw new WorkflowExecutionAccessDeniedError(`不具備在關卡「${stage.stageKey}」填寫欄位的資格：${eligibility.reasons.join("; ")}`);
   }
+  // RD/QA/OP 接單流程新增：團隊成員身分只是必要條件，真正的責任人是承接團隊 Lead 指派的
+  // 執行人本人——其他團隊成員即使身分合格，仍不得填寫。
+  await assertActorIsCurrentExecutor(prisma, input.issueId, input.actorId, stage.stageKey);
 
   const allowedKeys = new Set(defs.map((d) => d.key));
   const entries = Object.entries(input.values).filter(([k]) => allowedKeys.has(k));

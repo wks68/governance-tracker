@@ -3,7 +3,7 @@
 // 現場重新解析（本檔案算出的 canAct 只決定要不要顯示表單／按鈕，不是信任邊界本身）。
 
 import { prisma } from "../prisma";
-import { getIssueWorkflowRuntime, evaluateActorEligibilityForStage, type IssueWorkflowRuntime } from "../workflowExecutionService";
+import { getIssueWorkflowRuntime, evaluateActorEligibilityForStage, getCurrentExecutorUserId, type IssueWorkflowRuntime } from "../workflowExecutionService";
 import { nineStageIndexOfStageKey, routeForStageKey, isCancelledStageKey } from "./nineStage";
 import { HOTFIX_PRIORITY_FIELD_KEY } from "./priority";
 import type { TicketBasicInfoData } from "@/components/hotfix-nine-stage/TicketBasicInfo";
@@ -81,7 +81,16 @@ export async function isActorResponsibleForExecutionStage(ctx: HotfixPageContext
     { assignedTeamId: ctx.issue.assignedTeamId },
     { requiredExecutionRole: stage.requiredExecutionRole, requiredMembershipRole: stage.requiredMembershipRole, stageKey: stage.stageKey },
   );
-  return result.eligible;
+  if (!result.eligible) return false;
+
+  // RD/QA/OP 接單流程新增：團隊成員身分只是必要條件，真正的責任人是承接團隊 Lead 指派的
+  // 執行人本人——尚未指派執行人時（getCurrentExecutorUserId 回傳 null）一律視為非責任人，
+  // 其他團隊成員即使身分合格，仍只能唯讀。僅供 UI 顯示判斷，不構成授權邊界（真正的邊界見
+  // src/lib/workflow-execution/assignmentService.ts 的 assertActorIsCurrentExecutor，
+  // 由實際寫入入口重新驗證）。
+  const executorUserId = await getCurrentExecutorUserId(prisma, ctx.issue.id, stage.stageKey);
+  if (executorUserId === null) return false;
+  return executorUserId === ctx.actor.id;
 }
 
 export interface ApprovalReviewViewData {

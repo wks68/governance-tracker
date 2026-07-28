@@ -17,7 +17,29 @@ export {
   type AvailableTransitionPreview,
   type ValidateTransitionResult,
 } from "./transitionService";
-export { setIssueAssignedTeamAtTriage } from "./assignmentService";
+export {
+  setIssueAssignedTeamAtTriage,
+  listAssignableMembers,
+  assignIssueExecutor,
+  reassignIssueExecutor,
+  getCurrentExecutorUserId,
+  assertActorIsCurrentExecutor,
+  type AssignableMemberInfo,
+  type AssignableMembersPreview,
+  type AssignIssueExecutorInput,
+  type ReassignIssueExecutorInput,
+} from "./assignmentService";
+export {
+  listClaimableTeamsForStage,
+  evaluateClaimEligibility,
+  claimIssueForTeam,
+  type ClaimableTeamInfo,
+  type ClaimableStagePreview,
+  type ClaimEligibilityResult,
+  type ClaimIssueForTeamInput,
+} from "./claimService";
+export { getClaimDomainForStageKey, getExecutorDomainForStageKey } from "./hotfixDomainMap";
+export { evaluateCurrentActorTask, type ActorTaskSummary, type IssueActionKind } from "./responsibilityService";
 export { getIssueWorkflowHistory } from "./historyService";
 export { getIssueWorkflowRuntime, recordStageRequirementResult, type IssueWorkflowRuntime } from "./queries";
 export { evaluateWorkflowStageRequirements, submitStageFieldValue, submitStageRiskCheckAnswer } from "./requirementService";

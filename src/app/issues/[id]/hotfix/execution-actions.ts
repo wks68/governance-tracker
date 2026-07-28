@@ -8,7 +8,8 @@
 import { revalidatePath } from "next/cache";
 import { requireCurrentUser } from "@/lib/auth";
 import { saveExecutionFieldValues, loadExecutionFieldValues, missingRequiredFields, executionFieldsForStageKey } from "@/lib/hotfix-ui/executionFields";
-import { getIssueWorkflowRuntime, getAvailableIssueTransitions, executeIssueTransition } from "@/lib/workflowExecutionService";
+import { getIssueWorkflowRuntime, getAvailableIssueTransitions, executeIssueTransition, assertActorIsCurrentExecutor } from "@/lib/workflowExecutionService";
+import { prisma } from "@/lib/prisma";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
 function readFieldValues(formData: FormData, stageKey: string): Record<string, string> {
@@ -74,6 +75,14 @@ export async function advanceHotfixOpDeploymentAction(formData: FormData): Promi
   const actor = await requireCurrentUser();
   const issueId = String(formData.get("issueId") ?? "");
   try {
+    const issue = await prisma.issue.findUnique({ where: { id: issueId } });
+    if (!issue?.currentWorkflowStageId) {
+      return toActionResult(new Error("此工單目前無法執行此操作"));
+    }
+    const stage = await prisma.workflowStage.findUniqueOrThrow({ where: { id: issue.currentWorkflowStageId } });
+    // RD/QA/OP 接單流程新增：其他 OP 團隊成員即使身分合格，仍不得代替指派執行人推進此關卡。
+    await assertActorIsCurrentExecutor(prisma, issueId, actor.id, stage.stageKey);
+
     const transitions = await getAvailableIssueTransitions(issueId, actor.id);
     const target = transitions.find((t) => t.transition.transitionType === "FORWARD");
     if (!target) {
