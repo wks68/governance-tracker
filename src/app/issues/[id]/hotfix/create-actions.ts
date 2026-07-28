@@ -14,7 +14,7 @@ import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult"
 
 function readDraftFields(formData: FormData): Partial<HotfixDraftFields> {
   const fields: Partial<HotfixDraftFields> = {};
-  for (const key of ["title", "description", "systemName", "environment", "riskLevel", "dueDate", "hotfixPriority"] as const) {
+  for (const key of ["title", "description", "systemName", "environment", "riskLevel", "dueDate", "hotfixPriority", "teamId", "applicantId"] as const) {
     const v = formData.get(key);
     if (v !== null) fields[key] = String(v);
   }
@@ -50,6 +50,8 @@ export async function submitHotfixDraftAction(formData: FormData): Promise<Actio
       riskLevel: fields.riskLevel ?? issue.riskLevel,
       dueDate: fields.dueDate ?? (issue.dueDate ? issue.dueDate.toISOString().slice(0, 10) : ""),
       hotfixPriority: fields.hotfixPriority ?? priorityRow?.fieldValue ?? "",
+      teamId: issue.assignedTeamId ?? "",
+      applicantId: issue.reporterUserId ?? "",
     };
     const missing = missingDraftFields(merged);
     if (missing.length > 0) {

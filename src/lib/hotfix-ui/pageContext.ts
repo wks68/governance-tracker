@@ -54,9 +54,11 @@ export async function loadHotfixPageContext(issueId: string, actor: User, allowe
   }
 
   const hotfixPriority = await loadHotfixPriority(issueId);
+  const team = issue.assignedTeamId ? await prisma.team.findUnique({ where: { id: issue.assignedTeamId } }) : null;
   const ticketBasicInfo: TicketBasicInfoData = {
     issueKey: issue.issueKey,
     reporterName: issue.reporter,
+    teamName: team?.name ?? null,
     environment: issue.environment,
     title: issue.title,
     description: issue.description,

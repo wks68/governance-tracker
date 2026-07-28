@@ -3,6 +3,8 @@
 
 import NineStageProgressBar from "./NineStageProgressBar";
 import TicketBasicInfo, { type TicketBasicInfoData } from "./TicketBasicInfo";
+import HotfixHeaderActions from "./HotfixHeaderActions";
+import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
 
 export default function HotfixStageShell({
   title,
@@ -11,6 +13,7 @@ export default function HotfixStageShell({
   cancelled,
   ticketBasicInfo,
   backHref,
+  ctx,
   children,
 }: {
   title: string;
@@ -19,16 +22,21 @@ export default function HotfixStageShell({
   cancelled: boolean;
   ticketBasicInfo: TicketBasicInfoData;
   backHref: string;
+  /** 提供時會在標題下方顯示取消／刪除／Admin 改派等動作列，不提供則不顯示（唯讀情境）。 */
+  ctx?: HotfixPageContext;
   children: React.ReactNode;
 }) {
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
-      <div>
-        <a href={backHref} className="text-xs text-gray-400 hover:text-primary hover:underline">
-          ← 回工單詳情
-        </a>
-        <h1 className="mt-1 text-xl font-bold text-gray-900">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-gray-500">{subtitle}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <a href={backHref} className="text-xs text-gray-400 hover:text-primary hover:underline">
+            ← 回工單詳情
+          </a>
+          <h1 className="mt-1 text-xl font-bold text-gray-900">{title}</h1>
+          {subtitle && <p className="mt-0.5 text-sm text-gray-500">{subtitle}</p>}
+        </div>
+        {ctx && <HotfixHeaderActions ctx={ctx} />}
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-4">

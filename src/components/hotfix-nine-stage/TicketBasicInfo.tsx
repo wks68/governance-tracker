@@ -14,6 +14,7 @@ const ARROW_GLYPH: Record<string, string> = {
 export interface TicketBasicInfoData {
   issueKey: string;
   reporterName: string;
+  teamName: string | null;
   environment: string;
   title: string;
   description: string;
@@ -39,7 +40,8 @@ export default function TicketBasicInfo({ data }: { data: TicketBasicInfoData })
       <h2 className="text-sm font-semibold text-gray-800">工單基本資訊</h2>
       <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="工單編號">{data.issueKey}</Field>
-        <Field label="填單人">{data.reporterName || "（未指定）"}</Field>
+        <Field label="申請人">{data.reporterName || "（未指定）"}</Field>
+        <Field label="團隊名稱">{data.teamName || "（未指定）"}</Field>
         <Field label="環境">{data.environment || "（未填寫）"}</Field>
         <Field label="系統名稱">{data.systemName || "（未填寫）"}</Field>
         <Field label="風險等級">{data.riskLevel || "（未填寫）"}</Field>

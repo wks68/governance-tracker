@@ -7,6 +7,7 @@ import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
 import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError, WorkflowExecutionValidationError } from "../workflow-execution/types";
 import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./priority";
+import { assertActorCanUseTeam, assertValidApplicantForTeam } from "../team-applicant/teamApplicantService";
 
 export interface HotfixDraftFields {
   title: string;
@@ -16,9 +17,21 @@ export interface HotfixDraftFields {
   riskLevel: string;
   dueDate: string; // yyyy-mm-dd or ""
   hotfixPriority: string;
+  teamId: string;
+  applicantId: string;
 }
 
-const REQUIRED_KEYS: (keyof HotfixDraftFields)[] = ["title", "description", "systemName", "environment", "riskLevel", "dueDate", "hotfixPriority"];
+const REQUIRED_KEYS: (keyof HotfixDraftFields)[] = [
+  "title",
+  "description",
+  "systemName",
+  "environment",
+  "riskLevel",
+  "dueDate",
+  "hotfixPriority",
+  "teamId",
+  "applicantId",
+];
 
 export function missingDraftFields(fields: HotfixDraftFields): string[] {
   const labels: Record<keyof HotfixDraftFields, string> = {
@@ -29,6 +42,8 @@ export function missingDraftFields(fields: HotfixDraftFields): string[] {
     riskLevel: "風險等級",
     dueDate: "預計完成日",
     hotfixPriority: "Hotfix 工單優先級",
+    teamId: "團隊名稱",
+    applicantId: "申請人",
   };
   return REQUIRED_KEYS.filter((k) => !fields[k]?.trim()).map((k) => labels[k]);
 }
@@ -55,6 +70,19 @@ export async function saveHotfixDraft(input: { issueId: string; actorId: string;
     throw new WorkflowExecutionValidationError(["hotfixPriority 不在合法值域"]);
   }
 
+  // 團隊／申請人：切換團隊時必須重新選擇該團隊的申請人，一律伺服器端重新驗證（不信任前端
+  // 下拉選單結果）。暫存階段只更新欄位，不建立／不觸碰 ApprovalRecord，不推進關卡。
+  let newTeamId: string | undefined;
+  let newApplicantId: string | undefined;
+  let newApplicantName: string | undefined;
+  if (input.fields.teamId !== undefined && input.fields.applicantId !== undefined && input.fields.teamId !== "" && input.fields.applicantId !== "") {
+    await assertActorCanUseTeam(input.actorId, input.fields.teamId);
+    const applicant = await assertValidApplicantForTeam(input.fields.teamId, input.fields.applicantId);
+    newTeamId = input.fields.teamId;
+    newApplicantId = applicant.id;
+    newApplicantName = applicant.name;
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.issue.update({
       where: { id: input.issueId },
@@ -65,6 +93,8 @@ export async function saveHotfixDraft(input: { issueId: string; actorId: string;
         ...(input.fields.environment !== undefined ? { environment: input.fields.environment } : {}),
         ...(input.fields.riskLevel !== undefined ? { riskLevel: input.fields.riskLevel } : {}),
         ...(input.fields.dueDate !== undefined ? { dueDate: input.fields.dueDate ? new Date(input.fields.dueDate) : null } : {}),
+        ...(newTeamId !== undefined ? { assignedTeamId: newTeamId } : {}),
+        ...(newApplicantId !== undefined ? { reporterUserId: newApplicantId, reporter: newApplicantName } : {}),
       },
     });
     if (input.fields.hotfixPriority !== undefined && input.fields.hotfixPriority !== "") {

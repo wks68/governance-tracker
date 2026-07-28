@@ -6,6 +6,8 @@ import { ActionErrorText, ActionSuccessText } from "@/components/ActionResultBan
 import { saveHotfixDraftAction, submitHotfixDraftAction } from "../create-actions";
 import { ENVIRONMENTS, RISK_LEVELS } from "@/lib/constants";
 import type { HotfixPriorityDef } from "@/lib/hotfix-ui/priority";
+import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSelector";
+import type { TeamOption, ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -18,14 +20,31 @@ interface DraftValues {
   riskLevel: string;
   dueDate: string;
   hotfixPriority: string;
+  teamId: string;
+  applicantId: string;
 }
 
-export default function HotfixDraftForm({ issueId, initialValues, priorities }: { issueId: string; initialValues: DraftValues; priorities: readonly HotfixPriorityDef[] }) {
+export default function HotfixDraftForm({
+  issueId,
+  initialValues,
+  priorities,
+  teams,
+  initialApplicantName,
+}: {
+  issueId: string;
+  initialValues: DraftValues;
+  priorities: readonly HotfixPriorityDef[];
+  teams: TeamOption[];
+  initialApplicantName: string;
+}) {
   const router = useRouter();
   const [values, setValues] = useState<DraftValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const initialApplicants: ApplicantOption[] | undefined =
+    initialValues.teamId && initialValues.applicantId ? [{ id: initialValues.applicantId, name: initialApplicantName, roleLabel: "" }] : undefined;
 
   function set<K extends keyof DraftValues>(key: K, v: string) {
     setValues((prev) => ({ ...prev, [key]: v }));
@@ -58,6 +77,15 @@ export default function HotfixDraftForm({ issueId, initialValues, priorities }: 
       <ActionErrorText message={error} />
       <ActionSuccessText message={success} />
       <div className="mt-3 space-y-4">
+        <TeamApplicantSelector
+          teams={teams}
+          teamId={values.teamId}
+          applicantId={values.applicantId}
+          onTeamIdChange={(v) => set("teamId", v)}
+          onApplicantIdChange={(v) => set("applicantId", v)}
+          initialApplicants={initialApplicants}
+          disabled={isPending}
+        />
         <div>
           <label className={labelCls}>
             標題<span className="ml-1 text-danger">*</span>

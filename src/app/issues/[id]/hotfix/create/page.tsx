@@ -3,6 +3,7 @@ import { requireCurrentUser } from "@/lib/auth";
 import { loadHotfixPageContext, isActorOriginalReporter, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { HOTFIX_PRIORITIES } from "@/lib/hotfix-ui/priority";
+import { listCreatableTeamsForActor } from "@/lib/team-applicant/teamApplicantService";
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import HotfixDraftForm from "./HotfixDraftForm";
@@ -20,10 +21,13 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
   if (ctx.redirectTo) redirect(ctx.redirectTo);
 
   const isResponsible = isActorOriginalReporter(ctx);
-  const attachments = await listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: ctx.runtime.currentStage.stageKey });
+  const [attachments, teams] = await Promise.all([
+    listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: ctx.runtime.currentStage.stageKey }),
+    isResponsible ? listCreatableTeamsForActor(actor.id) : Promise.resolve([]),
+  ]);
 
   return (
-    <HotfixStageShell title="Hotfix 建立工單" subtitle="填寫工單基本資訊後送出，將轉交申請人直屬主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`}>
+    <HotfixStageShell title="Hotfix 建立工單" subtitle="填寫工單基本資訊後送出，將轉交申請人直屬主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
       {isResponsible ? (
         <HotfixDraftForm
           issueId={params.id}
@@ -35,8 +39,12 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
             riskLevel: ctx.ticketBasicInfo.riskLevel,
             dueDate: ctx.ticketBasicInfo.dueDate ? ctx.ticketBasicInfo.dueDate.slice(0, 10) : "",
             hotfixPriority: ctx.ticketBasicInfo.hotfixPriority ?? "",
+            teamId: ctx.issue.assignedTeamId ?? "",
+            applicantId: ctx.issue.reporterUserId ?? "",
           }}
           priorities={HOTFIX_PRIORITIES}
+          teams={teams}
+          initialApplicantName={ctx.ticketBasicInfo.reporterName}
         />
       ) : (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
