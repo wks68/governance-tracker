@@ -31,6 +31,15 @@ export default function FilterBar({ options }: { options: FilterOptions }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
+      {/* RD/QA/OP 接單流程新增：快速篩選（僅新流程 Hotfix 工單納入計算，見 issues/page.tsx） */}
+      <select className={sel} defaultValue={searchParams.get("quick") ?? ""} onChange={(e) => update("quick", e.target.value)}>
+        <option value="">快速篩選：全部可見工單</option>
+        <option value="mine">待我處理</option>
+        <option value="myApprovals">待我核准</option>
+        <option value="claimable">待團隊接單</option>
+        <option value="myTeam">我團隊處理中</option>
+      </select>
+
       <select className={sel} defaultValue={searchParams.get("issueType") ?? ""} onChange={(e) => update("issueType", e.target.value)}>
         <option value="">工單類型：全部</option>
         {ISSUE_TYPES.map((t) => (

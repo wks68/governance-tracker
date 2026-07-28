@@ -4,6 +4,8 @@ import { isClosed, statusLabel } from "@/lib/workflow";
 import FilterBar from "@/components/FilterBar";
 import IssueTable, { IssueRow } from "@/components/IssueTable";
 import { requireCurrentUser } from "@/lib/auth";
+import { evaluateCurrentActorTask } from "@/lib/workflowExecutionService";
+import { routeForStageKey } from "@/lib/hotfix-ui/nineStage";
 
 export const dynamic = "force-dynamic";
 
@@ -27,11 +29,45 @@ function toRow(issue: any): IssueRow {
     nextStep: issue.nextStep,
     alertLevel: issue.alertLevel,
     firstResponseAt: issue.firstResponseAt ? issue.firstResponseAt.toISOString() : null,
+    stageEnteredAt: issue.stageEnteredAt ? issue.stageEnteredAt.toISOString() : null,
   };
 }
 
+// RD/QA/OP 接單流程新增：每一筆新流程 Hotfix 工單，額外算出「業務子狀態／承接團隊／
+// 執行人／操作按鈕」——工單清單不得再直接顯示技術 stageKey（見
+// src/lib/workflow-execution/responsibilityService.ts）。只對「issueType=Hotfix 且已啟動
+// 新版流程引擎」的工單計算，其餘工單類型／舊流程工單完全維持既有 workflowStatus／
+// waitingRole 顯示，不受影響。
+async function enrichHotfixRows(issues: any[], actorId: string): Promise<Map<string, Partial<IssueRow> & { quickFlags: { mine: boolean; myApproval: boolean; claimable: boolean } }>> {
+  const targets = issues.filter((i) => i.issueType === "Hotfix" && i.workflowVersionId && i.currentWorkflowStageId);
+  const entries = await Promise.all(
+    targets.map(async (issue) => {
+      const task = await evaluateCurrentActorTask(issue.id, actorId);
+      if (!task) return null;
+      const actionHref = task.action === "VIEW_ONLY" ? undefined : routeForStageKey(issue.id, task.stageKey) ?? undefined;
+      return [
+        issue.id,
+        {
+          workflowStatus: task.businessStatusLabel,
+          waitingRole: task.waitingRoleLabel,
+          assignedTeamName: task.assignedTeamName ?? undefined,
+          executorName: task.executorName ?? undefined,
+          actionKind: task.action === "VIEW_ONLY" ? undefined : task.action,
+          actionHref,
+          quickFlags: {
+            mine: task.action === "ENTER_WORK" || task.action === "CONFIRM_CLOSE",
+            myApproval: task.action === "APPROVE",
+            claimable: task.isClaimableStage,
+          },
+        },
+      ] as const;
+    }),
+  );
+  return new Map(entries.filter((e): e is NonNullable<typeof e> => e !== null));
+}
+
 export default async function IssuesPage({ searchParams }: { searchParams: Record<string, string | undefined> }) {
-  await requireCurrentUser();
+  const actor = await requireCurrentUser();
   const allIssues = await prisma.issue.findMany({ orderBy: { createdAt: "desc" } });
   const now = Date.now();
   const isOverdue = (i: (typeof allIssues)[number]) =>
@@ -39,6 +75,11 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
 
   const systemNames = Array.from(new Set(allIssues.map((i) => i.systemName).filter(Boolean))).sort();
   const owners = Array.from(new Set(allIssues.map((i) => i.ownerName).filter(Boolean))).sort();
+
+  const [hotfixEnrichment, myActiveTeamIds] = await Promise.all([
+    enrichHotfixRows(allIssues, actor.id),
+    prisma.teamMember.findMany({ where: { userId: actor.id, isActive: true }, select: { teamId: true } }).then((rows) => new Set(rows.map((r) => r.teamId))),
+  ]);
 
   let filtered = allIssues;
   if (searchParams.issueType) filtered = filtered.filter((i) => i.issueType === searchParams.issueType);
@@ -49,6 +90,22 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
   if (searchParams.waitingRole) filtered = filtered.filter((i) => i.waitingRole === searchParams.waitingRole);
   if (searchParams.riskLevel) filtered = filtered.filter((i) => i.riskLevel === searchParams.riskLevel);
   if (searchParams.overdue === "1") filtered = filtered.filter(isOverdue);
+
+  if (searchParams.quick === "mine") {
+    filtered = filtered.filter((i) => hotfixEnrichment.get(i.id)?.quickFlags.mine);
+  } else if (searchParams.quick === "myApprovals") {
+    filtered = filtered.filter((i) => hotfixEnrichment.get(i.id)?.quickFlags.myApproval);
+  } else if (searchParams.quick === "claimable") {
+    filtered = filtered.filter((i) => hotfixEnrichment.get(i.id)?.quickFlags.claimable);
+  } else if (searchParams.quick === "myTeam") {
+    filtered = filtered.filter((i) => !!i.assignedTeamId && myActiveTeamIds.has(i.assignedTeamId));
+  }
+
+  const rows = filtered.map((issue) => {
+    const row = toRow(issue);
+    const enrichment = hotfixEnrichment.get(issue.id);
+    return enrichment ? { ...row, ...enrichment } : row;
+  });
 
   return (
     <div className="space-y-4">
@@ -67,7 +124,7 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
 
       <FilterBar options={{ systemNames, owners }} />
 
-      <IssueTable issues={filtered.map(toRow)} />
+      <IssueTable issues={rows} />
     </div>
   );
 }
