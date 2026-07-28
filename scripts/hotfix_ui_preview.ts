@@ -19,12 +19,22 @@ import "./lib/assertSafeTestDatabase";
 import { prisma } from "../src/lib/prisma";
 import { decideApprovalRecord } from "../src/lib/approvalService";
 import { buildHotfixWorkflowV1 } from "./lib/buildHotfixWorkflowV1";
-import { startIssueWorkflow, executeIssueTransition, returnIssueToStage, cancelIssueWorkflow, setIssueAssignedTeamAtTriage, submitStageRiskCheckAnswer } from "../src/lib/workflowExecutionService";
+import {
+  startIssueWorkflow,
+  executeIssueTransition,
+  returnIssueToStage,
+  cancelIssueWorkflow,
+  submitStageRiskCheckAnswer,
+  claimIssueForTeam,
+  assignIssueExecutor,
+} from "../src/lib/workflowExecutionService";
 import { saveExecutionFieldValues } from "../src/lib/hotfix-ui/executionFields";
 import { saveHotfixDraft } from "../src/lib/hotfix-ui/draftService";
 import { saveClosureSummary } from "../src/lib/hotfix-ui/closureService";
 import { uploadHotfixAttachment } from "../src/lib/hotfix-ui/attachmentService";
 import { createIssueForActor } from "../src/lib/issueCreation";
+import { setTeamDomain } from "../src/lib/team-applicant/teamManagementService";
+import type { TeamDomain } from "../src/lib/constants";
 
 const RUN_TAG = "hfui9";
 
@@ -35,6 +45,13 @@ async function createUser(name: string, role: string, department: string) {
 }
 async function createTeam(name: string) {
   return prisma.team.create({ data: { name } });
+}
+// RD/QA/OP 接單流程新增：建立團隊並明確設定領域分類（Team.domain），供 claimService 的
+// 「合格接單團隊」判斷使用。domain 一律由這裡明確指定，不依團隊名稱猜測。
+async function createTeamWithDomain(name: string, domain: TeamDomain, actorId: string) {
+  const team = await createTeam(name);
+  await setTeamDomain({ teamId: team.id, domain, actorId, reasonCode: "PREVIEW_CLASSIFY_TEAM" });
+  return team;
 }
 async function addMember(teamId: string, userId: string, membershipRole: "MEMBER" | "LEAD") {
   await prisma.teamMember.create({ data: { teamId, userId, membershipRole, isActive: true } });
@@ -131,12 +148,9 @@ function buildSteps(ctx: Ctx, issue: { id: string }) {
       await executeIssueTransition({ issueId: issue.id, transitionId: t.id, actorId: pm.id, reasonCode: "PREVIEW" });
     },
     async () => {
-      // 2: pendingRdTriage -> pendingRdClaim -> rdInProgress
-      await setIssueAssignedTeamAtTriage({ issueId: issue.id, teamId: rdTeam.id, actorId: supervisor.id, reasonCode: "PREVIEW_ASSIGN_RD" });
-      const assignT = await findTransition(hotfix.version.id, s.pendingRdTriage, "rdAssign");
-      await executeIssueTransition({ issueId: issue.id, transitionId: assignT.id, actorId: supervisor.id, reasonCode: "PREVIEW" });
-      const claimT = await findTransition(hotfix.version.id, s.pendingRdClaim, "rdClaim");
-      await executeIssueTransition({ issueId: issue.id, transitionId: claimT.id, actorId: rdMember.id, reasonCode: "PREVIEW" });
+      // 2: pendingRdTriage -> pendingRdClaim -> rdInProgress（RD Lead 接單＋指派執行人）
+      await claimIssueForTeam({ issueId: issue.id, teamId: rdTeam.id, actorId: rdLead.id, reasonCode: "PREVIEW_RD_CLAIM" });
+      await assignIssueExecutor({ issueId: issue.id, executorUserId: rdMember.id, actorId: rdLead.id, reasonCode: "PREVIEW_RD_ASSIGN" });
     },
     async () => {
       // 3: rdInProgress -> pendingRdLeadApproval
@@ -157,12 +171,9 @@ function buildSteps(ctx: Ctx, issue: { id: string }) {
       await executeIssueTransition({ issueId: issue.id, transitionId: t.id, actorId: rdLead.id, reasonCode: "PREVIEW" });
     },
     async () => {
-      // 5: pendingQaTriage -> pendingQaClaim -> qaInProgress
-      await setIssueAssignedTeamAtTriage({ issueId: issue.id, teamId: qaTeam.id, actorId: supervisor.id, reasonCode: "PREVIEW_ASSIGN_QA" });
-      const assignT = await findTransition(hotfix.version.id, s.pendingQaTriage, "qaAssign");
-      await executeIssueTransition({ issueId: issue.id, transitionId: assignT.id, actorId: supervisor.id, reasonCode: "PREVIEW" });
-      const claimT = await findTransition(hotfix.version.id, s.pendingQaClaim, "qaClaim");
-      await executeIssueTransition({ issueId: issue.id, transitionId: claimT.id, actorId: qaMember.id, reasonCode: "PREVIEW" });
+      // 5: pendingQaTriage -> pendingQaClaim -> qaInProgress（QA Lead 接單＋指派執行人）
+      await claimIssueForTeam({ issueId: issue.id, teamId: qaTeam.id, actorId: qaLead.id, reasonCode: "PREVIEW_QA_CLAIM" });
+      await assignIssueExecutor({ issueId: issue.id, executorUserId: qaMember.id, actorId: qaLead.id, reasonCode: "PREVIEW_QA_ASSIGN" });
     },
     async () => {
       // 6: qaInProgress -> pendingQaLeadApproval
@@ -183,12 +194,9 @@ function buildSteps(ctx: Ctx, issue: { id: string }) {
       await executeIssueTransition({ issueId: issue.id, transitionId: t.id, actorId: qaLead.id, reasonCode: "PREVIEW" });
     },
     async () => {
-      // 8: pendingOpTriage -> pendingOpClaim -> opPreparing
-      await setIssueAssignedTeamAtTriage({ issueId: issue.id, teamId: opTeam.id, actorId: supervisor.id, reasonCode: "PREVIEW_ASSIGN_OP" });
-      const assignT = await findTransition(hotfix.version.id, s.pendingOpTriage, "opAssign");
-      await executeIssueTransition({ issueId: issue.id, transitionId: assignT.id, actorId: supervisor.id, reasonCode: "PREVIEW" });
-      const claimT = await findTransition(hotfix.version.id, s.pendingOpClaim, "opClaim");
-      await executeIssueTransition({ issueId: issue.id, transitionId: claimT.id, actorId: opMember.id, reasonCode: "PREVIEW" });
+      // 8: pendingOpTriage -> pendingOpClaim -> opPreparing（OP Lead 接單＋指派執行人）
+      await claimIssueForTeam({ issueId: issue.id, teamId: opTeam.id, actorId: opLead.id, reasonCode: "PREVIEW_OP_CLAIM" });
+      await assignIssueExecutor({ issueId: issue.id, executorUserId: opMember.id, actorId: opLead.id, reasonCode: "PREVIEW_OP_ASSIGN" });
     },
     async () => {
       // 9: opPreparing -> pendingDeploymentApproval（既有 WorkflowStageRequirement 要求此關卡
@@ -259,7 +267,7 @@ async function main() {
     data: { userId: pm.id, supervisorUserId: supervisor.id, validFrom: new Date(Date.now() - 86_400_000), isPrimary: true, isActive: true, createdByUserId: admin.id },
   });
 
-  const rdTeam = await createTeam("RD 維運團隊");
+  const rdTeam = await createTeamWithDomain("RD 維運團隊", "RD", admin.id);
   const rdMember = await createUser("RD執行人", "RD", "研發處");
   const rdLead = await createUser("RD主管", "RD", "研發處");
   await addMember(rdTeam.id, rdMember.id, "MEMBER");
@@ -267,7 +275,7 @@ async function main() {
   const rdInactive = await createUser("RD離職人員", "RD", "研發處");
   await prisma.teamMember.create({ data: { teamId: rdTeam.id, userId: rdInactive.id, membershipRole: "MEMBER", isActive: false } });
 
-  const qaTeam = await createTeam("QA 驗證團隊");
+  const qaTeam = await createTeamWithDomain("QA 驗證團隊", "QA", admin.id);
   const qaMember = await createUser("QA執行人", "QA", "品保處");
   const qaLead = await createUser("QA主管", "QA", "品保處");
   await addMember(qaTeam.id, qaMember.id, "MEMBER");
@@ -275,7 +283,7 @@ async function main() {
   const qaInactive = await createUser("QA離職人員", "QA", "品保處");
   await prisma.teamMember.create({ data: { teamId: qaTeam.id, userId: qaInactive.id, membershipRole: "MEMBER", isActive: false } });
 
-  const opTeam = await createTeam("OP 部署團隊");
+  const opTeam = await createTeamWithDomain("OP 部署團隊", "OP", admin.id);
   const opMember = await createUser("OP執行人", "OP", "維運處");
   const opLead = await createUser("OP主管", "OP", "維運處");
   await addMember(opTeam.id, opMember.id, "MEMBER");
@@ -284,7 +292,7 @@ async function main() {
   await prisma.teamMember.create({ data: { teamId: opTeam.id, userId: opInactive.id, membershipRole: "MEMBER", isActive: false } });
 
   // PM 團隊：申請人（填單人）與其主管所屬團隊，供「建立工單」頁團隊/申請人連動示範使用。
-  const pmTeam = await createTeam("PM 團隊");
+  const pmTeam = await createTeamWithDomain("PM 團隊", "BUSINESS", admin.id);
   await addMember(pmTeam.id, pm.id, "MEMBER");
   await addMember(pmTeam.id, supervisor.id, "LEAD");
   const pmInactive = await createUser("PM離職人員", "PM", "業務處");
@@ -432,7 +440,159 @@ async function main() {
     buildCreateFormData({ title: "[Hotfix][MyDMS][無主管示範] 定期報表寄送失敗", description: "示範申請人尚未設定直屬主管時，送簽的友善失敗訊息。", teamId: pmTeam.id, applicantId: noSupervisorUser.id }),
   );
 
-  console.log("[3/3] 完成。");
+  console.log("[3/4] 建立 RD／QA／OP 接單／指派示範情境（新版 claimService／assignmentService，見 claim-actions.ts）...");
+
+  // ---- RD 領域：IAD／AAD 兩個可競爭接單的 RD 團隊 ----
+  const iadTeam = await createTeamWithDomain("IAD", "RD", admin.id);
+  const iadLead = await createUser("IAD主管", "RD", "研發處");
+  const iadMemberA = await createUser("IAD工程師A", "RD", "研發處");
+  const iadMemberB = await createUser("IAD工程師B", "RD", "研發處");
+  await addMember(iadTeam.id, iadLead.id, "LEAD");
+  await addMember(iadTeam.id, iadMemberA.id, "MEMBER");
+  await addMember(iadTeam.id, iadMemberB.id, "MEMBER");
+
+  const aadTeam = await createTeamWithDomain("AAD", "RD", admin.id);
+  const aadLead = await createUser("AAD主管", "RD", "研發處");
+  const aadMemberA = await createUser("AAD工程師A", "RD", "研發處");
+  const aadMemberB = await createUser("AAD工程師B", "RD", "研發處");
+  await addMember(aadTeam.id, aadLead.id, "LEAD");
+  await addMember(aadTeam.id, aadMemberA.id, "MEMBER");
+  await addMember(aadTeam.id, aadMemberB.id, "MEMBER");
+
+  // 一張等待 RD 團隊接單工單（IAD、AAD 皆可見「待接單」，皆可按下接單）。
+  const rdClaimPending = await createHotfixIssue("RD-CLAIM-PENDING", "會員等級升級通知未發送", "會員消費達等級門檻後，升級通知信件未如預期發送。", ctx);
+  await advanceTo(ctx, rdClaimPending, 1); // pendingBusinessApproval -> pendingRdTriage
+
+  // 一張已由 IAD 承接、AAD 只能看到承接狀態的工單。
+  const rdClaimedByIad = await createHotfixIssue("RD-CLAIMED-BY-IAD", "商品搜尋權重排序異常", "商品搜尋結果排序權重計算錯誤，熱門商品未優先顯示。", ctx);
+  await advanceTo(ctx, rdClaimedByIad, 1);
+  await claimIssueForTeam({ issueId: rdClaimedByIad.id, teamId: iadTeam.id, actorId: iadLead.id, reasonCode: "PREVIEW_IAD_CLAIM" });
+
+  // 一張 IAD 已接單、待指派工單。
+  const rdPendingAssign = await createHotfixIssue("RD-PENDING-ASSIGN", "優惠券核銷次數未歸零", "跨月後優惠券核銷次數未依規則歸零，導致部分使用者無法再次使用。", ctx);
+  await advanceTo(ctx, rdPendingAssign, 1);
+  await claimIssueForTeam({ issueId: rdPendingAssign.id, teamId: iadTeam.id, actorId: iadLead.id, reasonCode: "PREVIEW_IAD_CLAIM" });
+
+  // 一張 IAD 成員處理中工單（IAD 主管已指派 IAD工程師A）。
+  const rdInProgressIad = await createHotfixIssue("RD-IN-PROGRESS-IAD", "運費試算未計入偏遠地區加成", "特定偏遠地區訂單運費試算未加計偏遠加成費用。", ctx);
+  await advanceTo(ctx, rdInProgressIad, 1);
+  await claimIssueForTeam({ issueId: rdInProgressIad.id, teamId: iadTeam.id, actorId: iadLead.id, reasonCode: "PREVIEW_IAD_CLAIM" });
+  await assignIssueExecutor({ issueId: rdInProgressIad.id, executorUserId: iadMemberA.id, actorId: iadLead.id, reasonCode: "PREVIEW_IAD_ASSIGN" });
+
+  // 一張待 IAD 主管核准工單。
+  const rdPendingLeadApproval = await createHotfixIssue("RD-PENDING-LEAD-APPROVAL", "訂單匯出報表缺漏欄位", "訂單匯出 CSV 報表偶發缺漏付款方式欄位。", ctx);
+  await advanceTo(ctx, rdPendingLeadApproval, 1);
+  await claimIssueForTeam({ issueId: rdPendingLeadApproval.id, teamId: iadTeam.id, actorId: iadLead.id, reasonCode: "PREVIEW_IAD_CLAIM" });
+  await assignIssueExecutor({ issueId: rdPendingLeadApproval.id, executorUserId: iadMemberA.id, actorId: iadLead.id, reasonCode: "PREVIEW_IAD_ASSIGN" });
+  await saveExecutionFieldValues({
+    issueId: rdPendingLeadApproval.id,
+    actorId: iadMemberA.id,
+    values: { rdFixVersion: "release/iad-hotfix-1", rdFixDescription: "修正 CSV 欄位組裝順序", rdSelfTestResult: "已自測匯出 100 筆訂單皆完整", rdImpactScope: "僅影響匯出報表功能，嚴重程度：低" },
+  });
+  await answerAllRiskChecks(rdPendingLeadApproval.id, "pendingRdLeadApproval", iadMemberA.id, "NO");
+  {
+    const t = await findTransition(hotfix.version.id, hotfix.stageIds.rdInProgress, "rdSubmit");
+    await executeIssueTransition({ issueId: rdPendingLeadApproval.id, transitionId: t.id, actorId: iadMemberA.id, reasonCode: "PREVIEW" });
+  }
+
+  // ---- QA 領域：兩個可競爭接單的 QA 團隊 ----
+  const qaTeam1 = await createTeamWithDomain("QA第一驗證組", "QA", admin.id);
+  const qaTeam1Lead = await createUser("QA第一組主管", "QA", "品保處");
+  const qaTeam1MemberA = await createUser("QA第一組成員A", "QA", "品保處");
+  const qaTeam1MemberB = await createUser("QA第一組成員B", "QA", "品保處");
+  await addMember(qaTeam1.id, qaTeam1Lead.id, "LEAD");
+  await addMember(qaTeam1.id, qaTeam1MemberA.id, "MEMBER");
+  await addMember(qaTeam1.id, qaTeam1MemberB.id, "MEMBER");
+
+  const qaTeam2 = await createTeamWithDomain("QA第二驗證組", "QA", admin.id);
+  const qaTeam2Lead = await createUser("QA第二組主管", "QA", "品保處");
+  await addMember(qaTeam2.id, qaTeam2Lead.id, "LEAD");
+  await addMember(qaTeam2.id, (await createUser("QA第二組成員A", "QA", "品保處")).id, "MEMBER");
+
+  async function advanceToQaTriage(issue: { id: string }) {
+    await advanceTo(ctx, issue, 4); // ... -> pendingRdLeadApproval 已核准（用既有 rdTeam/rdLead/rdMember）-> pendingQaTriage
+  }
+
+  const qaClaimPending = await createHotfixIssue("QA-CLAIM-PENDING", "會員生日禮券未自動發放", "會員生日當月禮券未依規則自動發放。", ctx);
+  await advanceToQaTriage(qaClaimPending); // 停在 pendingQaTriage（兩個 QA 團隊皆可見待接單）
+
+  const qaPendingAssign = await createHotfixIssue("QA-PENDING-ASSIGN", "客服評分表單送出失敗", "客服結束對話後評分表單偶發送出失敗。", ctx);
+  await advanceToQaTriage(qaPendingAssign);
+  await claimIssueForTeam({ issueId: qaPendingAssign.id, teamId: qaTeam1.id, actorId: qaTeam1Lead.id, reasonCode: "PREVIEW_QA1_CLAIM" });
+
+  const qaInProgressCase = await createHotfixIssue("QA-IN-PROGRESS", "活動頁面倒數計時器顯示錯誤", "活動頁面倒數計時器在跨時區情境下顯示錯誤時間。", ctx);
+  await advanceToQaTriage(qaInProgressCase);
+  await claimIssueForTeam({ issueId: qaInProgressCase.id, teamId: qaTeam1.id, actorId: qaTeam1Lead.id, reasonCode: "PREVIEW_QA1_CLAIM" });
+  await assignIssueExecutor({ issueId: qaInProgressCase.id, executorUserId: qaTeam1MemberA.id, actorId: qaTeam1Lead.id, reasonCode: "PREVIEW_QA1_ASSIGN" });
+
+  const qaPendingLeadApproval = await createHotfixIssue("QA-PENDING-LEAD-APPROVAL", "會員條款彈窗重複顯示", "已同意會員條款的使用者仍偶發看到條款彈窗。", ctx);
+  await advanceToQaTriage(qaPendingLeadApproval);
+  await claimIssueForTeam({ issueId: qaPendingLeadApproval.id, teamId: qaTeam1.id, actorId: qaTeam1Lead.id, reasonCode: "PREVIEW_QA1_CLAIM" });
+  await assignIssueExecutor({ issueId: qaPendingLeadApproval.id, executorUserId: qaTeam1MemberA.id, actorId: qaTeam1Lead.id, reasonCode: "PREVIEW_QA1_ASSIGN" });
+  await saveExecutionFieldValues({
+    issueId: qaPendingLeadApproval.id,
+    actorId: qaTeam1MemberA.id,
+    values: { qaTestScope: "會員條款彈窗迴歸測試", qaTestEnvironment: "UAT", qaTestResult: "驗證通過", qaDefectNotes: "無", qaRecommendation: "可上版" },
+  });
+  await answerAllRiskChecks(qaPendingLeadApproval.id, "pendingQaLeadApproval", qaTeam1MemberA.id, "NO");
+  {
+    const t = await findTransition(hotfix.version.id, hotfix.stageIds.qaInProgress, "qaSubmit");
+    await executeIssueTransition({ issueId: qaPendingLeadApproval.id, transitionId: t.id, actorId: qaTeam1MemberA.id, reasonCode: "PREVIEW" });
+  }
+
+  // ---- OP 領域：兩個可競爭接單的 OP 團隊 ----
+  const opTeam1 = await createTeamWithDomain("OP第一上版組", "OP", admin.id);
+  const opTeam1Lead = await createUser("OP第一組主管", "OP", "維運處");
+  const opTeam1MemberA = await createUser("OP第一組成員A", "OP", "維運處");
+  await addMember(opTeam1.id, opTeam1Lead.id, "LEAD");
+  await addMember(opTeam1.id, opTeam1MemberA.id, "MEMBER");
+
+  const opTeam2 = await createTeamWithDomain("OP第二上版組", "OP", admin.id);
+  const opTeam2Lead = await createUser("OP第二組主管", "OP", "維運處");
+  await addMember(opTeam2.id, opTeam2Lead.id, "LEAD");
+  await addMember(opTeam2.id, (await createUser("OP第二組成員A", "OP", "維運處")).id, "MEMBER");
+
+  async function advanceToOpTriage(issue: { id: string }) {
+    await advanceTo(ctx, issue, 7); // ... -> pendingQaLeadApproval 已核准（用既有 qaTeam/qaLead/qaMember）-> pendingOpTriage
+  }
+
+  const opClaimPending = await createHotfixIssue("OP-CLAIM-PENDING", "夜間批次任務執行時間過長", "夜間批次任務執行時間偶發超過維護窗口。", ctx);
+  await advanceToOpTriage(opClaimPending); // 停在 pendingOpTriage（兩個 OP 團隊皆可見待接單）
+
+  const opPendingAssign = await createHotfixIssue("OP-PENDING-ASSIGN", "備援機房切換演練異常", "備援機房切換演練時偶發連線逾時。", ctx);
+  await advanceToOpTriage(opPendingAssign);
+  await claimIssueForTeam({ issueId: opPendingAssign.id, teamId: opTeam1.id, actorId: opTeam1Lead.id, reasonCode: "PREVIEW_OP1_CLAIM" });
+
+  const opInProgressCase = await createHotfixIssue("OP-IN-PROGRESS", "CDN 快取未依規則清除", "上版後 CDN 快取未依規則清除，使用者仍看到舊版本內容。", ctx);
+  await advanceToOpTriage(opInProgressCase);
+  await claimIssueForTeam({ issueId: opInProgressCase.id, teamId: opTeam1.id, actorId: opTeam1Lead.id, reasonCode: "PREVIEW_OP1_CLAIM" });
+  await assignIssueExecutor({ issueId: opInProgressCase.id, executorUserId: opTeam1MemberA.id, actorId: opTeam1Lead.id, reasonCode: "PREVIEW_OP1_ASSIGN" });
+
+  const opPendingLeadApproval = await createHotfixIssue("OP-PENDING-LEAD-APPROVAL", "上版排程通知信未寄送", "上版排程通知信偶發未寄送給相關關係人。", ctx);
+  await advanceToOpTriage(opPendingLeadApproval);
+  await claimIssueForTeam({ issueId: opPendingLeadApproval.id, teamId: opTeam1.id, actorId: opTeam1Lead.id, reasonCode: "PREVIEW_OP1_CLAIM" });
+  await assignIssueExecutor({ issueId: opPendingLeadApproval.id, executorUserId: opTeam1MemberA.id, actorId: opTeam1Lead.id, reasonCode: "PREVIEW_OP1_ASSIGN" });
+  await saveExecutionFieldValues({
+    issueId: opPendingLeadApproval.id,
+    actorId: opTeam1MemberA.id,
+    values: {
+      opDeployEnvironment: "Production",
+      opDeployPlannedAt: "2026-08-10T02:00",
+      opDeploySteps: "1. 停用排程通知 2. 部署修正 3. 手動觸發一次測試通知 4. 恢復排程",
+      opRollbackPlan: "還原排程設定並重新啟用舊版通知邏輯",
+      opMonitoringChecklist: "監控排程通知寄送成功率 24 小時",
+    },
+  });
+  await answerAllRiskChecks(opPendingLeadApproval.id, "pendingDeploymentApproval", opTeam1MemberA.id, "NO");
+  await uploadHotfixAttachment({ issueId: opPendingLeadApproval.id, actorId: opTeam1MemberA.id, actorName: opTeam1MemberA.name, fileName: "op-precheck.txt", mimeType: "text/plain", bytes: Buffer.from("上版前檢查：排程通知設定已備份。") });
+  {
+    const t = await findTransition(hotfix.version.id, hotfix.stageIds.opPreparing, "opSubmit");
+    await executeIssueTransition({ issueId: opPendingLeadApproval.id, transitionId: t.id, actorId: opTeam1MemberA.id, reasonCode: "PREVIEW" });
+  }
+
+  // ---- 結案：一張待原申請人確認結案工單（沿用既有 stage9 情境即可，見上方 stage9） ----
+
+  console.log("[4/4] 完成。");
   console.log("\n=== 各階段展示工單編號 ===");
   console.log(`  1 Hotfix建立工單（草稿，尚未送出）：${stage1.issueKey}`);
   console.log(`  2 申請人直屬主管簽核：${stage2.issueKey}`);
@@ -467,6 +627,33 @@ async function main() {
   console.log(`  OP 執行人：${opMember.name}／OP 主管：${opLead.name}`);
   console.log(`  無主管設定人員：${noSupervisorUser.name}（PM 團隊成員，但未設定直屬主管）`);
   console.log(`  無關使用者：${outsider.name}`);
+
+  console.log("\n=== RD／QA／OP 接單／指派團隊（Team.domain 已明確分類，見 setTeamDomain）===");
+  console.log(`  RD 領域：${iadTeam.name}（Lead：${iadLead.name}，成員：${iadMemberA.name}／${iadMemberB.name}）／${aadTeam.name}（Lead：${aadLead.name}，成員：${aadMemberA.name}／${aadMemberB.name}）`);
+  console.log(`  QA 領域：${qaTeam1.name}（Lead：${qaTeam1Lead.name}）／${qaTeam2.name}（Lead：${qaTeam2Lead.name}）`);
+  console.log(`  OP 領域：${opTeam1.name}（Lead：${opTeam1Lead.name}）／${opTeam2.name}（Lead：${opTeam2Lead.name}）`);
+
+  console.log("\n=== RD 接單／指派示範工單（預期按鈕；以對應帳號登入後開啟工單即可看到）===");
+  console.log(`  待 RD 團隊接單：${rdClaimPending.issueKey}（以 ${iadLead.name} 或 ${aadLead.name} 登入 → 看到「接單」按鈕；其他 RD 人員唯讀）`);
+  console.log(`  已由 IAD 承接，AAD 只能看到承接狀態：${rdClaimedByIad.issueKey}（以 ${aadLead.name} 登入 → 顯示「已由 IAD 團隊承接」，無接單按鈕）`);
+  console.log(`  IAD 待指派：${rdPendingAssign.issueKey}（以 ${iadLead.name} 登入 → 看到「指派成員」下拉選單，僅列 IAD active 成員）`);
+  console.log(`  IAD 成員處理中：${rdInProgressIad.issueKey}（以 ${iadMemberA.name} 登入 → 看到「進入處理」表單；${iadMemberB.name} 登入 → 唯讀）`);
+  console.log(`  待 IAD 主管核准：${rdPendingLeadApproval.issueKey}（以 ${iadLead.name} 登入 → 看到「審核」按鈕；${aadLead.name} 登入 → 無審核資格）`);
+
+  console.log("\n=== QA 接單／指派示範工單 ===");
+  console.log(`  待 QA 團隊接單：${qaClaimPending.issueKey}（以 ${qaTeam1Lead.name} 或 ${qaTeam2Lead.name} 登入 → 看到「接單」按鈕）`);
+  console.log(`  QA 第一組待指派：${qaPendingAssign.issueKey}（以 ${qaTeam1Lead.name} 登入 → 看到「指派成員」）`);
+  console.log(`  QA 驗證中：${qaInProgressCase.issueKey}（以 ${qaTeam1MemberA.name} 登入 → 看到「進入處理」表單）`);
+  console.log(`  待 QA 主管核准：${qaPendingLeadApproval.issueKey}（以 ${qaTeam1Lead.name} 登入 → 看到「審核」按鈕）`);
+
+  console.log("\n=== OP 接單／指派示範工單 ===");
+  console.log(`  待 OP 團隊接單：${opClaimPending.issueKey}（以 ${opTeam1Lead.name} 或 ${opTeam2Lead.name} 登入 → 看到「接單」按鈕）`);
+  console.log(`  OP 第一組待指派：${opPendingAssign.issueKey}（以 ${opTeam1Lead.name} 登入 → 看到「指派成員」）`);
+  console.log(`  OP 上版準備中：${opInProgressCase.issueKey}（以 ${opTeam1MemberA.name} 登入 → 看到「進入處理」表單）`);
+  console.log(`  待 OP 主管核准：${opPendingLeadApproval.issueKey}（以 ${opTeam1Lead.name} 登入 → 看到「審核」按鈕）`);
+
+  console.log("\n=== 結案（待原申請人確認）===");
+  console.log(`  ${stage9.issueKey}（以 ${pm.name} 登入 → 工單清單看到「待申請人確認結案」，按下「確認結案」）`);
 }
 
 main()
