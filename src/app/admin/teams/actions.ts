@@ -7,9 +7,11 @@
 // → 呼叫服務層 → revalidate，規則檢查全部留在服務層。
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
 import { addTeamMember, removeTeamMember } from "@/lib/peopleService";
 import { assignTeamLead, removeTeamLead } from "@/lib/teamLeadService";
+import { createTeam, updateTeam, deleteTeamIfUnreferenced } from "@/lib/team-applicant/teamManagementService";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
 function revalidateTeamPaths(teamId?: string) {
@@ -71,4 +73,46 @@ export async function removeTeamLeadAction(formData: FormData): Promise<ActionRe
   } catch (err) {
     return toActionResult(err, "移除 LEAD 失敗");
   }
+}
+
+// 建立工單／團隊整合修正新增：團隊 CRUD（建立／編輯名稱說明／無引用時永久刪除）。
+// 「啟用／停用」在目前資料模型下無法表示，見 teamManagementService.ts 檔頭說明，本輪不提供。
+
+export async function createTeamAction(formData: FormData): Promise<ActionResult<{ id: string }>> {
+  const actor = await requireCurrentUser();
+  const name = String(formData.get("name") || "");
+  const description = String(formData.get("description") || "");
+  try {
+    const team = await createTeam({ name, description, actorId: actor.id });
+    revalidateTeamPaths();
+    return actionOk("已建立團隊", { id: team.id });
+  } catch (err) {
+    return toActionResult(err, "建立團隊失敗");
+  }
+}
+
+export async function updateTeamAction(formData: FormData): Promise<ActionResult> {
+  const actor = await requireCurrentUser();
+  const teamId = String(formData.get("teamId") || "");
+  const name = String(formData.get("name") || "");
+  const description = String(formData.get("description") || "");
+  try {
+    await updateTeam({ teamId, name, description, actorId: actor.id });
+    revalidateTeamPaths(teamId);
+    return actionOk("已更新團隊");
+  } catch (err) {
+    return toActionResult(err, "更新團隊失敗");
+  }
+}
+
+export async function deleteTeamAction(formData: FormData): Promise<ActionResult> {
+  const actor = await requireCurrentUser();
+  const teamId = String(formData.get("teamId") || "");
+  try {
+    await deleteTeamIfUnreferenced({ teamId, actorId: actor.id });
+  } catch (err) {
+    return toActionResult(err, "刪除團隊失敗");
+  }
+  revalidateTeamPaths();
+  redirect("/admin/teams");
 }

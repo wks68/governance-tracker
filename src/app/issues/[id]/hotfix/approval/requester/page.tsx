@@ -31,6 +31,7 @@ export default async function HotfixApprovalRequesterPage({ params }: { params: 
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
       backHref={`/issues/${params.id}`}
+      ctx={ctx}
     >
       <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       <ApprovalReviewPanel

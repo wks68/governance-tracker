@@ -64,9 +64,9 @@ export default function PersonSummary({
       </dl>
 
       <div className="mt-3">
-        <p className="mb-1 text-xs font-medium text-gray-500">Team</p>
+        <p className="mb-1 text-xs font-medium text-gray-500">團隊</p>
         {teamBadges.length === 0 ? (
-          <p className="text-xs text-gray-400">無所屬 Team</p>
+          <p className="text-xs text-gray-400">無所屬團隊</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {teamBadges.map((t) => (

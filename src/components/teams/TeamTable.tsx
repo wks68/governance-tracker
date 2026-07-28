@@ -12,7 +12,7 @@ export interface TeamRow {
 
 export default function TeamTable({ teams }: { teams: TeamRow[] }) {
   if (teams.length === 0) {
-    return <p className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-400">沒有可顯示的 Team。</p>;
+    return <p className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-400">沒有可顯示的團隊。</p>;
   }
 
   return (

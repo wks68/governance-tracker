@@ -28,7 +28,7 @@ export default async function HotfixRdPage({ params }: { params: { id: string } 
 
   if (stageKey !== "rdInProgress") {
     return (
-      <HotfixStageShell title="RD 修正與自測" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`}>
+      <HotfixStageShell title="RD 修正與自測" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
         <WaitingNotice stageLabel={ctx.runtime.currentStage.label} />
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       </HotfixStageShell>
@@ -39,7 +39,7 @@ export default async function HotfixRdPage({ params }: { params: { id: string } 
   const values = await loadExecutionFieldValues(params.id, stageKey);
 
   return (
-    <HotfixStageShell title="RD 修正與自測" subtitle="填寫修正內容並完成自測後送出，將轉交 RD 主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`}>
+    <HotfixStageShell title="RD 修正與自測" subtitle="填寫修正內容並完成自測後送出，將轉交 RD 主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
       {isResponsible ? (
         <ExecutionFieldsForm
           issueId={params.id}

@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
 import { getTeamDetailForActor, hasPeopleCapability, PeopleAccessDeniedError } from "@/lib/peopleService";
-import { resolveGovernanceAccessContext } from "@/lib/permissions";
+import { resolveGovernanceAccessContext, getUserHasCapability } from "@/lib/permissions";
+import { isTeamDeletable } from "@/lib/team-applicant/teamManagementService";
 import { prisma } from "@/lib/prisma";
 import TeamMemberTable, { type TeamMemberRow } from "@/components/teams/TeamMemberTable";
 import { AddTeamMemberDrawer } from "@/components/teams/TeamMemberManager";
+import EditTeamPanel from "@/components/teams/EditTeamPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -26,11 +28,13 @@ export default async function TeamDetailPage({ params }: { params: { teamId: str
   }
   if (!team) notFound();
 
-  const [members, systemMappings, canManageMembers, govCtx] = await Promise.all([
+  const [members, systemMappings, canManageMembers, govCtx, isAdmin, deletable] = await Promise.all([
     prisma.teamMember.findMany({ where: { teamId: team.id }, include: { user: true }, orderBy: { createdAt: "asc" } }),
     prisma.systemTeamMapping.findMany({ where: { teamId: team.id, isActive: true }, include: { system: true } }),
     hasPeopleCapability(actor.id, "team.manageMembers"),
     resolveGovernanceAccessContext(actor.id),
+    getUserHasCapability(actor, "admin.full"),
+    isTeamDeletable(team.id),
   ]);
 
   const memberRows: TeamMemberRow[] = members.map((m) => ({
@@ -61,6 +65,8 @@ export default async function TeamDetailPage({ params }: { params: { teamId: str
         </div>
         {canManageMembers && <AddTeamMemberDrawer teamId={team.id} candidates={candidates} />}
       </div>
+
+      {isAdmin && <EditTeamPanel teamId={team.id} initialName={team.name} initialDescription={team.description} canDelete={deletable} />}
 
       <TeamMemberTable
         teamId={team.id}

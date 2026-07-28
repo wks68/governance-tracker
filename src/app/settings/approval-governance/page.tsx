@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 const TABS = [
   { key: "supervisor", label: "直屬主管" },
-  { key: "team-lead", label: "Team LEAD" },
+  { key: "team-lead", label: "團隊主管" },
   { key: "delegation", label: "核准代理" },
   { key: "health", label: "健康檢查" },
 ] as const;
@@ -40,7 +40,7 @@ export default async function ApprovalGovernanceSettingsPage({
       <div>
         <h1 className="text-xl font-bold text-gray-900">核准治理設定</h1>
         <p className="mt-0.5 text-sm text-gray-500">
-          維護直屬主管、Team LEAD、核准代理設定，並檢視治理健康狀態。所有異動皆會寫入 Audit Log。
+          維護直屬主管、團隊主管、核准代理設定，並檢視治理健康狀態。所有異動皆會寫入 Audit Log。
         </p>
       </div>
 

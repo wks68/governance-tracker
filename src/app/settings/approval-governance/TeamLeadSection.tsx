@@ -31,7 +31,7 @@ export default async function TeamLeadSection({ actorId, ctx }: { actorId: strin
   return (
     <div className="space-y-6">
       {teams.length === 0 ? (
-        <p className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-400">沒有可顯示的 Team。</p>
+        <p className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-400">沒有可顯示的團隊。</p>
       ) : (
         teams.map((team) => {
           const teamMembers = members.filter((m) => m.teamId === team.id);

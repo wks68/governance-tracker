@@ -31,7 +31,7 @@ export default function PeopleTable({ people }: { people: PersonRow[] }) {
             <th className="px-3 py-2">主要角色</th>
             <th className="px-3 py-2">Active Roles</th>
             <th className="px-3 py-2">狀態</th>
-            <th className="px-3 py-2">Team</th>
+            <th className="px-3 py-2">團隊</th>
             <th className="px-3 py-2">最後更新</th>
           </tr>
         </thead>

@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   // 個入口即可，不需要在 Nav 額外判斷 Capability——顯示入口本身不等於授權，實際範圍
   // 仍由頁面內的服務層查詢決定。
   { href: "/admin/people", label: "人員" },
-  { href: "/admin/teams", label: "Team" },
+  { href: "/admin/teams", label: "團隊" },
 ];
 
 export default async function Nav() {

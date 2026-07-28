@@ -28,7 +28,7 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
 
   if (stageKey !== "qaInProgress") {
     return (
-      <HotfixStageShell title="QA 驗證" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`}>
+      <HotfixStageShell title="QA 驗證" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
         <WaitingNotice stageLabel={ctx.runtime.currentStage.label} />
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       </HotfixStageShell>
@@ -39,7 +39,7 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
   const values = await loadExecutionFieldValues(params.id, stageKey);
 
   return (
-    <HotfixStageShell title="QA 驗證" subtitle="完成驗證後送出，將轉交 QA 主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`}>
+    <HotfixStageShell title="QA 驗證" subtitle="完成驗證後送出，將轉交 QA 主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
       {isResponsible ? (
         <ExecutionFieldsForm
           issueId={params.id}

@@ -36,6 +36,7 @@ export default async function HotfixApprovalQaPage({ params }: { params: { id: s
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
       backHref={`/issues/${params.id}`}
+      ctx={ctx}
     >
       <ExecutionFieldsReadOnly fields={QA_VERIFY_FIELDS} values={qaValues} title="QA 驗證內容" />
       <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />

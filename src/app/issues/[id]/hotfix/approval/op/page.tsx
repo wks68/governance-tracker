@@ -36,6 +36,7 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
       backHref={`/issues/${params.id}`}
+      ctx={ctx}
     >
       <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={opValues} title="上版計畫" />
       <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />

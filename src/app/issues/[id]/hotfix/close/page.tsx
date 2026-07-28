@@ -44,6 +44,7 @@ export default async function HotfixClosePage({ params }: { params: { id: string
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
       backHref={`/issues/${params.id}`}
+      ctx={ctx}
     >
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-gray-800">結案資訊</h2>

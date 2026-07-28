@@ -23,6 +23,10 @@ import AuditLogList from "@/components/AuditLogList";
 import AiAssistantPanel from "@/components/AiAssistantPanel";
 import StartWorkflowPanel from "@/components/workflow-execution/StartWorkflowPanel";
 import { routeForStageKey } from "@/lib/hotfix-ui/nineStage";
+import { getUserHasCapability } from "@/lib/permissions";
+import { canApplicantDeleteIssue, loadAdminDeleteImpactSummary } from "@/lib/issue-management/issueDeletionService";
+import DeleteOwnDraftButton from "@/components/hotfix-nine-stage/DeleteOwnDraftButton";
+import AdminPermanentDeleteButton from "@/components/issue-management/AdminPermanentDeleteButton";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +119,12 @@ export default async function IssueDetailPage({ params }: { params: { id: string
 
   const pulse = issue.statusLight === "Red" && issue.alertLevel === "Critical" && !issue.firstResponseAt;
 
+  const [deleteCheck, isAdmin] = await Promise.all([
+    canApplicantDeleteIssue(issue.id, currentUser.id),
+    getUserHasCapability(currentUser, "admin.full"),
+  ]);
+  const adminDeleteSummary = isAdmin ? await loadAdminDeleteImpactSummary(issue.id) : null;
+
   return (
     <div className="space-y-6">
       {/* 6.1 Header */}
@@ -136,6 +146,8 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             >
               編輯
             </Link>
+            {deleteCheck.allowed && <DeleteOwnDraftButton issueId={issue.id} issueKey={issue.issueKey} title={issue.title} />}
+            {isAdmin && adminDeleteSummary && <AdminPermanentDeleteButton issueId={issue.id} summary={adminDeleteSummary} />}
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">

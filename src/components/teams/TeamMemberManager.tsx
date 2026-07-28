@@ -59,7 +59,7 @@ export function AddTeamMemberDrawer({ teamId, candidates }: { teamId: string; ca
           <ActionErrorText message={error} />
           <input type="hidden" name="teamId" value={teamId} />
           <div>
-            <label className={labelClass}>使用者（僅列出 active 且尚未加入此 Team 的使用者）</label>
+            <label className={labelClass}>使用者（僅列出 active 且尚未加入此團隊的使用者）</label>
             <select name="userId" required disabled={isPending} defaultValue="" className={inputClass}>
               <option value="" disabled>
                 請選擇

@@ -36,6 +36,7 @@ export default async function HotfixApprovalRdPage({ params }: { params: { id: s
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
       backHref={`/issues/${params.id}`}
+      ctx={ctx}
     >
       <ExecutionFieldsReadOnly fields={RD_FIX_FIELDS} values={rdValues} title="RD 修正內容" />
       <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />

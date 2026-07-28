@@ -179,7 +179,7 @@ export default function WorkflowStageEditor({
           <input type="number" name="sortOrder" required disabled={isPending} defaultValue={defaults?.sortOrder ?? 1} className={inputClass} />
         </div>
         <div>
-          <label className={labelClass}>負責 Team（選填）</label>
+          <label className={labelClass}>負責團隊（選填）</label>
           <select name="assignedTeamId" disabled={isPending} defaultValue={defaults?.assignedTeamId ?? ""} className={inputClass}>
             <option value="">（無）</option>
             {teams.map((t) => (
@@ -256,7 +256,7 @@ export default function WorkflowStageEditor({
               <th className="px-3 py-2">名稱</th>
               <th className="px-3 py-2">類型</th>
               <th className="px-3 py-2">起始／結束</th>
-              <th className="px-3 py-2">Team</th>
+              <th className="px-3 py-2">團隊</th>
               <th className="px-3 py-2">需求</th>
               {editable && <th className="px-3 py-2">操作</th>}
             </tr>

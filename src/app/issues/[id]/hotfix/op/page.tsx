@@ -26,7 +26,7 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
 
   const stageKey = ctx.runtime.currentStage.stageKey;
   const attachments = await listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: stageKey });
-  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: `/issues/${params.id}` };
+  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: `/issues/${params.id}`, ctx };
 
   if (stageKey === "pendingOpTriage" || stageKey === "pendingOpClaim") {
     return (

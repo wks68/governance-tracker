@@ -64,7 +64,7 @@ export default async function PersonDetailPage({ params }: { params: { userId: s
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold text-gray-900">人員明細</h1>
-        <p className="mt-0.5 text-sm text-gray-500">所有角色、帳號狀態與 Team 成員異動皆會寫入 Audit Log。</p>
+        <p className="mt-0.5 text-sm text-gray-500">所有角色、帳號狀態與團隊成員異動皆會寫入 Audit Log。</p>
       </div>
 
       <PersonSummary

@@ -35,7 +35,7 @@ export default async function DelegationSection({ actorId, ctx }: { actorId: str
                 <th className="px-3 py-2">委託人</th>
                 <th className="px-3 py-2">代理人</th>
                 <th className="px-3 py-2">核准類型</th>
-                <th className="px-3 py-2">Team</th>
+                <th className="px-3 py-2">團隊</th>
                 <th className="px-3 py-2">validFrom</th>
                 <th className="px-3 py-2">validUntil</th>
                 <th className="px-3 py-2">狀態</th>
