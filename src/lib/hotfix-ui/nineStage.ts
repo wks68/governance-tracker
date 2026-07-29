@@ -140,3 +140,39 @@ export function routeForStageKey(issueId: string, stageKey: string): string | nu
       return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// 頁面副標題：一律由「目前 Workflow 關卡」決定，不得由 route 或頁面各自硬編碼。
+//
+// 缺陷修正背景：工單送出後已進入第 2 關，但頁面副標題仍停留在第 1 關的建立說明。
+// 根因是副標題原本由每個頁面各自寫死字串，與實際 Workflow 狀態無關；改由本函式統一
+// 依 stageKey 推導後，副標題不可能再與流程狀態不一致。
+// ---------------------------------------------------------------------------
+
+const STAGE_KEY_TO_SUBTITLE: Record<string, string> = {
+  draft: "工單尚未送出，可繼續編輯內容後送交申請人直屬主管簽核。",
+  pendingBusinessApproval: "工單已建立完成，等待申請人直屬主管核准中。",
+  pendingRdTriage: "已完成主管簽核，等待 RD 團隊接單。",
+  pendingRdClaim: "RD 團隊已接單，等待主管指派執行人。",
+  rdInProgress: "RD 執行人修正與自測中。",
+  pendingRdLeadApproval: "等待 RD 主管簽核中。",
+  pendingQaTriage: "已完成 RD 主管簽核，等待 QA 團隊接單。",
+  pendingQaClaim: "QA 團隊已接單，等待主管指派執行人。",
+  qaInProgress: "QA 執行人驗證中。",
+  pendingQaLeadApproval: "等待 QA 主管簽核中。",
+  pendingOpTriage: "已完成 QA 主管簽核，等待 OP 團隊接單。",
+  pendingOpClaim: "OP 團隊已接單，等待主管指派執行人。",
+  opPreparing: "OP 執行人準備上版中。",
+  pendingDeploymentApproval: "等待 OP 主管簽核中。",
+  opDeploying: "已核准上版，OP 執行人部署中。",
+  opCompleted: "部署已完成，等待轉交原申請人確認結案。",
+  pendingReporterConfirmation: "等待原申請人確認結案。",
+  reporterConfirming: "原申請人確認結案中。",
+  closed: "此工單已結案。",
+  cancelled: "此工單已取消，不再走正式九階段流程。",
+};
+
+/** 回傳 null 表示此 stageKey 沒有對應說明，呼叫端可退回頁面自帶的副標題。 */
+export function hotfixStageSubtitle(stageKey: string): string | null {
+  return STAGE_KEY_TO_SUBTITLE[stageKey] ?? null;
+}

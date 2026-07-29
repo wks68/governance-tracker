@@ -6,3 +6,15 @@ html,
 body {
   background-color: #f8fafc;
 }
+
+/* 九階段進度列「目前節點」呼吸提示：尊重使用者的減少動態偏好設定。
+   關閉動畫後仍保留靜態的目前節點樣式（藍框＋藍色圓心），資訊不因此遺失。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-stage-halo,
+  .animate-stage-core {
+    animation: none !important;
+  }
+  .animate-stage-halo {
+    opacity: 0 !important;
+  }
+}

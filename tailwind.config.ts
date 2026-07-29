@@ -39,9 +39,24 @@ const config: Config = {
           "0%, 100%": { boxShadow: "0 0 0 0 rgba(220,53,69,0.5)" },
           "50%": { boxShadow: "0 0 0 4px rgba(220,53,69,0)" },
         },
+        // 九階段進度列「目前節點」的慢速呼吸提示。
+        // 外圈：以 transform scale + opacity 做緩慢擴散淡出，套在絕對定位的 pseudo/span 上，
+        // 不改變節點寬高、不影響 layout、不造成畫面位置跳動。
+        "stage-halo": {
+          "0%": { transform: "scale(1)", opacity: "0.45" },
+          "70%": { transform: "scale(1.75)", opacity: "0" },
+          "100%": { transform: "scale(1.75)", opacity: "0" },
+        },
+        // 圓心：極輕微的呼吸，不閃爍（透明度只在 0.75～1 之間變化）。
+        "stage-core": {
+          "0%, 100%": { transform: "scale(1)", opacity: "1" },
+          "50%": { transform: "scale(0.86)", opacity: "0.75" },
+        },
       },
       animation: {
         "pulse-red": "pulse-red 1.6s ease-in-out infinite",
+        "stage-halo": "stage-halo 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite",
+        "stage-core": "stage-core 2.2s ease-in-out infinite",
       },
     },
   },

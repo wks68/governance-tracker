@@ -2,6 +2,7 @@
 // 企業風格：白／淺灰背景、白卡片、細灰框、微圓角，無大面積彩色警示卡、無 AI 輔助區塊。
 
 import NineStageProgressBar from "./NineStageProgressBar";
+import { hotfixStageSubtitle } from "@/lib/hotfix-ui/nineStage";
 import TicketBasicInfo, { type TicketBasicInfoData } from "./TicketBasicInfo";
 import HotfixHeaderActions from "./HotfixHeaderActions";
 import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
@@ -26,6 +27,10 @@ export default function HotfixStageShell({
   ctx?: HotfixPageContext;
   children: React.ReactNode;
 }) {
+  // 副標題一律以「目前 Workflow 關卡」為準（見 nineStage.hotfixStageSubtitle）；
+  // 頁面傳入的 subtitle 只在該關卡沒有對應說明時作為 fallback，不得覆蓋流程狀態。
+  const resolvedSubtitle = (ctx ? hotfixStageSubtitle(ctx.runtime.currentStage.stageKey) : null) ?? subtitle;
+
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -34,7 +39,7 @@ export default function HotfixStageShell({
             ← 回工單詳情
           </a>
           <h1 className="mt-1 text-xl font-bold text-gray-900">{title}</h1>
-          {subtitle && <p className="mt-0.5 text-sm text-gray-500">{subtitle}</p>}
+          {resolvedSubtitle && <p className="mt-0.5 text-sm text-gray-500">{resolvedSubtitle}</p>}
         </div>
         {ctx && <HotfixHeaderActions ctx={ctx} />}
       </div>

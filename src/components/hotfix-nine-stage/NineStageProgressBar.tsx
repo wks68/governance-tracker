@@ -23,16 +23,25 @@ export default function NineStageProgressBar({ currentIndex, cancelled }: { curr
                 <div className={`h-px flex-1 ${i === 0 ? "invisible" : isCompleted || isCurrent ? "bg-primary" : "bg-gray-200"}`} />
                 <div
                   className={[
-                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold",
+                    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold",
                     isCompleted ? "border-primary bg-primary text-white" : isCurrent ? "border-primary bg-white text-primary" : "border-gray-300 bg-white text-gray-400",
                   ].join(" ")}
+                  aria-current={isCurrent ? "step" : undefined}
                 >
+                  {/* 目前節點的慢速呼吸外圈：絕對定位且 pointer-events-none，只做視覺提示，
+                      不佔空間、不改變節點寬高、不影響其他節點位置。 */}
+                  {isCurrent && (
+                    <span
+                      aria-hidden="true"
+                      className="animate-stage-halo pointer-events-none absolute inset-0 rounded-full bg-primary/40"
+                    />
+                  )}
                   {isCompleted ? (
                     <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
                       <path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 111.4-1.4l3.8 3.8 6.8-6.8a1 1 0 011.4 0z" clipRule="evenodd" />
                     </svg>
                   ) : isCurrent ? (
-                    <span className="h-2.5 w-2.5 rounded-full bg-primary" />
+                    <span className="animate-stage-core relative h-2.5 w-2.5 rounded-full bg-primary" />
                   ) : (
                     <span>{stage.index}</span>
                   )}
