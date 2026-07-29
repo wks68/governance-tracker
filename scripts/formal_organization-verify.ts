@@ -655,11 +655,19 @@ async function runPreviewDbChecks() {
     const legacyIssues = await previewClient.issue.findMany({ where: { issueKey: { contains: "hfui9" } } });
     check("[15] 不存在舊 hfui9-* 工單", legacyIssues.length === 0, `實際 ${legacyIssues.length} 筆`);
 
-    // 正式基礎測試工單：Ken／Min 各一張草稿、一張待主管核准
+    // 所有工單的申請人都必須是正式組織人員。
+    // 刻意不比對「工單筆數等於 seed 的 4 筆」——人工驗收時本來就會自行建立工單，
+    // 那不是缺陷；這裡要守的是「不得再出現非正式人員的工單」這個性質。
     const issues = await previewClient.issue.findMany({ include: { reporterUser: true } });
-    const kenIssues = issues.filter((i) => i.reporterUser?.name === "Ken");
-    const minIssues = issues.filter((i) => i.reporterUser?.name === "Min");
-    check("[15b] Preview 只有以正式人員為申請人的工單", issues.length === 4 && kenIssues.length === 2 && minIssues.length === 2, `共 ${issues.length} 筆`);
+    const formalNames = new Set<string>([...FORMAL_LEADS.map((l) => l.name), ...FORMAL_MEMBERS.map((m) => m.name)]);
+    const foreignApplicants = issues.filter((i) => !i.reporterUser || !formalNames.has(i.reporterUser.name));
+    check(
+      "[15b] Preview 所有工單的申請人都是正式組織成員",
+      foreignApplicants.length === 0,
+      foreignApplicants.map((i) => `${i.issueKey}:${i.reporterUser?.name ?? "（無）"}`).join("、"),
+    );
+    const seededApplicants = new Set(issues.map((i) => i.reporterUser?.name));
+    check("[15c] Preview 內含 Ken／Min 的基礎測試工單", seededApplicants.has("Ken") && seededApplicants.has("Min"));
 
     // [47b] IssueKeySequence 與 Preview 工單同步
     const sequence = await previewClient.issueKeySequence.findUnique({ where: { issueType: "Hotfix" } });
