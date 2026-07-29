@@ -14,7 +14,7 @@
     "governance:preview": "rm -f prisma/governance-preview.db && touch prisma/governance-preview.db && DATABASE_URL=\"file:./governance-preview.db\" npx prisma migrate deploy && DATABASE_URL=\"file:./governance-preview.db\" tsx scripts/governance_dashboard_preview.ts",
     "dev:governance-preview": "DATABASE_URL=\"file:./governance-preview.db\" next dev",
     "hotfix-ui:preview": "rm -f prisma/hotfix-ui-preview.db && touch prisma/hotfix-ui-preview.db && DATABASE_URL=\"file:./hotfix-ui-preview.db\" npx prisma migrate deploy && DATABASE_URL=\"file:./hotfix-ui-preview.db\" tsx scripts/hotfix_ui_preview.ts",
-    "dev:hotfix-ui-preview": "DATABASE_URL=\"file:./hotfix-ui-preview.db\" next dev"
+    "dev:hotfix-ui-preview": "NEXT_SERVER_ACTIONS_PREVIEW_PORT=\"3100\" DATABASE_URL=\"file:./hotfix-ui-preview.db\" next dev"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
