@@ -1,5 +1,6 @@
 import { getApprovalGovernanceHealth } from "@/lib/approvalGovernanceHealthService";
 import HealthBadge from "@/components/HealthBadge";
+import { formatDateTime } from "@/lib/datetime";
 
 // M1.5-B2：核准治理健康檢查。即時計算（不落地存表），完全透過
 // getApprovalGovernanceHealth(actorId,...)（M1.5-B1 approvalGovernanceHealthService.ts）
@@ -31,7 +32,7 @@ export default async function HealthSection({
           <span className="text-sm font-medium text-gray-700">整體狀態：</span>
           <HealthBadge severity={report.overallSeverity} />
         </div>
-        <span className="text-xs text-gray-400">計算時間：{report.computedAt.toLocaleString("zh-TW")}</span>
+        <span className="text-xs text-gray-400">計算時間：{formatDateTime(report.computedAt)}</span>
       </div>
 
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white p-4 text-sm">

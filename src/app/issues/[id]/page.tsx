@@ -27,6 +27,7 @@ import { getUserHasCapability } from "@/lib/permissions";
 import { canApplicantDeleteIssue, loadAdminDeleteImpactSummary } from "@/lib/issue-management/issueDeletionService";
 import DeleteOwnDraftButton from "@/components/hotfix-nine-stage/DeleteOwnDraftButton";
 import AdminPermanentDeleteButton from "@/components/issue-management/AdminPermanentDeleteButton";
+import { formatDate } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -161,7 +162,7 @@ export default async function IssueDetailPage({ params }: { params: { id: string
           </div>
           <div>
             <div className="text-xs text-gray-400">到期日</div>
-            <div className="font-medium text-gray-800">{issue.dueDate ? new Date(issue.dueDate).toLocaleDateString("zh-TW") : "—"}</div>
+            <div className="font-medium text-gray-800">{formatDate(issue.dueDate)}</div>
           </div>
           <div>
             <div className="text-xs text-gray-400">等待角色</div>

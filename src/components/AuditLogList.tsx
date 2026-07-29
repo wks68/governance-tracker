@@ -1,4 +1,5 @@
 import { actionTypeLabel } from "@/lib/auditLabels";
+import { formatDateTime } from "@/lib/datetime";
 
 interface AuditItem {
   id: string;
@@ -21,7 +22,7 @@ export default function AuditLogList({ logs }: { logs: AuditItem[] }) {
             <span>
               {log.actorName}（{log.actorRole}）
             </span>
-            <span>{new Date(log.createdAt).toLocaleString("zh-TW")}</span>
+            <span>{formatDateTime(log.createdAt)}</span>
           </div>
           <p className="mt-0.5 text-sm text-gray-800">{log.summary}</p>
         </li>

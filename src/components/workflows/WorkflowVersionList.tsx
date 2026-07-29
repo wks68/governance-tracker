@@ -7,6 +7,7 @@ import { ActionErrorText } from "@/components/ActionResultBanner";
 import ReasonCodeField from "@/components/people/ReasonCodeField";
 import { workflowVersionStatusLabel } from "./WorkflowDefinitionTable";
 import { createDraftVersionAction, cloneVersionToDraftAction, archiveVersionAction } from "@/app/admin/workflows/actions";
+import { formatDateTime } from "@/lib/datetime";
 
 export interface WorkflowVersionRow {
   id: string;
@@ -126,7 +127,7 @@ export default function WorkflowVersionList({
                 <td className="whitespace-nowrap px-3 py-2">
                   <span className={`rounded-full border px-2 py-0.5 text-xs ${STATUS_BADGE[v.status] ?? ""}`}>{workflowVersionStatusLabel(v.status)}</span>
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{v.publishedAt ? new Date(v.publishedAt).toLocaleString("zh-TW") : "—"}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDateTime(v.publishedAt)}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-xs">
                   {canManageDraft && (
                     <button

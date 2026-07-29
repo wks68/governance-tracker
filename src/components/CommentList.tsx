@@ -2,6 +2,7 @@
 
 import { useRef, useTransition } from "react";
 import { addCommentAction } from "@/lib/actions";
+import { formatDateTime } from "@/lib/datetime";
 
 interface CommentItem {
   id: string;
@@ -37,7 +38,7 @@ export default function CommentList({ issueId, comments }: { issueId: string; co
                   {c.authorName}
                   <span className="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-600">{c.authorRole}</span>
                 </span>
-                <span className="text-xs text-gray-400">{new Date(c.createdAt).toLocaleString("zh-TW")}</span>
+                <span className="text-xs text-gray-400">{formatDateTime(c.createdAt)}</span>
               </div>
               <p className="mt-1 whitespace-pre-wrap text-gray-700">{c.body}</p>
             </li>

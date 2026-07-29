@@ -1,3 +1,4 @@
+import { formatDateTime } from "@/lib/datetime";
 // M2-B 新增：Issue Workflow 執行歷程時間軸（唯讀）。純 Server Component，比照既有
 // src/components/AuditLogList.tsx 樣式慣例。
 
@@ -32,7 +33,7 @@ export default function WorkflowHistoryTimeline({ items }: { items: WorkflowHist
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
               <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-600">{meta.label}</span>
               <span>{item.actorName}</span>
-              <span>{new Date(item.executedAt).toLocaleString("zh-TW")}</span>
+              <span>{formatDateTime(item.executedAt)}</span>
               {item.terminalOutcome && (
                 <span className="rounded bg-gray-800 px-1.5 py-0.5 font-medium text-white">{item.terminalOutcome === "COMPLETED" ? "已完成" : "已取消"}</span>
               )}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import StatusBadge from "./StatusBadge";
 import { issueTypeShortLabel } from "@/lib/constants";
+import { formatDate } from "@/lib/datetime";
 
 // RD/QA/OP 接單流程新增：操作按鈕文案集中對照，避免各處各自硬編碼中文字串。
 const ACTION_BUTTON_LABEL: Record<string, string> = {
@@ -107,7 +108,7 @@ export default function IssueTable({ issues }: { issues: IssueRow[] }) {
                 <td className="max-w-[180px] truncate px-3 py-2 text-warning-text">{it.blockReason || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.waitingRole || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.ownerName || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.dueDate ? new Date(it.dueDate).toLocaleDateString("zh-TW") : "—"}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDate(it.dueDate)}</td>
                 <td className={`whitespace-nowrap px-3 py-2 ${od > 0 ? "font-semibold text-gov-red" : "text-gray-400"}`}>{od > 0 ? `${od} 天` : "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-500">{dwell !== null ? `${dwell} 天` : "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.needRca ? "是" : "否"}</td>

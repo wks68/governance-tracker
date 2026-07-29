@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { roleLabel } from "@/lib/constants";
+import { formatDateTime } from "@/lib/datetime";
 
 // M1.5-C1-C 新增：人員清單表格（純呈現）。資料範圍一律由呼叫端（page.tsx）透過
 // listPeopleForActor 取得後再組成 PersonRow，本元件不做任何授權判斷、不額外查詢。
@@ -61,7 +62,7 @@ export default function PeopleTable({ people }: { people: PersonRow[] }) {
                 </span>
               </td>
               <td className="px-3 py-2 text-gray-600">{p.teamNames.length > 0 ? p.teamNames.join("、") : "—"}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-gray-500">{new Date(p.updatedAt).toLocaleString("zh-TW")}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-500">{formatDateTime(p.updatedAt)}</td>
             </tr>
           ))}
         </tbody>

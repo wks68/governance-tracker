@@ -7,6 +7,7 @@
 import { useState, useTransition } from "react";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { decideHotfixApprovalAction } from "@/app/issues/[id]/hotfix/approval-actions";
+import { formatDateTime } from "@/lib/datetime";
 
 const MAX_REASON_LENGTH = 500;
 
@@ -86,7 +87,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
     <section id="approval-section" className="rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-gray-800">主管簽核</h2>
       <p className="mt-1 text-xs text-gray-500">
-        由 {requestedByName} 於 {new Date(requestedAt).toLocaleString("zh-TW")} 送出，等待{roleLabel}簽核。
+        由 {requestedByName} 於 {formatDateTime(requestedAt)} 送出，等待{roleLabel}簽核。
       </p>
 
       {!isResponsible ? (
