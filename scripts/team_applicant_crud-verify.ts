@@ -30,13 +30,15 @@ import {
   TeamApplicantAccessDeniedError,
   TeamApplicantValidationError,
 } from "../src/lib/team-applicant/teamApplicantService";
-import { createTeam, updateTeam, deleteTeamIfUnreferenced, TeamManagementAccessDeniedError, TeamManagementStateError } from "../src/lib/team-applicant/teamManagementService";
+import { createTeam, updateTeam, deleteTeamIfUnreferenced, setTeamDomain, TeamManagementAccessDeniedError, TeamManagementStateError } from "../src/lib/team-applicant/teamManagementService";
 import { saveHotfixDraft } from "../src/lib/hotfix-ui/draftService";
 import { canApplicantDeleteIssue, deleteOwnDraftIssue, adminPermanentDeleteIssue, IssueDeletionAccessDeniedError, IssueDeletionStateError, IssueDeletionValidationError } from "../src/lib/issue-management/issueDeletionService";
 import { reassignHotfixTeamApplicant } from "../src/lib/hotfix-ui/adminReassignService";
 import { executeIssueTransition, returnIssueToStage, getIssueWorkflowRuntime } from "../src/lib/workflowExecutionService";
-import { decideApprovalRecord, NoEligibleApproverError } from "../src/lib/approvalService";
+import { decideApprovalRecord, NoEligibleApproverError, ApprovalAuthorityMismatchError } from "../src/lib/approvalService";
 import { WorkflowExecutionAccessDeniedError } from "../src/lib/workflow-execution/types";
+import { claimIssueForTeam } from "../src/lib/workflow-execution/claimService";
+import { SelfApprovalError } from "../src/lib/permissions";
 
 let passCount = 0;
 let failCount = 0;
@@ -203,6 +205,129 @@ async function runDbChecks() {
   // 先發布 Hotfix v1 流程，讓後續所有 createIssueForActor 建立的 Hotfix 工單在建立當下即
   // 自動啟動版本化執行引擎（與正式系統行為一致），不需要另外手動呼叫 startWorkflowForIssueSystemTx。
   const hotfix = await buildHotfixWorkflowV1({ actorId: admin.id, reasonCode: "VERIFY_BUILD_HOTFIX_V1", keySuffix: RUN_TAG });
+
+  // ---------------------------------------------------------------------------
+  // Section C：HOTFIX-0033 根因回歸——申請人所屬團隊本身就是 RD 執行團隊（例如 AAD）時，
+  // 直屬主管解析仍須依 UserSupervisorAssignment（申請人本人），不得誤用其他團隊的 LEAD，
+  // 也不得因「申請人團隊＝處理團隊」而略過 RD 接單。刻意排在本節其餘測試（含永久刪除）
+  // 之前執行：generateIssueKey 以現存 Hotfix 筆數計算下一個編號，稍後 B22／B28 永久刪除
+  // 部分 Hotfix 工單後若再建立新工單，會因編號重複使用而撞號（既有、與本次根因無關的
+  // 另一個缺口，已另行於最終報告揭露，本輪不在此修正範圍內），故本節先行建立與送出。
+  // ---------------------------------------------------------------------------
+  console.log("\n=== Section C：多團隊直屬主管解析回歸（HOTFIX-0033 根因）===");
+
+  const aadLead = await createUser("AadLead", "RD");
+  const aadMemberA = await createUser("AadMemberA", "RD");
+  const aadTeam = await createTeamRaw("AAD");
+  await setTeamDomain({ teamId: aadTeam.id, domain: "RD", actorId: admin.id, reasonCode: "VERIFY_C" });
+  await addMember(aadTeam.id, aadLead.id, "LEAD");
+  await addMember(aadTeam.id, aadMemberA.id, "MEMBER");
+  await prisma.userSupervisorAssignment.create({
+    data: { userId: aadMemberA.id, supervisorUserId: aadLead.id, validFrom: new Date(Date.now() - 86_400_000), isPrimary: true, isActive: true, createdByUserId: admin.id },
+  });
+
+  // 另一個不相干 RD 團隊的主管：驗證跨團隊 LEAD 不會被誤判為 AAD 申請人的直屬主管。
+  const iadLead = await createUser("IadLead", "RD");
+  const iadTeam = await createTeamRaw("IAD");
+  await setTeamDomain({ teamId: iadTeam.id, domain: "RD", actorId: admin.id, reasonCode: "VERIFY_C" });
+  await addMember(iadTeam.id, iadLead.id, "LEAD");
+
+  let aadIssue: Awaited<ReturnType<typeof createIssueForActor>> | null = null;
+  await checkAsync("[C1] AAD工程師A 建立並暫存：不解析主管、不建立 ApprovalRecord、仍在 draft", async () => {
+    aadIssue = await createIssueForActor(aadMemberA, buildCreateFormData({ title: "C1-AAD", teamId: aadTeam.id, applicantId: aadMemberA.id }));
+    await saveHotfixDraft({ issueId: aadIssue.id, actorId: aadMemberA.id, fields: {} });
+    const approval = await findActiveApproval(aadIssue.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+    const issue = await prisma.issue.findUniqueOrThrow({ where: { id: aadIssue.id } });
+    const stage = await prisma.workflowStage.findUnique({ where: { id: issue.currentWorkflowStageId! } });
+    return !approval && stage?.stageKey === "draft";
+  });
+
+  await checkAsync("[C2] 正式送出後，resolver 依申請人解析出唯一直屬主管 AadLead，非 IadLead／非 actor", async () => {
+    const submitT = await findTransition(hotfix.version.id, hotfix.stageIds.draft, "submit");
+    await executeIssueTransition({ issueId: aadIssue!.id, transitionId: submitT.id, actorId: aadMemberA.id, reasonCode: "C2" });
+    const approval = await findActiveApproval(aadIssue!.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+    return approval?.expectedApproverUserId === aadLead.id && approval?.expectedApproverUserId !== iadLead.id;
+  });
+
+  await checkAsync("[C3] 工單已進入第 2 關 pendingBusinessApproval，且僅一筆 ACTIVE+PENDING ApprovalRecord", async () => {
+    const issue = await prisma.issue.findUniqueOrThrow({ where: { id: aadIssue!.id } });
+    const stage = await prisma.workflowStage.findUnique({ where: { id: issue.currentWorkflowStageId! } });
+    const count = await prisma.approvalRecord.count({
+      where: { issueId: aadIssue!.id, approvalType: "BUSINESS_APPROVAL", recordStatus: "ACTIVE", decision: "PENDING" },
+    });
+    return stage?.stageKey === "pendingBusinessApproval" && count === 1;
+  });
+
+  await expectError(
+    "[C4] AAD工程師A 本人不可自我核准",
+    async () => {
+      const approval = await findActiveApproval(aadIssue!.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+      return decideApprovalRecord({ approvalRecordId: approval!.id, actorUserId: aadMemberA.id, decision: "APPROVED" });
+    },
+    (err) => err instanceof SelfApprovalError,
+  );
+
+  await expectError(
+    "[C5] 其他團隊主管（IadLead）不具核准資格",
+    async () => {
+      const approval = await findActiveApproval(aadIssue!.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+      return decideApprovalRecord({ approvalRecordId: approval!.id, actorUserId: iadLead.id, decision: "APPROVED" });
+    },
+    (err) => err instanceof ApprovalAuthorityMismatchError,
+  );
+
+  await expectError(
+    "[C6] Admin 不因身分自動取得核准權",
+    async () => {
+      const approval = await findActiveApproval(aadIssue!.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+      return decideApprovalRecord({ approvalRecordId: approval!.id, actorUserId: admin.id, decision: "APPROVED" });
+    },
+    (err) => err instanceof ApprovalAuthorityMismatchError,
+  );
+
+  await checkAsync("[C7] AadLead 同意後，工單進入 RD Triage（待團隊接單），不自動指派給 AAD", async () => {
+    const approval = await findActiveApproval(aadIssue!.id, "BUSINESS_APPROVAL", "pendingBusinessApproval");
+    await decideApprovalRecord({ approvalRecordId: approval!.id, actorUserId: aadLead.id, decision: "APPROVED" });
+    const t = await findTransition(hotfix.version.id, hotfix.stageIds.pendingBusinessApproval, "businessApprove");
+    await executeIssueTransition({ issueId: aadIssue!.id, transitionId: t.id, actorId: aadLead.id, reasonCode: "C7" });
+    const issue = await prisma.issue.findUniqueOrThrow({ where: { id: aadIssue!.id } });
+    const stage = await prisma.workflowStage.findUnique({ where: { id: issue.currentWorkflowStageId! } });
+    return stage?.stageKey === "pendingRdTriage" && issue.assignedTeamId === null;
+  });
+
+  await checkAsync("[C8] AadLead 正式按下接單後，assignedTeamId 才變回 AAD（非自動指派）", async () => {
+    await claimIssueForTeam({ issueId: aadIssue!.id, teamId: aadTeam.id, actorId: aadLead.id, reasonCode: "C8" });
+    const issue = await prisma.issue.findUniqueOrThrow({ where: { id: aadIssue!.id } });
+    return issue.assignedTeamId === aadTeam.id;
+  });
+
+  // ---- 零位／多位主管 fail closed（defense-in-depth：即使繞過 supervisorAssignmentService
+  // 直接寫入異常資料，決策層仍必須 deny-by-default，不得任選第一位）----
+  const ambiguousApplicant = await createUser("AmbiguousApplicant", "RD");
+  await addMember(aadTeam.id, ambiguousApplicant.id, "MEMBER");
+  const secondLeadCandidate = await createUser("SecondLeadCandidate", "RD");
+  await prisma.userSupervisorAssignment.create({
+    data: { userId: ambiguousApplicant.id, supervisorUserId: aadLead.id, validFrom: new Date(Date.now() - 86_400_000), isPrimary: true, isActive: true, createdByUserId: admin.id },
+  });
+  await prisma.userSupervisorAssignment.create({
+    data: { userId: ambiguousApplicant.id, supervisorUserId: secondLeadCandidate.id, validFrom: new Date(Date.now() - 86_400_000), isPrimary: true, isActive: true, createdByUserId: admin.id },
+  });
+
+  await expectError(
+    "[C9] 零位／多位（歧義）主管時 fail closed，不得任選第一位",
+    async () => {
+      const issue = await createIssueForActor(ambiguousApplicant, buildCreateFormData({ title: "C9-Ambiguous", teamId: aadTeam.id, applicantId: ambiguousApplicant.id }));
+      const submitT = await findTransition(hotfix.version.id, hotfix.stageIds.draft, "submit");
+      return executeIssueTransition({ issueId: issue.id, transitionId: submitT.id, actorId: ambiguousApplicant.id, reasonCode: "C9" });
+    },
+    (err) => err instanceof NoEligibleApproverError,
+  );
+  await checkAsync("[C10] fail closed 後該工單仍在 draft、未建立任何 ApprovalRecord", async () => {
+    const issue = await prisma.issue.findFirst({ where: { reporterUserId: ambiguousApplicant.id } });
+    const stage = issue?.currentWorkflowStageId ? await prisma.workflowStage.findUnique({ where: { id: issue.currentWorkflowStageId } }) : null;
+    const approvalCount = await prisma.approvalRecord.count({ where: { issueId: issue!.id } });
+    return stage?.stageKey === "draft" && approvalCount === 0;
+  });
 
   // ---- 團隊／申請人連動查詢授權邊界 ----
   await checkAsync("[B1] Admin 可看到所有團隊", async () => {

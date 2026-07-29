@@ -458,6 +458,35 @@ async function main() {
   await addMember(aadTeam.id, aadLead.id, "LEAD");
   await addMember(aadTeam.id, aadMemberA.id, "MEMBER");
   await addMember(aadTeam.id, aadMemberB.id, "MEMBER");
+  // HOTFIX-0033 根因修正：AAD 原本只作為「接單／指派」示範團隊使用，其成員從未被當作
+  // createIssueForActor 的申請人，因此從未建立 UserSupervisorAssignment。但「團隊」下拉選單
+  // 對任一 active 成員一視同仁（見 teamApplicantService.ts），使用者以 AAD工程師A 建立並送出
+  // Hotfix 是完全合法的路徑，卻因缺少直屬主管指派導致 BUSINESS_APPROVAL 資格解析為空、
+  // fail closed。此處補上 AAD工程師A 的正式直屬主管指派（AAD主管，與其團隊 LEAD 身分一致，
+  // 全 DB 中唯一一筆，不產生第二位候選人），使該示範路徑可正常送到第 2 關。
+  await prisma.userSupervisorAssignment.create({
+    data: {
+      userId: aadMemberA.id,
+      supervisorUserId: aadLead.id,
+      validFrom: new Date(Date.now() - 86_400_000),
+      isPrimary: true,
+      isActive: true,
+      createdByUserId: admin.id,
+    },
+  });
+
+  // HOTFIX-0033 重建示範案例：團隊 AAD、申請人 AAD工程師A，走真正的 createIssueForActor +
+  // submit transition 路徑送出，停在 pendingBusinessApproval（不預先決策），供 AAD主管登入
+  // 驗證第 2 關「同意／駁回」畫面。
+  const aadSupervisorDemo = await createIssueForActor(
+    aadMemberA,
+    buildCreateFormData({ title: "[Hotfix][MyDMS][AAD示範] Hotfix試開單", description: "示範 AAD 團隊申請人送簽至 AAD主管，驗證直屬主管解析。", teamId: aadTeam.id, applicantId: aadMemberA.id }),
+  );
+  await saveHotfixDraft({ issueId: aadSupervisorDemo.id, actorId: aadMemberA.id, fields: { hotfixPriority: "HIGH", dueDate: "2026-08-20" } });
+  {
+    const submitT = await findTransition(hotfix.version.id, hotfix.stageIds.draft, "submit");
+    await executeIssueTransition({ issueId: aadSupervisorDemo.id, transitionId: submitT.id, actorId: aadMemberA.id, reasonCode: "PREVIEW_SUBMIT" });
+  }
 
   // 一張等待 RD 團隊接單工單（IAD、AAD 皆可見「待接單」，皆可按下接單）。
   const rdClaimPending = await createHotfixIssue("RD-CLAIM-PENDING", "會員等級升級通知未發送", "會員消費達等級門檻後，升級通知信件未如預期發送。", ctx);
@@ -615,6 +644,7 @@ async function main() {
   console.log(`  被駁回後回第 1 關（可刪除）：${rejectedToStage1.issueKey}`);
   console.log(`  有附件草稿：${draftWithAttachment.issueKey}`);
   console.log(`  無主管設定（送簽會友善失敗）：${noSupervisorDraft.issueKey}（請以「無主管設定人員」登入後於 Hotfix 建立工單頁按下「建立工單」）`);
+  console.log(`  AAD 團隊申請人送簽示範（HOTFIX-0033 根因修正驗證）：${aadSupervisorDemo.issueKey}，已停在第 2 關「申請人直屬主管簽核」，請以「${aadLead.name}」登入查看 /issues/${aadSupervisorDemo.id}/hotfix/approval/requester`);
   console.log("\n=== 團隊（PM／RD／QA／OP 各團隊皆有 2 位 active 成員＋1 位已停用成員；「無關使用者」不屬於任何團隊）===");
   console.log(`  ${pmTeam.name}／${rdTeam.name}／${qaTeam.name}／${opTeam.name}`);
   console.log(`  ${emptyTeam.name}：空白無引用，可示範 Admin 永久刪除團隊（無法示範「停用團隊」——目前資料模型 Team 無 isActive 欄位，詳見最終報告）`);
