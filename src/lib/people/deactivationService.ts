@@ -16,7 +16,8 @@ import { writeAuditLog } from "../audit";
 import { isWithinHalfOpenWindow } from "../timeWindow";
 import { isClosed } from "../workflow";
 import { getEligibleApproverUserIdsInTx } from "../approvalService";
-import { requirePeopleCapability } from "./access";
+import { requirePeopleCapability, requirePeopleCapabilityInTeamScope } from "./access";
+import { assertLeadTargetInTeam, assertLeadTargetIsNotAnotherLead, assertLeadTargetIsNotSelf, assertTeamKeepsAtLeastOneLead } from "./leadScope";
 import { assertReasonCodeProvided, throwIfInvalid } from "./validation";
 import { PeopleNotFoundError, PeopleStateError } from "./types";
 import type { DeactivationImpactItem, GetUserDeactivationImpactInput, DeactivatePersonInput } from "./types";
@@ -240,7 +241,13 @@ async function deactivatePersonTx(tx: Tx, input: DeactivatePersonInput) {
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "user.deactivate", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.deactivate", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") {
+    assertLeadTargetIsNotSelf(input.actorId, input.userId, "停用成員");
+    await assertLeadTargetInTeam(tx, input.teamScopeId!, input.userId);
+    await assertLeadTargetIsNotAnotherLead(tx, input.teamScopeId!, input.userId);
+    await assertTeamKeepsAtLeastOneLead(tx, input.teamScopeId!, input.userId);
+  }
 
   const target = await tx.user.findUnique({ where: { id: input.userId } });
   if (!target) throw new PeopleNotFoundError(`找不到使用者：${input.userId}`);

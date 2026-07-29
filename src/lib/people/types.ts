@@ -48,6 +48,8 @@ export interface CreatePersonInput {
   initialRole: RoleKey; // 必填：createPerson 一律同時建立對應的 active UserRole
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }
 
 export interface UpdatePersonProfileInput {
@@ -57,12 +59,16 @@ export interface UpdatePersonProfileInput {
   loginIdentifier?: string | null;
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }
 
 export interface ActivatePersonInput {
   userId: string;
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +80,8 @@ export interface AssignSystemRoleInput {
   role: RoleKey;
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }
 
 export interface UpdatePrimaryRoleInput {
@@ -81,6 +89,8 @@ export interface UpdatePrimaryRoleInput {
   role: RoleKey;
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }
 
 export interface RemoveSystemRoleInput {
@@ -88,6 +98,8 @@ export interface RemoveSystemRoleInput {
   role: RoleKey;
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,4 +144,6 @@ export interface DeactivatePersonInput {
   userId: string;
   actorId: string;
   reasonCode: string;
+  /** 團隊主管操作時必填：指定操作範圍所在團隊；Admin 可省略（跨團隊）。見 people/access.ts */
+  teamScopeId?: string | null;
 }

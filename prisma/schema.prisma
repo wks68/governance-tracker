@@ -131,6 +131,12 @@ model Team {
   // 任何「可接單 RD/QA/OP 團隊」清單中（deny-by-default）。
   domain String?
 
+  // ---- 成員管理權限收斂新增：團隊啟用狀態 ----
+  // 既有團隊一律 true（additive migration，預設值不改變任何既有資料的語意）。
+  // 停用只影響「是否能承接新工作」：不得再被選為建立工單的團隊，也不得接單；
+  // 既有 membership、已承接工單與所有歷史紀錄一律保留不動。
+  isActive Boolean @default(true)
+
   members        TeamMember[]
   systemMappings SystemTeamMapping[]
   assignedIssues Issue[]             @relation("IssueAssignedTeam")

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ActionErrorText, ActionSuccessText } from "@/components/ActionResultBanner";
-import { updateTeamAction, deleteTeamAction } from "@/app/admin/teams/actions";
+import { updateTeamAction, deleteTeamAction, setTeamActiveStateAction } from "@/app/admin/teams/actions";
 import ConfirmButton from "@/components/ConfirmButton";
 
 export default function EditTeamPanel({
@@ -11,11 +11,13 @@ export default function EditTeamPanel({
   initialName,
   initialDescription,
   canDelete,
+  isActive,
 }: {
   teamId: string;
   initialName: string;
   initialDescription: string;
   canDelete: boolean;
+  isActive: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
@@ -23,6 +25,7 @@ export default function EditTeamPanel({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function save() {
@@ -39,6 +42,23 @@ export default function EditTeamPanel({
         return;
       }
       setSuccess(result.message);
+      router.refresh();
+    });
+  }
+
+  // 停用只讓團隊無法承接新工作（建立工單選項／接單資格），不刪除任何既有資料。
+  function toggleActive() {
+    setToggleError(null);
+    const fd = new FormData();
+    fd.set("teamId", teamId);
+    fd.set("isActive", String(!isActive));
+    fd.set("reasonCode", isActive ? "TEAM_DEACTIVATED_BY_ADMIN" : "TEAM_ACTIVATED_BY_ADMIN");
+    startTransition(async () => {
+      const result = await setTeamActiveStateAction(fd);
+      if (!result.ok) {
+        setToggleError(result.message);
+        return;
+      }
       router.refresh();
     });
   }
@@ -86,12 +106,19 @@ export default function EditTeamPanel({
         >
           {isPending ? "儲存中…" : "儲存"}
         </button>
+        <ConfirmButton
+          label={isActive ? "停用團隊" : "啟用團隊"}
+          confirmLabel={isActive ? "確定停用？停用後無法承接新工單" : "確定啟用？"}
+          disabled={isPending}
+          onConfirm={toggleActive}
+        />
         {canDelete ? (
           <ConfirmButton label="永久刪除團隊" confirmLabel="確定永久刪除？" disabled={isPending} onConfirm={remove} />
         ) : (
           <span className="text-xs text-gray-400">此團隊已被工單、成員歷程或核准紀錄引用，無法永久刪除。</span>
         )}
       </div>
+      {toggleError && <p className="text-xs text-danger-text">{toggleError}</p>}
       {deleteError && <p className="text-xs text-danger-text">{deleteError}</p>}
     </section>
   );

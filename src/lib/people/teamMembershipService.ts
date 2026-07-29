@@ -11,7 +11,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
 import { getEligibleApproverUserIdsInTx } from "../approvalService";
-import { requirePeopleCapability } from "./access";
+import { requirePeopleCapabilityInTeamScope } from "./access";
+import { assertLeadTargetIsNotSelf, assertTeamKeepsAtLeastOneLead } from "./leadScope";
 import { assertReasonCodeProvided, throwIfInvalid } from "./validation";
 import { PeopleNotFoundError, PeopleStateError } from "./types";
 import type { AddTeamMemberInput, RemoveTeamMemberInput } from "./types";
@@ -22,14 +23,15 @@ type Tx = Prisma.TransactionClient;
 // addTeamMember：新增或重新啟用一筆 MEMBER 身分的 TeamMember
 // ---------------------------------------------------------------------------
 
-async function addTeamMemberTx(tx: Tx, input: AddTeamMemberInput) {
+// 匯出供 memberDirectoryService 於同一 transaction 內組合使用（授權仍在本函式內執行）。
+export async function addTeamMemberTx(tx: Tx, input: AddTeamMemberInput) {
   const issues: string[] = [];
   if (!input.teamId) issues.push("teamId 不得為空");
   if (!input.userId) issues.push("userId 不得為空");
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "team.manageMembers", tx);
+  await requirePeopleCapabilityInTeamScope(input.actorId, "team.manageMembers", input.teamId, tx);
 
   const [team, target] = await Promise.all([
     tx.team.findUnique({ where: { id: input.teamId } }),
@@ -106,7 +108,10 @@ async function removeTeamMemberTx(tx: Tx, input: RemoveTeamMemberInput) {
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "team.manageMembers", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "team.manageMembers", input.teamId, tx);
+  if (grant === "TEAM_LEAD") assertLeadTargetIsNotSelf(input.actorId, input.userId, "移除團隊成員");
+  // 不論授權來源為何，都不得讓團隊失去最後一位啟用中主管。
+  await assertTeamKeepsAtLeastOneLead(tx, input.teamId, input.userId);
 
   const [team, target] = await Promise.all([
     tx.team.findUnique({ where: { id: input.teamId } }),

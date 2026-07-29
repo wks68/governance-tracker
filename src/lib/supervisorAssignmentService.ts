@@ -61,6 +61,22 @@ export interface CreateSupervisorAssignmentInput {
 }
 
 async function createSupervisorAssignmentTx(tx: Tx, input: CreateSupervisorAssignmentInput) {
+  const ctx = await resolveGovernanceAccessContext(input.actorId, tx);
+  if (!ctx.canManageSupervisors) {
+    throw new GovernanceAccessDeniedError("僅具備 governance.manageSupervisors 能力者可維護主管指派");
+  }
+  return createSupervisorAssignmentCoreTx(tx, input);
+}
+
+/**
+ * 成員管理權限收斂新增：不含授權檢查的建立核心。
+ *
+ * 只有「已經在自己的服務層完成授權」的呼叫端可以使用（目前僅
+ * src/lib/people/memberDirectoryService.ts 的團隊主管範圍授權路徑）。驗證、重疊檢查、
+ * 循環檢查與 AuditLog 全部留在這裡，避免第二份實作；授權則刻意留給呼叫端，因為
+ * 「團隊主管替自己團隊成員設定自己為主管」不屬於 governance.manageSupervisors 能力。
+ */
+export async function createSupervisorAssignmentCoreTx(tx: Tx, input: CreateSupervisorAssignmentInput) {
   const isPrimary = input.isPrimary ?? true;
   const issues: string[] = [];
   if (!input.userId) issues.push("userId 不得為空");
@@ -73,11 +89,6 @@ async function createSupervisorAssignmentTx(tx: Tx, input: CreateSupervisorAssig
   }
   if (!input.reasonCode?.trim()) issues.push("reasonCode 不得為空");
   if (issues.length > 0) throw new GovernanceValidationError(issues);
-
-  const ctx = await resolveGovernanceAccessContext(input.actorId, tx);
-  if (!ctx.canManageSupervisors) {
-    throw new GovernanceAccessDeniedError("僅具備 governance.manageSupervisors 能力者可維護主管指派");
-  }
 
   const [userRow, supervisorRow] = await Promise.all([
     tx.user.findUnique({ where: { id: input.userId } }),
@@ -156,12 +167,16 @@ export interface EndSupervisorAssignmentInput {
 }
 
 async function endSupervisorAssignmentTx(tx: Tx, input: EndSupervisorAssignmentInput) {
-  if (!input.reasonCode?.trim()) throw new GovernanceValidationError(["reasonCode 不得為空"]);
-
   const ctx = await resolveGovernanceAccessContext(input.actorId, tx);
   if (!ctx.canManageSupervisors) {
     throw new GovernanceAccessDeniedError("僅具備 governance.manageSupervisors 能力者可終止主管指派");
   }
+  return endSupervisorAssignmentCoreTx(tx, input);
+}
+
+/** 不含授權檢查的終止核心，使用條件同 createSupervisorAssignmentCoreTx。 */
+export async function endSupervisorAssignmentCoreTx(tx: Tx, input: EndSupervisorAssignmentInput) {
+  if (!input.reasonCode?.trim()) throw new GovernanceValidationError(["reasonCode 不得為空"]);
 
   const assignment = await tx.userSupervisorAssignment.findUnique({ where: { id: input.assignmentId } });
   if (!assignment) throw new GovernanceNotFoundError(`找不到主管指派：${input.assignmentId}`);

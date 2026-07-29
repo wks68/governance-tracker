@@ -1,11 +1,9 @@
 // 建立工單／團隊整合修正新增：Admin 團隊 CRUD 服務層。
 //
-// 重要資料模型缺口（本輪不新增 Schema／Migration，詳見最終報告）：Team model 目前沒有
-// isActive／disabledAt 等欄位，因此「啟用團隊／停用團隊」這個規格要求的動作在目前資料模型下
-// 無法表示——本檔案只能提供「建立／編輯名稱說明／（無引用時）永久刪除」，不提供停用。
-// 已被引用的團隊在目前資料模型下沒有任何下架手段（既不能停用、也不能刪除），只能繼續存在於
-// 團隊清單中；這是本檔案刻意的 fail-closed 選擇（寧可不提供停用，也不冒用其他欄位或刪除有
-// 引用的資料列冒充停用）。
+// 成員管理權限收斂更新：Team.isActive 已新增（migration 20260729120000_add_team_is_active），
+// 因此本檔案改為提供完整的「建立／編輯名稱說明／啟用／停用／（無引用時）永久刪除」。
+// 停用只影響「是否能承接新工作」（建立工單的團隊選項、接單資格），既有 membership、
+// 已承接工單與所有歷史紀錄一律保留不動。
 //
 // 授權一律使用 active UserRole（admin.full 能力），不得使用 User.role。
 
@@ -176,4 +174,45 @@ export async function deleteTeamIfUnreferenced(input: { teamId: string; actorId:
     summary: `永久刪除空白（無引用）團隊「${team.name}」`,
     actorUserId: input.actorId,
   });
+}
+
+// ---------------------------------------------------------------------------
+// 成員管理權限收斂新增：啟用／停用團隊（Admin only）
+//
+// 停用不刪除任何資料、不解除任何 membership、不影響既有工單——只讓團隊無法再承接新工作
+// （見 teamApplicantService.listCreatableTeamsForActor／claimService.evaluateClaimEligibility）。
+// ---------------------------------------------------------------------------
+
+export async function setTeamActiveState(input: { teamId: string; isActive: boolean; actorId: string; reasonCode: string }) {
+  await requireAdmin(input.actorId);
+  if (!input.reasonCode?.trim()) throw new TeamManagementValidationError("原因不得為空");
+
+  const team = await prisma.team.findUnique({ where: { id: input.teamId } });
+  if (!team) throw new TeamManagementValidationError("找不到此團隊");
+  if (team.isActive === input.isActive) return team; // no-op：不重寫 AuditLog
+
+  if (!input.isActive) {
+    // fail closed：仍有進行中工單指派給此團隊時不得停用，避免出現「無人可處理」的工單。
+    const activeIssues = await prisma.issue.count({
+      where: { assignedTeamId: input.teamId, workflowStatus: { notIn: ["closed", "cancelled"] } },
+    });
+    if (activeIssues > 0) {
+      throw new TeamManagementStateError(`此團隊尚有 ${activeIssues} 筆未結案工單，不得停用`);
+    }
+  }
+
+  const updated = await prisma.team.update({ where: { id: input.teamId }, data: { isActive: input.isActive } });
+
+  await writeAuditLog({
+    entityType: "Team",
+    entityId: team.id,
+    actionType: input.isActive ? "TeamActivated" : "TeamDeactivated",
+    summary: `${input.isActive ? "啟用" : "停用"}團隊「${team.name}」`,
+    actorUserId: input.actorId,
+    fromValue: String(team.isActive),
+    toValue: String(input.isActive),
+    reasonCode: input.reasonCode,
+  });
+
+  return updated;
 }

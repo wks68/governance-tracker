@@ -63,7 +63,8 @@ export async function listClaimableTeamsForStage(issueId: string, actorId: strin
     return { claimable: false, domain, alreadyClaimedTeamName: team?.name ?? "（未知團隊）", teams: [] };
   }
 
-  const teams = await prisma.team.findMany({ where: { domain }, orderBy: { name: "asc" } });
+  // 停用中的團隊不得承接新工作，因此不出現在可接單清單。
+  const teams = await prisma.team.findMany({ where: { domain, isActive: true }, orderBy: { name: "asc" } });
   const memberships = await prisma.teamMember.findMany({
     where: { userId: actorId, isActive: true, membershipRole: "LEAD", teamId: { in: teams.map((t) => t.id) } },
   });
@@ -103,6 +104,9 @@ export async function evaluateClaimEligibility(
 
   const team = await client.team.findUnique({ where: { id: teamId } });
   if (!team) return { eligible: false, reasons: ["找不到此團隊"] };
+  if (!team.isActive) {
+    reasons.push("此團隊已停用，不得承接新工單");
+  }
   if (team.domain !== requiredDomain) {
     reasons.push(`團隊領域為「${team.domain ?? "未分類"}」，需要「${requiredDomain}」`);
   }

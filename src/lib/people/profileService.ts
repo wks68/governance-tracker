@@ -6,7 +6,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
-import { requirePeopleCapability } from "./access";
+import { requirePeopleCapabilityInTeamScope } from "./access";
+import { assertLeadMayUseRole, assertLeadTargetInTeam, assertLeadTargetIsNotAnotherLead, assertLeadTargetIsNotSelf } from "./leadScope";
 import { assertReasonCodeProvided, assertValidProfileFields, assertValidRoleKey, throwIfInvalid } from "./validation";
 import { PeopleNotFoundError, PeopleStateError, PeopleValidationError } from "./types";
 import type { CreatePersonInput, UpdatePersonProfileInput, ActivatePersonInput } from "./types";
@@ -21,7 +22,8 @@ function isUniqueConstraintError(err: unknown): boolean {
 // createPerson：建立 User＋對應 active UserRole＋UserRoleHistory，全部同一 transaction
 // ---------------------------------------------------------------------------
 
-async function createPersonTx(tx: Tx, input: CreatePersonInput) {
+// 匯出供 memberDirectoryService 於同一 transaction 內組合使用（授權仍在本函式內執行）。
+export async function createPersonTx(tx: Tx, input: CreatePersonInput) {
   const issues: string[] = [];
   if (!input.name?.trim()) issues.push("name 不得為空");
   assertValidProfileFields({ email: input.email }, issues);
@@ -31,7 +33,8 @@ async function createPersonTx(tx: Tx, input: CreatePersonInput) {
 
   // 不允許建立 Break-glass Admin：CreatePersonInput 本身不曝露 isBreakGlassAdmin 欄位，
   // 一律建立為一般（非 Break-glass）使用者。
-  await requirePeopleCapability(input.actorId, "user.create", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.create", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") assertLeadMayUseRole(input.initialRole);
 
   const normalizedLoginIdentifier = input.loginIdentifier?.trim() ? input.loginIdentifier.trim() : null;
   const conflicts: string[] = [];
@@ -123,7 +126,11 @@ async function updatePersonProfileTx(tx: Tx, input: UpdatePersonProfileInput) {
   assertValidProfileFields({ name: input.name, department: input.department }, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "user.update", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.update", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") {
+    await assertLeadTargetInTeam(tx, input.teamScopeId!, input.userId);
+    await assertLeadTargetIsNotAnotherLead(tx, input.teamScopeId!, input.userId);
+  }
 
   const target = await tx.user.findUnique({ where: { id: input.userId } });
   if (!target) throw new PeopleNotFoundError(`找不到使用者：${input.userId}`);
@@ -177,7 +184,11 @@ async function activatePersonTx(tx: Tx, input: ActivatePersonInput) {
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "user.activate", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.activate", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") {
+    assertLeadTargetIsNotSelf(input.actorId, input.userId, "啟用成員");
+    await assertLeadTargetIsNotAnotherLead(tx, input.teamScopeId!, input.userId);
+  }
 
   const target = await tx.user.findUnique({ where: { id: input.userId } });
   if (!target) throw new PeopleNotFoundError(`找不到使用者：${input.userId}`);

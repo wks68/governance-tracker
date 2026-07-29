@@ -8,7 +8,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
-import { requirePeopleCapability } from "./access";
+import { requirePeopleCapabilityInTeamScope } from "./access";
+import { assertLeadMayUseRole, assertLeadTargetInTeam, assertLeadTargetIsNotAnotherLead, assertLeadTargetIsNotSelf } from "./leadScope";
 import { assertReasonCodeProvided, assertValidRoleKey, throwIfInvalid } from "./validation";
 import { PeopleNotFoundError, PeopleStateError } from "./types";
 import type { AssignSystemRoleInput, UpdatePrimaryRoleInput, RemoveSystemRoleInput } from "./types";
@@ -25,7 +26,13 @@ async function assignSystemRoleTx(tx: Tx, input: AssignSystemRoleInput) {
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "user.assignRole", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.assignRole", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") {
+    assertLeadMayUseRole(input.role);
+    assertLeadTargetIsNotSelf(input.actorId, input.userId, "指派系統角色");
+    await assertLeadTargetInTeam(tx, input.teamScopeId!, input.userId);
+    await assertLeadTargetIsNotAnotherLead(tx, input.teamScopeId!, input.userId);
+  }
 
   const target = await tx.user.findUnique({ where: { id: input.userId } });
   if (!target) throw new PeopleNotFoundError(`找不到使用者：${input.userId}`);
@@ -89,7 +96,13 @@ async function updatePrimaryRoleTx(tx: Tx, input: UpdatePrimaryRoleInput) {
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "user.assignRole", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.assignRole", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") {
+    assertLeadMayUseRole(input.role);
+    assertLeadTargetIsNotSelf(input.actorId, input.userId, "變更主要角色");
+    await assertLeadTargetInTeam(tx, input.teamScopeId!, input.userId);
+    await assertLeadTargetIsNotAnotherLead(tx, input.teamScopeId!, input.userId);
+  }
 
   const target = await tx.user.findUnique({ where: { id: input.userId } });
   if (!target) throw new PeopleNotFoundError(`找不到使用者：${input.userId}`);
@@ -154,7 +167,13 @@ async function removeSystemRoleTx(tx: Tx, input: RemoveSystemRoleInput) {
   assertReasonCodeProvided(input.reasonCode, issues);
   throwIfInvalid(issues);
 
-  await requirePeopleCapability(input.actorId, "user.removeRole", tx);
+  const grant = await requirePeopleCapabilityInTeamScope(input.actorId, "user.removeRole", input.teamScopeId, tx);
+  if (grant === "TEAM_LEAD") {
+    assertLeadMayUseRole(input.role);
+    assertLeadTargetIsNotSelf(input.actorId, input.userId, "移除系統角色");
+    await assertLeadTargetInTeam(tx, input.teamScopeId!, input.userId);
+    await assertLeadTargetIsNotAnotherLead(tx, input.teamScopeId!, input.userId);
+  }
 
   const target = await tx.user.findUnique({ where: { id: input.userId } });
   if (!target) throw new PeopleNotFoundError(`找不到使用者：${input.userId}`);
