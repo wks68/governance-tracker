@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
-import { loadHotfixPageContext, isActorOriginalReporter, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
+import { loadHotfixPageContext, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { HOTFIX_PRIORITIES } from "@/lib/hotfix-ui/priority";
-import { listCreatableTeamsForActor, listActiveApplicantsForTeam } from "@/lib/team-applicant/teamApplicantService";
+import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
+import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import HotfixDraftForm from "./HotfixDraftForm";
@@ -20,17 +21,21 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
   }
   if (ctx.redirectTo) redirect(ctx.redirectTo);
 
-  const isResponsible = isActorOriginalReporter(ctx);
-  const [attachments, teams] = await Promise.all([
+  const isResponsible = await canActorEditHotfixDraft(params.id, actor.id);
+  const [attachments, scope] = await Promise.all([
     listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: ctx.runtime.currentStage.stageKey }),
-    isResponsible ? listCreatableTeamsForActor(actor.id) : Promise.resolve([]),
+    isResponsible ? resolveIssueCreationScope(actor.id) : Promise.resolve(null),
   ]);
 
   // 申請人下拉選單的初始選項一律由服務層提供（含正式角色名稱）。先前這裡沒有帶入清單，
   // 前端只好用申請人姓名自行拼一筆 roleLabel="" 的假選項，畫面因此顯示成「Jonus（ ）」。
+  const formTeamId = scope?.fixedTeamId ?? ctx.issue.assignedTeamId ?? "";
+  const formApplicantId = scope?.fixedApplicant?.id ?? ctx.issue.reporterUserId ?? "";
   const initialApplicants =
-    isResponsible && ctx.issue.assignedTeamId
-      ? await listActiveApplicantsForTeam(actor.id, ctx.issue.assignedTeamId).catch(() => undefined)
+    isResponsible && scope && formTeamId && scope.canChooseApplicant && !scope.blockedReason
+      ? await listSelectableApplicants(actor.id, formTeamId).catch(() => undefined)
+      : scope?.fixedApplicant
+        ? [scope.fixedApplicant]
       : undefined;
 
   return (
@@ -46,11 +51,11 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
             riskLevel: ctx.ticketBasicInfo.riskLevel,
             dueDate: ctx.ticketBasicInfo.dueDate ? ctx.ticketBasicInfo.dueDate.slice(0, 10) : "",
             hotfixPriority: ctx.ticketBasicInfo.hotfixPriority ?? "",
-            teamId: ctx.issue.assignedTeamId ?? "",
-            applicantId: ctx.issue.reporterUserId ?? "",
+            teamId: formTeamId,
+            applicantId: formApplicantId,
           }}
           priorities={HOTFIX_PRIORITIES}
-          teams={teams}
+          scope={scope!}
           initialApplicants={initialApplicants}
         />
       ) : (

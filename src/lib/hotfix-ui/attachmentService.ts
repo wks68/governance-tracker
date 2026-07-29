@@ -6,6 +6,7 @@ import { prisma } from "../prisma";
 import { evaluateActorEligibilityForStage } from "../workflowExecutionService";
 import { writeAttachmentFile, deleteAttachmentFileIfExists, attachmentFileSize, MAX_ATTACHMENT_BYTES, ATTACHMENT_URL_PREFIX } from "./attachmentStorage";
 import { nineStageIndexOfStageKey, nineStageLabelOfIndex } from "./nineStage";
+import { canActorEditHotfixDraft } from "./draftService";
 
 export class AttachmentValidationError extends Error {
   constructor(message: string) {
@@ -56,9 +57,16 @@ async function requireActorCanManageAttachmentsForCurrentStage(issueId: string, 
     throw new AttachmentAuthorizationError("主管簽核頁僅能預覽附件，不得上傳或刪除");
   }
 
-  // stage1（draft）／stage9（pendingReporterConfirmation/reporterConfirming）：責任角色是
-  // 原始填單人，不是團隊成員身分，需求角色判斷方式與一般執行關卡不同。
-  if (stage.stageKey === "draft" || stage.stageKey === "pendingReporterConfirmation" || stage.stageKey === "reporterConfirming") {
+  // stage1 允許實際建立者或申請人操作附件；兩者在 Admin／主管代建時不是同一人。
+  if (stage.stageKey === "draft") {
+    if (!(await canActorEditHotfixDraft(issueId, actorId))) {
+      throw new AttachmentAuthorizationError("僅實際建立者或申請人可於此關卡操作附件");
+    }
+    return { stageKey: stage.stageKey, assignedTeamId: issue.assignedTeamId };
+  }
+
+  // stage9 的責任角色固定為申請人。
+  if (stage.stageKey === "pendingReporterConfirmation" || stage.stageKey === "reporterConfirming") {
     if (issue.reporterUserId !== actorId) {
       throw new AttachmentAuthorizationError("僅原始填單人可於此關卡操作附件");
     }

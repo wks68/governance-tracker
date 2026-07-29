@@ -6,14 +6,16 @@
 // actor、重新驗證 actor 是否有權使用該 teamId——不信任前端傳入的任何團隊/身分宣稱。
 
 import { requireCurrentUser } from "@/lib/auth";
-import { listCreatableTeamsForActor, listActiveApplicantsForTeam, type TeamOption, type ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
+import { type TeamOption, type ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
+import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
 export async function listCreatableTeamsForActorAction(): Promise<ActionResult<TeamOption[]>> {
   const actor = await requireCurrentUser();
   try {
-    const teams = await listCreatableTeamsForActor(actor.id);
-    return actionOk("ok", teams);
+    const scope = await resolveIssueCreationScope(actor.id);
+    if (scope.blockedReason) return { ok: false, code: "ISSUE_CREATION_SCOPE_BLOCKED", message: scope.blockedReason };
+    return actionOk("ok", scope.teams);
   } catch (err) {
     return toActionResult(err);
   }
@@ -23,7 +25,7 @@ export async function listApplicantsForTeamAction(teamId: string): Promise<Actio
   const actor = await requireCurrentUser();
   if (!teamId) return actionOk("ok", []);
   try {
-    const applicants = await listActiveApplicantsForTeam(actor.id, teamId);
+    const applicants = await listSelectableApplicants(actor.id, teamId);
     return actionOk("ok", applicants);
   } catch (err) {
     return toActionResult(err);

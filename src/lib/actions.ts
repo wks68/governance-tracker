@@ -9,11 +9,13 @@ import { getVisibleFieldTemplate, nextStatusOf, prevStatusOf, isClosed, statusLa
 import { generateAiSuggestion, AiSuggestionType, AiContext } from "./mockAi";
 import { requireCurrentUser } from "./auth";
 import { isIssueOnVersionedWorkflow } from "./workflowExecutionService";
-import { createIssueForActor, getFieldsMap, readDynFieldValue, recalcIssue } from "./issueCreation";
-import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
+import { createIssueForActor, getFieldsMap, readDynFieldValue, recalcIssue, IssueCreationValidationError } from "./issueCreation";
+import { assertCreationTeamAndApplicant } from "./team-applicant/issueCreationScope";
 import { NoEligibleApproverError } from "./approvalService";
 import { routeForStageKey } from "./hotfix-ui/nineStage";
 import { actionOk, toActionResult, type ActionResult } from "./actionResult";
+import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./constants";
+import { requireCapability } from "./permissions";
 
 // ---------------------------------------------------------------------------
 // 建立工單
@@ -72,18 +74,35 @@ export async function createIssueAction(formData: FormData): Promise<ActionResul
 
 export async function updateIssueAction(issueId: string, formData: FormData) {
   const currentUser = await requireCurrentUser();
+  await requireCapability(currentUser, "issue.edit");
   const issue = await prisma.issue.findUniqueOrThrow({ where: { id: issueId } });
 
   const changes: string[] = [];
 
   const baseFields: Record<string, string> = {
-    title: String(formData.get("title") || issue.title),
-    description: String(formData.get("description") || issue.description),
-    systemName: String(formData.get("systemName") || issue.systemName),
-    environment: String(formData.get("environment") || issue.environment),
-    riskLevel: String(formData.get("riskLevel") || issue.riskLevel),
-    priority: String(formData.get("priority") || issue.priority),
+    title: String(formData.get("title") ?? "").trim(),
+    description: String(formData.get("description") ?? "").trim(),
+    systemName: String(formData.get("systemName") ?? ""),
+    environment: String(formData.get("environment") ?? ""),
+    riskLevel: String(formData.get("riskLevel") ?? ""),
+    priority: String(formData.get("priority") ?? issue.priority),
   };
+  const missing = [
+    !baseFields.title ? "標題" : null,
+    !baseFields.description ? "問題現象" : null,
+    !baseFields.systemName ? "系統名稱" : null,
+    !baseFields.environment ? "環境" : null,
+    !baseFields.riskLevel ? "風險等級" : null,
+  ].filter((label): label is string => label !== null);
+  if (missing.length > 0) {
+    throw new IssueCreationValidationError(`請先填寫必填欄位：${missing.join("、")}`);
+  }
+  if (!isValidSystemName(baseFields.systemName)) throw new IssueCreationValidationError("請選擇系統名稱");
+  if (!ENVIRONMENTS.includes(baseFields.environment)) throw new IssueCreationValidationError("請選擇環境");
+  if (!RISK_LEVELS.includes(baseFields.riskLevel)) throw new IssueCreationValidationError("請選擇風險等級");
+  if (baseFields.priority !== "" && !PRIORITIES.includes(baseFields.priority)) {
+    throw new IssueCreationValidationError("請選擇優先級");
+  }
 
   const labelMap: Record<string, string> = {
     title: "標題",
@@ -102,6 +121,9 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
   }
 
   const dueDateRaw = String(formData.get("dueDate") || "");
+  if (!dueDateRaw || Number.isNaN(new Date(dueDateRaw).getTime())) {
+    throw new IssueCreationValidationError("請選擇有效的預計完成日");
+  }
   const newDueDate = dueDateRaw ? new Date(dueDateRaw) : null;
   if ((issue.dueDate?.toISOString().slice(0, 10) || "") !== (newDueDate?.toISOString().slice(0, 10) || "")) {
     changes.push(`到期日：「${issue.dueDate ? issue.dueDate.toISOString().slice(0, 10) : "（空白）"}」→「${newDueDate ? newDueDate.toISOString().slice(0, 10) : "（空白）"}」`);
@@ -115,9 +137,10 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
   let newReporterUserId = issue.reporterUserId;
   let newReporterName = issue.reporter;
   let newAssignedTeamId = issue.assignedTeamId;
-  if (teamId && applicantId) {
-    await assertActorCanUseTeam(currentUser.id, teamId);
-    const applicant = await assertValidApplicantForTeam(teamId, applicantId);
+  if (!teamId) throw new IssueCreationValidationError("請選擇團隊名稱");
+  if (!applicantId) throw new IssueCreationValidationError("請選擇申請人");
+  {
+    const applicant = await assertCreationTeamAndApplicant(currentUser.id, teamId, applicantId);
     if (teamId !== issue.assignedTeamId) {
       const team = await prisma.team.findUnique({ where: { id: teamId } });
       changes.push(`團隊：「${issue.assignedTeamId ?? "（未指派）"}」→「${team?.name ?? teamId}」`);

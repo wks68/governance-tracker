@@ -1,12 +1,19 @@
 import { requireCurrentUser } from "@/lib/auth";
-import { listCreatableTeamsForActor } from "@/lib/team-applicant/teamApplicantService";
+import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import NewIssueForm from "@/components/NewIssueForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewIssuePage() {
   const currentUser = await requireCurrentUser();
-  const teams = await listCreatableTeamsForActor(currentUser.id);
+  const scope = await resolveIssueCreationScope(currentUser.id);
+  const initialTeamId = scope.fixedTeamId ?? "";
+  const initialApplicants =
+    initialTeamId && scope.canChooseApplicant && !scope.blockedReason
+      ? await listSelectableApplicants(currentUser.id, initialTeamId)
+      : scope.fixedApplicant
+        ? [scope.fixedApplicant]
+        : undefined;
 
-  return <NewIssueForm teams={teams} />;
+  return <NewIssueForm scope={scope} initialApplicants={initialApplicants} />;
 }

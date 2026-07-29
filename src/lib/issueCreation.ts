@@ -21,11 +21,12 @@ import { calculateStatusLight, suggestWaitingRole } from "./statusLight";
 import { evaluateGateRules } from "./gateRules";
 import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, isClosed, statusLabel } from "./workflow";
 import { requireCapability } from "./permissions";
-import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
+import { assertCreationTeamAndApplicant } from "./team-applicant/issueCreationScope";
 import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./hotfix-ui/priority";
 import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx, executeIssueTransitionInTx } from "./workflowExecutionService";
 import { missingDraftFields } from "./hotfix-ui/draftService";
 import { allocateNextIssueKey, isTransientTransactionConflict } from "./issue-key-sequence";
+import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./constants";
 import { Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
 
@@ -182,15 +183,36 @@ export async function createIssueForActor(
   const dueDateRaw = String(formData.get("dueDate") || "");
   const hotfixPriority = String(formData.get("hotfixPriority") || "");
 
-  // 團隊名稱／申請人一律伺服器端重新驗證，不信任前端下拉選單結果或任何 hidden input：
-  // teamId 必須存在，applicantId 必須是該 team 目前 active 的成員，actor 必須有權以此
-  // team 建立工單（Admin 可任選；非 Admin 僅能選自己是 active 成員的團隊）。
+  // 系統名稱值域收斂：前端已改為固定四項下拉選單，但一律不信任——非空值必須落在
+  // SYSTEM_NAME_OPTIONS 內，偽造其他 systemName（含既有歷史工單的舊系統名稱）一律拒絕。
+  // 空值只在「暫存」時允許（沿用既有草稿可不完整的規則），正式建立時由下方必填檢查擋下。
+  if (systemName !== "" && !isValidSystemName(systemName)) {
+    throw new IssueCreationValidationError("請選擇系統名稱");
+  }
+  if (environment !== "" && !ENVIRONMENTS.includes(environment)) {
+    throw new IssueCreationValidationError("請選擇環境");
+  }
+  if (riskLevel !== "" && !RISK_LEVELS.includes(riskLevel)) {
+    throw new IssueCreationValidationError("請選擇風險等級");
+  }
+  if (priority !== "" && !PRIORITIES.includes(priority)) {
+    throw new IssueCreationValidationError("請選擇優先級");
+  }
+  if (hotfixPriority !== "" && !HOTFIX_PRIORITIES.some((p) => p.value === hotfixPriority)) {
+    throw new IssueCreationValidationError("請選擇 Hotfix 工單優先級");
+  }
+  if (dueDateRaw !== "" && Number.isNaN(new Date(dueDateRaw).getTime())) {
+    throw new IssueCreationValidationError("請選擇有效的預計完成日");
+  }
+
+  // 團隊名稱／申請人一律伺服器端重新推導身分後驗證，不信任前端下拉選單結果、hidden input
+  // 或任何 isAdmin／isLead／role 宣稱：一般成員只能 applicant=自己＋自己的正式團隊；團隊
+  // 主管只能使用自己擔任 active LEAD 的團隊並選該團隊 active 成員；只有 Admin 可跨團隊代建。
   const teamId = String(formData.get("teamId") || "");
   const applicantId = String(formData.get("applicantId") || "");
   if (!teamId) throw new IssueCreationValidationError("請選擇團隊名稱");
   if (!applicantId) throw new IssueCreationValidationError("請選擇申請人");
-  await assertActorCanUseTeam(actor.id, teamId);
-  const applicant = await assertValidApplicantForTeam(teamId, applicantId);
+  await assertCreationTeamAndApplicant(actor.id, teamId, applicantId);
 
   const initialStatus = workflow[0].key;
   const waitingRole = suggestWaitingRole(issueType, initialStatus);
@@ -198,8 +220,8 @@ export async function createIssueForActor(
   // 雙重提交流程修正：要求「建立後直接送簽」時，Hotfix 必填欄位必須在任何寫入之前就檢查
   // 完畢——不得先建出一張缺欄位的草稿，再要求使用者到第 1 關頁面補齊後按第二次送出。
   const submitForApproval = options.submitForApproval === true;
-  if (submitForApproval && issueType === "Hotfix") {
-    const missing = missingDraftFields({
+  if (submitForApproval) {
+    const baseFields = {
       title,
       description,
       systemName,
@@ -209,7 +231,11 @@ export async function createIssueForActor(
       hotfixPriority,
       teamId,
       applicantId,
-    });
+    };
+    const missing =
+      issueType === "Hotfix"
+        ? missingDraftFields(baseFields)
+        : missingDraftFields(baseFields).filter((label) => label !== "Hotfix 工單優先級");
     if (missing.length > 0) {
       throw new IssueCreationValidationError(`請先填寫必填欄位：${missing.join("、")}`);
     }
@@ -238,8 +264,6 @@ export async function createIssueForActor(
     .map((f) => ({ fieldKey: f.key, fieldLabel: f.label, fieldValue: readDynFieldValue(formData, f) }))
     .filter((row) => row.fieldValue !== "");
 
-  const team = await prisma.team.findUnique({ where: { id: teamId } });
-
   let issue!: Awaited<ReturnType<typeof runCreateIssueTransaction>>;
   for (let attempt = 1; ; attempt++) {
     try {
@@ -254,6 +278,11 @@ export async function createIssueForActor(
 
   async function runCreateIssueTransaction() {
     return prisma.$transaction(async (tx) => {
+      // 寫入 transaction 內再次解析 scope，避免權限檢查與實際建立之間的團隊／成員狀態
+      // 變更造成 TOCTOU。actor 與 applicant 分開保存：reporterUserId 是申請人，
+      // AuditLog.actorUserId 是實際建立者。
+      const applicant = await assertCreationTeamAndApplicant(actor.id, teamId, applicantId, tx);
+      const team = await tx.team.findUniqueOrThrow({ where: { id: teamId } });
       const issueKey = await allocateNextIssueKey(tx, issueType);
       const created = await tx.issue.create({
         data: {

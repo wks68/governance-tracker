@@ -4,10 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ActionErrorText, ActionSuccessText } from "@/components/ActionResultBanner";
 import { saveHotfixDraftAction, submitHotfixDraftAction } from "../create-actions";
-import { ENVIRONMENTS, RISK_LEVELS } from "@/lib/constants";
+import { ENVIRONMENTS, RISK_LEVELS, SYSTEM_NAME_OPTIONS } from "@/lib/constants";
 import type { HotfixPriorityDef } from "@/lib/hotfix-ui/priority";
 import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSelector";
-import type { TeamOption, ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
+import type { ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
+import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -28,13 +29,13 @@ export default function HotfixDraftForm({
   issueId,
   initialValues,
   priorities,
-  teams,
+  scope,
   initialApplicants,
 }: {
   issueId: string;
   initialValues: DraftValues;
   priorities: readonly HotfixPriorityDef[];
-  teams: TeamOption[];
+  scope: IssueCreationScope;
   /** 目前團隊的申請人選項（含正式角色名稱），由 Server Component 查好後傳入。 */
   initialApplicants?: ApplicantOption[];
 }) {
@@ -75,14 +76,25 @@ export default function HotfixDraftForm({
       <ActionErrorText message={error} />
       <ActionSuccessText message={success} />
       <div className="mt-3 space-y-4">
+        <div>
+          <label className={labelCls}>
+            工單類型<span className="ml-1 text-danger">*</span>
+          </label>
+          <input value="Hotfix" readOnly disabled className={`${inputCls} bg-gray-100`} />
+        </div>
         <TeamApplicantSelector
-          teams={teams}
+          teams={scope.teams}
           teamId={values.teamId}
           applicantId={values.applicantId}
           onTeamIdChange={(v) => set("teamId", v)}
           onApplicantIdChange={(v) => set("applicantId", v)}
           initialApplicants={initialApplicants}
           disabled={isPending}
+          fixedTeamId={scope.fixedTeamId}
+          fixedApplicant={scope.fixedApplicant}
+          canChooseApplicant={scope.canChooseApplicant}
+          notice={scope.notice}
+          blockedReason={scope.blockedReason}
         />
         <div>
           <label className={labelCls}>
@@ -101,7 +113,14 @@ export default function HotfixDraftForm({
             <label className={labelCls}>
               系統名稱<span className="ml-1 text-danger">*</span>
             </label>
-            <input value={values.systemName} onChange={(e) => set("systemName", e.target.value)} disabled={isPending} className={inputCls} />
+            <select value={values.systemName} onChange={(e) => set("systemName", e.target.value)} disabled={isPending} className={inputCls}>
+              <option value="">請選擇</option>
+              {SYSTEM_NAME_OPTIONS.map((systemName) => (
+                <option key={systemName} value={systemName}>
+                  {systemName}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className={labelCls}>
@@ -153,7 +172,7 @@ export default function HotfixDraftForm({
       <div className="mt-4 flex gap-2">
         <button
           type="button"
-          disabled={isPending}
+          disabled={isPending || scope.blockedReason !== null}
           onClick={() => run(saveHotfixDraftAction, "已暫存")}
           className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
         >
@@ -161,7 +180,7 @@ export default function HotfixDraftForm({
         </button>
         <button
           type="button"
-          disabled={isPending}
+          disabled={isPending || scope.blockedReason !== null}
           onClick={() => run(submitHotfixDraftAction)}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40"
         >

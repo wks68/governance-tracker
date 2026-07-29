@@ -102,15 +102,20 @@ export const RISK_LEVELS = ["高", "中", "低"];
 export const PRIORITIES = ["P1", "P2", "P3", "P4"];
 export const ALERT_LEVELS = ["Critical", "Warning", "Info"];
 
-export const SYSTEM_NAME_EXAMPLES = [
-  "MyDMS",
-  "Jarvis AI",
-  "Token Provider",
-  "DMS 平台",
-  "GitLab",
-  "MariaDB",
-  "Grafana",
-];
+// 建立工單頁欄位收斂：系統名稱不再是自由文字（原本是 datalist 建議值，使用者可自行輸入
+// 任意字串），改為固定值域的下拉選單。這是全系統唯一一份系統名稱清單，建立頁、編輯頁、
+// Preview fixture 與驗證腳本一律引用本常數，不得在各頁面各自硬編碼一份。
+//
+// 既有歷史工單的舊系統名稱（Token Provider／DMS 平台／GitLab／MariaDB／Grafana 等）不因
+// 本次調整被批次覆寫或刪除——詳情頁與列表頁一律原樣顯示 Issue.systemName；只有「新建」與
+// 「可編輯」表單受此值域限制，舊值不會出現在任何下拉選項中。
+export const SYSTEM_NAME_OPTIONS = ["MyDMS", "Jarvis AI", "Community", "APP Center"] as const;
+
+export type SystemName = (typeof SYSTEM_NAME_OPTIONS)[number];
+
+export function isValidSystemName(value: string): value is SystemName {
+  return (SYSTEM_NAME_OPTIONS as readonly string[]).includes(value);
+}
 
 export const ISSUE_TYPE_PREFIX: Record<string, string> = {
   Hotfix: "HOTFIX",

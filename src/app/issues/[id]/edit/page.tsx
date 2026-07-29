@@ -2,10 +2,10 @@ import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { updateIssueAction } from "@/lib/actions";
 import { requireCurrentUser } from "@/lib/auth";
-import { issueTypeLabel, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, SYSTEM_NAME_EXAMPLES } from "@/lib/constants";
+import { issueTypeLabel, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, SYSTEM_NAME_OPTIONS } from "@/lib/constants";
 import { getVisibleFieldTemplate } from "@/lib/workflow";
 import { isIssueOnVersionedWorkflow } from "@/lib/workflowExecutionService";
-import { listCreatableTeamsForActor } from "@/lib/team-applicant/teamApplicantService";
+import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import DynamicFieldsForm, { DynamicOption } from "@/components/DynamicFieldsForm";
 import EditIssueTeamApplicantField from "./EditIssueTeamApplicantField";
 
@@ -30,7 +30,14 @@ export default async function EditIssuePage({ params }: { params: { id: string }
   for (const f of issue.fieldValues) fieldsMap[f.fieldKey] = f.fieldValue;
   const template = getVisibleFieldTemplate(issue.issueType, issue.workflowStatus);
   const updateWithId = updateIssueAction.bind(null, issue.id);
-  const teams = await listCreatableTeamsForActor(actor.id);
+  const scope = await resolveIssueCreationScope(actor.id);
+  const formTeamId = scope.fixedTeamId ?? issue.assignedTeamId ?? "";
+  const initialApplicants =
+    formTeamId && scope.canChooseApplicant && !scope.blockedReason
+      ? await listSelectableApplicants(actor.id, formTeamId).catch(() => undefined)
+      : scope.fixedApplicant
+        ? [scope.fixedApplicant]
+        : undefined;
 
   // 動態欄位若設定 dynamicOptionsRole（例如 RD 自測人下拉選單），依角色從已啟用使用者中查詢選項
   const dynamicOptions: Record<string, DynamicOption[]> = {};
@@ -61,26 +68,42 @@ export default async function EditIssuePage({ params }: { params: { id: string }
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-gray-700">基本欄位</h2>
           <div>
-            <label className={labelCls}>標題</label>
+            <label className={labelCls}>
+              工單類型<span className="ml-1 text-danger">*</span>
+            </label>
+            <input value={issueTypeLabel(issue.issueType)} readOnly disabled className={`${inputCls} bg-gray-100`} />
+          </div>
+          <div>
+            <label className={labelCls}>
+              標題<span className="ml-1 text-danger">*</span>
+            </label>
             <input name="title" required defaultValue={issue.title} className={inputCls} />
           </div>
           <div>
-            <label className={labelCls}>問題描述</label>
-            <textarea name="description" rows={3} defaultValue={issue.description} className={inputCls} />
+            <label className={labelCls}>
+              問題現象<span className="ml-1 text-danger">*</span>
+            </label>
+            <textarea name="description" required rows={3} defaultValue={issue.description} className={inputCls} />
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>系統名稱</label>
-              <input name="systemName" list="system-name-list" defaultValue={issue.systemName} className={inputCls} />
-              <datalist id="system-name-list">
-                {SYSTEM_NAME_EXAMPLES.map((s) => (
-                  <option key={s} value={s} />
+              <label className={labelCls}>
+                系統名稱<span className="ml-1 text-danger">*</span>
+              </label>
+              <select name="systemName" required defaultValue={issue.systemName} className={inputCls}>
+                <option value="">請選擇</option>
+                {SYSTEM_NAME_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
             <div>
-              <label className={labelCls}>環境</label>
-              <select name="environment" defaultValue={issue.environment} className={inputCls}>
+              <label className={labelCls}>
+                環境<span className="ml-1 text-danger">*</span>
+              </label>
+              <select name="environment" required defaultValue={issue.environment} className={inputCls}>
                 <option value="">請選擇</option>
                 {ENVIRONMENTS.map((e) => (
                   <option key={e} value={e}>
@@ -90,8 +113,10 @@ export default async function EditIssuePage({ params }: { params: { id: string }
               </select>
             </div>
             <div>
-              <label className={labelCls}>風險等級</label>
-              <select name="riskLevel" defaultValue={issue.riskLevel} className={inputCls}>
+              <label className={labelCls}>
+                風險等級<span className="ml-1 text-danger">*</span>
+              </label>
+              <select name="riskLevel" required defaultValue={issue.riskLevel} className={inputCls}>
                 <option value="">請選擇</option>
                 {RISK_LEVELS.map((r) => (
                   <option key={r} value={r}>
@@ -112,15 +137,17 @@ export default async function EditIssuePage({ params }: { params: { id: string }
               </select>
             </div>
             <div>
-              <label className={labelCls}>到期日</label>
-              <input type="date" name="dueDate" defaultValue={issue.dueDate ? issue.dueDate.toISOString().slice(0, 10) : ""} className={inputCls} />
+              <label className={labelCls}>
+                預計完成日<span className="ml-1 text-danger">*</span>
+              </label>
+              <input type="date" name="dueDate" required defaultValue={issue.dueDate ? issue.dueDate.toISOString().slice(0, 10) : ""} className={inputCls} />
             </div>
           </div>
           <EditIssueTeamApplicantField
-            teams={teams}
+            scope={scope}
             initialTeamId={issue.assignedTeamId ?? ""}
             initialApplicantId={issue.reporterUserId ?? ""}
-            initialApplicantName={issue.reporter}
+            initialApplicants={initialApplicants}
           />
         </section>
 
@@ -130,7 +157,7 @@ export default async function EditIssuePage({ params }: { params: { id: string }
         </section>
 
         <div className="flex gap-3">
-          <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover">
+          <button type="submit" disabled={scope.blockedReason !== null} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40">
             儲存
           </button>
           <a

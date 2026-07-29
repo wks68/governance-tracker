@@ -4,22 +4,29 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createIssueAction } from "@/lib/actions";
 import { ActionErrorText } from "@/components/ActionResultBanner";
-import { ISSUE_TYPES, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, SYSTEM_NAME_EXAMPLES } from "@/lib/constants";
+import { ISSUE_TYPES, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, SYSTEM_NAME_OPTIONS } from "@/lib/constants";
 import { HOTFIX_PRIORITIES } from "@/lib/hotfix-ui/priority";
 import { getWorkflow, getVisibleFieldTemplate } from "@/lib/workflow";
 import DynamicFieldsForm from "@/components/DynamicFieldsForm";
 import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSelector";
-import type { TeamOption } from "@/lib/team-applicant/teamApplicantService";
+import type { ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
+import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
 
-export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
+export default function NewIssueForm({
+  scope,
+  initialApplicants,
+}: {
+  scope: IssueCreationScope;
+  initialApplicants?: ApplicantOption[];
+}) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [issueType, setIssueType] = useState<string>(ISSUE_TYPES[0].key);
-  const [teamId, setTeamId] = useState("");
-  const [applicantId, setApplicantId] = useState("");
+  const [teamId, setTeamId] = useState(scope.fixedTeamId ?? "");
+  const [applicantId, setApplicantId] = useState(scope.fixedApplicant?.id ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const initialStatus = getWorkflow(issueType)[0]?.key ?? "";
@@ -62,9 +69,12 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>工單類型</label>
+              <label className={labelCls}>
+                工單類型<span className="ml-1 text-danger">*</span>
+              </label>
               <select
                 name="issueType"
+                required
                 value={issueType}
                 onChange={(e) => setIssueType(e.target.value)}
                 className={inputCls}
@@ -78,18 +88,26 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
             </div>
           </div>
           <TeamApplicantSelector
-            teams={teams}
+            teams={scope.teams}
             teamId={teamId}
             applicantId={applicantId}
             onTeamIdChange={setTeamId}
             onApplicantIdChange={setApplicantId}
+            initialApplicants={initialApplicants}
+            fixedTeamId={scope.fixedTeamId}
+            fixedApplicant={scope.fixedApplicant}
+            canChooseApplicant={scope.canChooseApplicant}
+            notice={scope.notice}
+            blockedReason={scope.blockedReason}
           />
         </section>
 
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-gray-700">主要欄位</h2>
           <div>
-            <label className={labelCls}>標題</label>
+            <label className={labelCls}>
+              標題<span className="ml-1 text-danger">*</span>
+            </label>
             <input
               name="title"
               required
@@ -98,7 +116,10 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
             />
           </div>
           <div>
-            <label className={labelCls}>{isHotfix ? "問題現象" : "問題現象／需求說明"}</label>
+            <label className={labelCls}>
+              {isHotfix ? "問題現象" : "問題現象／需求說明"}
+              <span className="ml-1 text-danger">*</span>
+            </label>
             <textarea
               name="description"
               required
@@ -109,16 +130,22 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>系統名稱</label>
-              <input name="systemName" required list="system-name-list" placeholder="例如：MyDMS" className={inputCls} />
-              <datalist id="system-name-list">
-                {SYSTEM_NAME_EXAMPLES.map((s) => (
-                  <option key={s} value={s} />
+              <label className={labelCls}>
+                系統名稱<span className="ml-1 text-danger">*</span>
+              </label>
+              <select name="systemName" required className={inputCls} defaultValue="">
+                <option value="">請選擇</option>
+                {SYSTEM_NAME_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </div>
             <div>
-              <label className={labelCls}>環境</label>
+              <label className={labelCls}>
+                環境<span className="ml-1 text-danger">*</span>
+              </label>
               <select name="environment" required className={inputCls} defaultValue="">
                 <option value="">請選擇</option>
                 {ENVIRONMENTS.map((e) => (
@@ -129,7 +156,9 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
               </select>
             </div>
             <div>
-              <label className={labelCls}>風險等級（= 影響程度）</label>
+              <label className={labelCls}>
+                風險等級（= 影響程度）<span className="ml-1 text-danger">*</span>
+              </label>
               <select name="riskLevel" required className={inputCls} defaultValue="">
                 <option value="">請選擇</option>
                 {RISK_LEVELS.map((r) => (
@@ -146,7 +175,9 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
             </div>
             {isHotfix ? (
               <div>
-                <label className={labelCls}>Hotfix 工單優先級</label>
+                <label className={labelCls}>
+                  Hotfix 工單優先級<span className="ml-1 text-danger">*</span>
+                </label>
                 <select name="hotfixPriority" required className={inputCls} defaultValue="">
                   <option value="">請選擇</option>
                   {HOTFIX_PRIORITIES.map((p) => (
@@ -170,7 +201,9 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
               </div>
             )}
             <div>
-              <label className={labelCls}>預計完成日</label>
+              <label className={labelCls}>
+                預計完成日<span className="ml-1 text-danger">*</span>
+              </label>
               <input type="date" name="dueDate" required className={inputCls} />
             </div>
           </div>
@@ -193,7 +226,7 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              disabled={isPending}
+              disabled={isPending || scope.blockedReason !== null}
               onClick={() => submit(false)}
               className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -201,7 +234,7 @@ export default function NewIssueForm({ teams }: { teams: TeamOption[] }) {
             </button>
             <button
               type="button"
-              disabled={isPending}
+              disabled={isPending || scope.blockedReason !== null}
               onClick={() => submit(true)}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
             >

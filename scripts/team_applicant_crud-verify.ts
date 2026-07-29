@@ -395,7 +395,9 @@ async function runDbChecks() {
   await expectError(
     "[B10] applicant 與 team 不一致被 createIssueForActor 拒絕",
     () => createIssueForActor(pm, buildCreateFormData({ title: `${RUN_TAG}-mismatch`, teamId: teamA.id, applicantId: teamBMember.id })),
-    (err) => err instanceof TeamApplicantValidationError,
+    // 一般成員的新建 scope 先限制 applicant=本人，因此偽造其他申請人會在更前面的
+    // 授權邊界被拒絕；若是 Admin／主管則會繼續走到 team-applicant 一致性驗證。
+    (err) => err instanceof TeamApplicantAccessDeniedError || err instanceof TeamApplicantValidationError,
   );
   await expectError(
     "[B11] 非該團隊成員的 actor 偽造 teamId 建立工單被拒絕",
