@@ -34,6 +34,7 @@ import { saveClosureSummary } from "../src/lib/hotfix-ui/closureService";
 import { uploadHotfixAttachment } from "../src/lib/hotfix-ui/attachmentService";
 import { createIssueForActor } from "../src/lib/issueCreation";
 import { setTeamDomain } from "../src/lib/team-applicant/teamManagementService";
+import { synchronizeIssueKeySequencesFromExistingIssues } from "../src/lib/issue-key-sequence";
 import type { TeamDomain } from "../src/lib/constants";
 
 const RUN_TAG = "hfui9";
@@ -387,6 +388,13 @@ async function main() {
     }
   }
   // 停在 rdInProgress，尚未送出，風險確認已填答且其中一項為「是（有風險）」——「有風險案件」展示案例。
+
+  // 工單編號根因修正：以上 [2/3] 全部用 createHotfixIssue() 寫入固定 issueKey
+  // （${RUN_TAG}-KEY 格式，不經過 allocateNextIssueKey），接下來 [2b/3] 起改用真正的
+  // createIssueForActor（走 IssueKeySequence 原子遞增）。兩種來源在同一個 Hotfix issueType
+  // 底下混用，開始使用正式建立服務層之前必須先同步一次，否則若日後固定 key 剛好落在
+  // 數字格式的範圍內，會被舊計數器蓋過去或反過來撞號。
+  await synchronizeIssueKeySequencesFromExistingIssues(prisma);
 
   console.log("[2b/3] 建立團隊／申請人整合示範案件（真實 createIssueForActor 路徑）...");
 

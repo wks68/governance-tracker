@@ -5,6 +5,7 @@ import { evaluateGateRules } from "../src/lib/gateRules";
 import { nextStatusOf, isClosed, getWorkflow, statusLabel } from "../src/lib/workflow";
 import { generateAiSuggestion } from "../src/lib/mockAi";
 import { issueTypeLabel } from "../src/lib/constants";
+import { synchronizeIssueKeySequencesFromExistingIssues } from "../src/lib/issue-key-sequence";
 
 const prisma = new PrismaClient();
 
@@ -813,6 +814,15 @@ async function main() {
 
     console.log(`  已建立 ${issue.issueKey}（${light}）：${issue.title}`);
   }
+
+  // 工單編號根因修正：以上 Issue 一律以固定 issueKey 直接寫入（不經過 allocateNextIssueKey），
+  // Migration 套用當下（Fresh DB）Issue 表尚無資料，IssueKeySequence 只會是「已知歷史高水位」
+  // 或 0，與這裡剛灌入的固定編號脫節。灌入完成後在此同步一次，把每個 issueType 的計數器補到
+  // 「這批 seed 資料的最大編號」與「已知歷史高水位」兩者的較大值，之後第一次呼叫
+  // createIssueForActor 才不會撞號。synchronizeIssueKeySequencesFromExistingIssues 只會把
+  // lastValue 往上調，即使本函式重跑（seed 重跑）也不會把既有計數器歸零或往回調。
+  console.log("同步工單編號計數器（IssueKeySequence）...");
+  await synchronizeIssueKeySequencesFromExistingIssues(prisma);
 
   console.log("Seed Data 建立完成！");
 }

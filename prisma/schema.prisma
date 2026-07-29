@@ -314,6 +314,16 @@ model Issue {
   @@index([currentWorkflowStageId])
 }
 
+// 工單編號持久化計數器（一 issueType 一列）。issueType 直接沿用 Issue.issueType 的實際值
+// 作主鍵（例如 "Hotfix"），不另建一套 prefix 字串主鍵——顯示用前綴唯一來源仍是
+// ISSUE_TYPE_PREFIX（src/lib/constants.ts）。lastValue 只允許往上（原子遞增或
+// 「同步」時取更大值覆蓋），刪除 Issue 一律不得回頭調降，見 src/lib/issue-key-sequence/。
+model IssueKeySequence {
+  issueType String   @id
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
 // 工作單類型主檔（MVP 以靜態常數搭配此表展示用途）
 model IssueType {
   id          String @id @default(cuid())

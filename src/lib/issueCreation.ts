@@ -20,25 +20,20 @@ import { writeAuditLog } from "./audit";
 import { calculateStatusLight, suggestWaitingRole } from "./statusLight";
 import { evaluateGateRules } from "./gateRules";
 import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, isClosed, statusLabel } from "./workflow";
-import { ISSUE_TYPE_PREFIX } from "./constants";
 import { requireCapability } from "./permissions";
 import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
 import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./hotfix-ui/priority";
 import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx } from "./workflowExecutionService";
+import { allocateNextIssueKey, isTransientTransactionConflict } from "./issue-key-sequence";
 import type { User } from "@prisma/client";
+
+const CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS = 3;
 
 export class UnauthorizedIssueCreationError extends Error {
   constructor(message = "建立工單需要合法且已啟用的登入使用者，未授權呼叫已拒絕") {
     super(message);
     this.name = "UnauthorizedIssueCreationError";
   }
-}
-
-export async function generateIssueKey(issueType: string): Promise<string> {
-  const prefix = ISSUE_TYPE_PREFIX[issueType] ?? "ISSUE";
-  const count = await prisma.issue.count({ where: { issueType } });
-  const seq = String(count + 1).padStart(4, "0");
-  return `${prefix}-${seq}`;
 }
 
 export async function getFieldsMap(issueId: string): Promise<Record<string, string>> {
@@ -137,10 +132,11 @@ export async function findActiveUserOrNull(userId: string) {
 // 只回傳建立完成的 Issue，不執行 revalidatePath／redirect——這兩個動作只在真正的
 // Server Action（src/lib/actions.ts 的 createIssueAction）裡執行，本函式維持可在
 // 一般 Node/tsx 環境（例如驗證腳本）直接呼叫，不依賴 Next.js request context。
-export async function createIssueForActor(actor: User | null | undefined, formData: FormData) {
-  if (!actor || !actor.isActive) {
+export async function createIssueForActor(actorInput: User | null | undefined, formData: FormData) {
+  if (!actorInput || !actorInput.isActive) {
     throw new UnauthorizedIssueCreationError();
   }
+  const actor = actorInput; // 固定為 const，供下方巢狀 transaction 函式安全捕捉（見 runCreateIssueTransaction）
   // 建立工單／團隊整合修正：建立工單需要 issue.edit 能力（依 active UserRole 判斷，不得
   // 依 User.role），與其他所有寫入路徑（updateIssueAction／workflow-execution）採同一套
   // 授權入口一致。
@@ -171,7 +167,6 @@ export async function createIssueForActor(actor: User | null | undefined, formDa
   await assertActorCanUseTeam(actor.id, teamId);
   const applicant = await assertValidApplicantForTeam(teamId, applicantId);
 
-  const issueKey = await generateIssueKey(issueType);
   const initialStatus = workflow[0].key;
   const waitingRole = suggestWaitingRole(issueType, initialStatus);
 
@@ -184,38 +179,58 @@ export async function createIssueForActor(actor: User | null | undefined, formDa
   // 不得依查詢回傳順序任意挑選（見該函式內完整規則說明）。
   const versionToStart = await resolveUniqueAutoStartVersionForIssueType(issueType);
 
-  const issue = await prisma.$transaction(async (tx) => {
-    const created = await tx.issue.create({
-      data: {
-        issueKey,
-        issueType,
-        title: title || `未命名${issueType}工單`,
-        description,
-        systemName,
-        environment,
-        riskLevel,
-        priority,
-        reporterUserId: applicant.id,
-        reporter: applicant.name,
-        assignedTeamId: teamId,
-        workflowStatus: initialStatus,
-        statusLight: "Green",
-        dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
-        waitingRole,
-      },
-    });
-
-    if (versionToStart) {
-      await startWorkflowForIssueSystemTx(tx, {
-        issueId: created.id,
-        workflowVersionId: versionToStart.id,
-        actorId: actor.id,
-        reasonCode: "ISSUE_CREATED_AUTO_START",
-      });
-      return tx.issue.findUniqueOrThrow({ where: { id: created.id } });
+  // 工單編號根因修正：取號（IssueKeySequence 原子遞增）與 Issue 建立必須在同一 transaction
+  // 內，任一步失敗整組回滾，該號碼視為從未配發，不會留下「號碼已消耗但沒有對應工單」的
+  // 缺口以外的副作用（號碼本身因回滾而不算數）。只對可判斷為暫時性交易衝突的錯誤
+  // （isTransientTransactionConflict）重試整個 transaction，最多 3 次嘗試；其餘錯誤
+  // （授權/驗證/業務規則拒絕等）第一次就直接往外拋，不得重試。
+  let issue!: Awaited<ReturnType<typeof runCreateIssueTransaction>>;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      issue = await runCreateIssueTransaction();
+      break;
+    } catch (err) {
+      if (attempt >= CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS || !isTransientTransactionConflict(err)) {
+        throw err;
+      }
     }
-    return created;
-  });
+  }
+
+  async function runCreateIssueTransaction() {
+    return prisma.$transaction(async (tx) => {
+      const issueKey = await allocateNextIssueKey(tx, issueType);
+      const created = await tx.issue.create({
+        data: {
+          issueKey,
+          issueType,
+          title: title || `未命名${issueType}工單`,
+          description,
+          systemName,
+          environment,
+          riskLevel,
+          priority,
+          reporterUserId: applicant.id,
+          reporter: applicant.name,
+          assignedTeamId: teamId,
+          workflowStatus: initialStatus,
+          statusLight: "Green",
+          dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+          waitingRole,
+        },
+      });
+
+      if (versionToStart) {
+        await startWorkflowForIssueSystemTx(tx, {
+          issueId: created.id,
+          workflowVersionId: versionToStart.id,
+          actorId: actor.id,
+          reasonCode: "ISSUE_CREATED_AUTO_START",
+        });
+        return tx.issue.findUniqueOrThrow({ where: { id: created.id } });
+      }
+      return created;
+    });
+  }
 
   // 動態欄位（建立工單時只處理建單當下就已顯示的欄位，後續關卡欄位待推進至該關卡才會出現在表單上）
   const template = getVisibleFieldTemplate(issueType, initialStatus);
