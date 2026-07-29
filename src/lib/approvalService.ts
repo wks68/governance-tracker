@@ -36,6 +36,7 @@ import {
   type TeamMembershipLike,
 } from "./permissions";
 import { getRiskCheckTemplate } from "./riskCheckTemplates";
+import { deriveRiskChecksForStage, type RiskDerivationContext } from "./riskCheckDerivation";
 
 type Tx = Prisma.TransactionClient;
 
@@ -55,15 +56,27 @@ export class ApprovalValidationError extends Error {
   }
 }
 
-// 建立工單／團隊整合修正新增：找不到任何合格核准來源（例如申請人尚未設定直屬主管，
-// 或處理團隊尚未設定 LEAD）時使用的專用錯誤類別，訊息一律是可直接顯示給使用者的中文
-// 友善訊息，不暴露 ApprovalRecord／Prisma 等技術字眼；不得以「猜一個核准人」代替。
+// 建立工單／團隊整合修正新增：找不到任何合格核准來源時使用的專用錯誤類別，訊息一律是可
+// 直接顯示給使用者的中文友善訊息，不暴露 ApprovalRecord／Prisma／stageKey 等技術字眼；
+// 不得以「猜一個核准人」代替。
+//
+// 送簽核准人規則修正：第 2 關（申請人直屬主管）與第 4／6／8 關（RD／QA／OP 承接團隊主管）
+// 缺少的東西本質不同——後者缺的不是「一般人事直屬主管」，而是「可核准本階段工作的承接團隊
+// 主管或核准代理人」（常見情境：執行人本人就是該團隊唯一主管，依防自我核准規則被排除後就
+// 沒有其他人選）。因此訊息必須依 approvalType 分流，且明確指出使用者可以去哪裡完成設定，
+// 不得一律顯示「未設定直屬主管」。
+const NO_ELIGIBLE_APPROVER_MESSAGES: Record<string, string> = {
+  BUSINESS_APPROVAL: "申請人尚未設定直屬主管或授權代理人。請至『人員』設定直屬主管，或至『核准治理設定』設定核准代理人。",
+  RD_LEAD_APPROVAL: "目前承接團隊沒有其他可核准此工單的 RD 主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
+  QA_LEAD_APPROVAL: "目前承接團隊沒有其他可核准此工單的 QA 主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
+  DEPLOYMENT_APPROVAL: "目前承接團隊沒有其他可核准此工單的 OP 主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
+};
+
 export class NoEligibleApproverError extends Error {
   constructor(public readonly approvalType: string) {
     super(
-      approvalType === "BUSINESS_APPROVAL"
-        ? "所選申請人尚未設定直屬主管或授權代理人，暫時無法送出簽核。請聯絡系統管理員完成設定。"
-        : "此關卡目前找不到合格的核准人員，暫時無法送出簽核。請聯絡系統管理員完成設定。",
+      NO_ELIGIBLE_APPROVER_MESSAGES[approvalType] ??
+        "目前承接團隊沒有其他可核准此工單的主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
     );
     this.name = "NoEligibleApproverError";
   }
@@ -99,12 +112,15 @@ export class DuplicateActivePendingApprovalError extends Error {
   }
 }
 
+// 風險檢核死結修正：message 是會被 toActionResult 原樣顯示在畫面上的字串，因此一律不得
+// 包含 stageKey、資料表名稱或內部 guard 名稱。技術細節保留在 stageKey／issues 屬性上，
+// 供 server log 與測試斷言使用，不進入使用者可見訊息。
 export class RiskCheckIncompleteError extends Error {
   constructor(
     public readonly stageKey: string,
     public readonly issues: string[],
   ) {
-    super(`送核前置檢核未完成（stageKey=${stageKey}）：${issues.join("; ")}`);
+    super("本關卡的風險檢核尚未完成，暫時無法送出簽核。請確認本關卡必填內容均已填寫後再送出，或聯絡系統管理員協助確認。");
     this.name = "RiskCheckIncompleteError";
   }
 }
@@ -272,9 +288,77 @@ export function assertNoUnresolvedUnknownRisks(checks: readonly RiskCheckResolut
   }
 }
 
-// 送核前置條件（DB 版本）：查詢 issueId+stageKey 目前最新一輪 StageRiskCheck，套用
-// assertAllRiskChecksAnswered。不得信任呼叫端自行宣稱「已填答」，一律以 DB 現況為準。
+// 風險檢核死結修正：送核 transaction 內，先由「既有正式工單資料」建立／更新系統推導的
+// StageRiskCheck 紀錄，再執行前置檢核。
+//
+// 為什麼需要這一步：這 8 項固定檢核從未有任何使用者可完成的填答畫面（唯一寫入入口
+// submitStageRiskCheckAnswer 只有 verify script 呼叫），使用者填完畫面上所有必填欄位後仍會
+// 被「尚無任何風險檢核紀錄」擋住且無法自救。風險檢核本身仍是必要控制，因此不是移除檢核，
+// 而是改由既有資料（工單風險等級／環境／影響正式環境／RCA 與風險例外註記／本關卡既有
+// IssueFieldValue）自動推導出檢核結果，主管仍看得到完整 8 項結果。
+//
+// 覆寫規則（deny-by-default 的相反面：不得覆寫人工判斷）：
+//   - answeredByUserId 非 null＝人工填答（透過 submitStageRiskCheckAnswer），一律保留不動。
+//   - answeredByUserId 為 null＝系統推導，可隨最新工單資料更新（RD 修改內容後重新送核時，
+//     推導結果必須跟著更新，否則會留下與現況不符的稽核紀錄）。
+async function ensureDerivedRiskChecks(tx: Tx, issueId: string, stageKey: string): Promise<void> {
+  const derived = deriveRiskChecksForStage(stageKey, await loadRiskDerivationContext(tx, issueId));
+  if (derived.length === 0) return;
+
+  const existingRows = await tx.stageRiskCheck.findMany({ where: { issueId, stageKey } });
+  const round = existingRows.length > 0 ? Math.max(...existingRows.map((r) => r.assessmentRound)) : 1;
+  const now = new Date();
+
+  for (const item of derived) {
+    const existing = existingRows.find((r) => r.assessmentRound === round && r.checkKey === item.checkKey);
+    if (existing && existing.answeredByUserId !== null) continue; // 人工填答優先，不覆寫
+
+    if (existing) {
+      await tx.stageRiskCheck.update({
+        where: { id: existing.id },
+        data: { answer: item.answer, detail: item.detail, answeredAt: now, resolvedAt: null },
+      });
+    } else {
+      await tx.stageRiskCheck.create({
+        data: {
+          issueId,
+          stageKey,
+          assessmentRound: round,
+          checkKey: item.checkKey,
+          answer: item.answer,
+          detail: item.detail,
+          answeredByUserId: null, // 標記為系統推導，與人工填答區分
+          answeredAt: now,
+        },
+      });
+    }
+  }
+}
+
+// 推導所需的既有正式資料，全部現場查詢，不接受呼叫端傳入。
+async function loadRiskDerivationContext(tx: Tx, issueId: string): Promise<RiskDerivationContext> {
+  const issue = await tx.issue.findUnique({ where: { id: issueId } });
+  if (!issue) throw new ApprovalValidationError(["issueId 對應的 Issue 不存在"]);
+  const rows = await tx.issueFieldValue.findMany({ where: { issueId } });
+  const fieldValues: Record<string, string> = {};
+  for (const row of rows) fieldValues[row.fieldKey] = row.fieldValue;
+  return {
+    riskLevel: issue.riskLevel,
+    environment: issue.environment,
+    impactProduction: issue.impactProduction,
+    needRca: issue.needRca,
+    needRiskException: issue.needRiskException,
+    fieldValues,
+  };
+}
+
+// 送核前置條件（DB 版本）：先補齊系統推導紀錄，再查詢 issueId+stageKey 目前最新一輪
+// StageRiskCheck，套用 assertAllRiskChecksAnswered。不得信任呼叫端自行宣稱「已填答」，
+// 一律以 DB 現況為準；ensureDerivedRiskChecks 之後仍然沒有紀錄的情況只可能是模板缺漏等
+// 系統異常，仍必須 fail closed，不得放行。
 async function assertRiskChecksReadyForSubmission(tx: Tx, issueId: string, stageKey: string): Promise<void> {
+  await ensureDerivedRiskChecks(tx, issueId, stageKey);
+
   const rows = await tx.stageRiskCheck.findMany({ where: { issueId, stageKey } });
   if (rows.length === 0) {
     throw new RiskCheckIncompleteError(stageKey, ["尚無任何風險檢核紀錄"]);
@@ -401,16 +485,24 @@ async function resolveExpectedAuthorityForCreation(
   }
 
   const eligible = await fetchEligibleApproversInTx(tx, { approvalType, requestedByUserId, teamId, now });
-  if (eligible.length === 0) {
+
+  // 送簽核准人規則修正：防自我核准必須在「解析核准人」這一步就生效，而不是等到建立紀錄後
+  // 才用 ApprovalValidationError 擋下——執行人同時是該團隊唯一主管（例：RD 執行人 Yonnve 也是
+  // 「創新應用開發」唯一 LEAD）時，舊流程會先把他自己選成 expectedApprover，再丟出
+  // 「ApprovalRecord 驗證失敗：預期核准人與送核人相同」這種技術訊息。
+  //
+  // 正確語意：送核人本人一律不是本階段的合格核准人選，先從候選名單移除，再判斷是否還有
+  // 同團隊其他 active LEAD 或正式 ApprovalDelegation 核准代理人。移除後名單為空時 fail closed，
+  // 並丟出依 approvalType 分流的友善業務訊息（見 NO_ELIGIBLE_APPROVER_MESSAGES）。
+  // RD／QA／OP 三關共用完全相同的規則，不分別實作。
+  const selectable = eligible.filter((e) => e.userId !== requestedByUserId);
+  if (selectable.length === 0) {
     throw new NoEligibleApproverError(approvalType);
   }
 
-  const expectedApproverUserId = pickExpectedApproverUserId(eligible);
-  if (expectedApproverUserId !== null && expectedApproverUserId === requestedByUserId) {
-    throw new ApprovalValidationError(["預期核准人與送核人相同，不得建立此核准紀錄"]);
-  }
+  const expectedApproverUserId = pickExpectedApproverUserId(selectable);
 
-  const directSupervisorEntry = eligible.find(
+  const directSupervisorEntry = selectable.find(
     (e): e is Extract<ApprovalAuthoritySource, { authorityType: "DIRECT_SUPERVISOR" }> => e.authorityType === "DIRECT_SUPERVISOR",
   );
   const supervisorAssignmentId = isTeamLeadType ? null : (directSupervisorEntry?.supervisorAssignmentId ?? null);

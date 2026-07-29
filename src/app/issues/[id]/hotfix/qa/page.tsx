@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
-import { loadHotfixPageContext, isActorResponsibleForExecutionStage, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
+import { loadHotfixPageContext, isActorResponsibleForExecutionStage, loadGovernanceFixLinks, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { QA_VERIFY_FIELDS, loadExecutionFieldValues } from "@/lib/hotfix-ui/executionFields";
 import { listClaimableTeamsForStage, listAssignableMembers } from "@/lib/workflowExecutionService";
@@ -49,10 +49,11 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
     );
   }
 
-  const [isResponsible, values, reassignPreview] = await Promise.all([
+  const [isResponsible, values, reassignPreview, governanceFixLinks] = await Promise.all([
     isActorResponsibleForExecutionStage(ctx),
     loadExecutionFieldValues(params.id, stageKey),
     listAssignableMembers(params.id, actor.id),
+    loadGovernanceFixLinks(actor),
   ]);
 
   return (
@@ -68,6 +69,7 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
           saveAction={saveHotfixExecutionFieldsAction}
           submitAction={submitHotfixExecutionAction}
           submitLabel="送主管簽核"
+          governanceFixLinks={governanceFixLinks}
         />
       ) : (
         <ExecutionFieldsReadOnly fields={QA_VERIFY_FIELDS} values={values} title="QA 驗證內容" />

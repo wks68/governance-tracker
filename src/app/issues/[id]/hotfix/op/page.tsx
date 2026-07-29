@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
-import { loadHotfixPageContext, isActorResponsibleForExecutionStage, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
+import { loadHotfixPageContext, isActorResponsibleForExecutionStage, loadGovernanceFixLinks, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { OP_DEPLOY_FIELDS, OP_RESULT_FIELDS, loadExecutionFieldValues } from "@/lib/hotfix-ui/executionFields";
 import { listClaimableTeamsForStage, listAssignableMembers } from "@/lib/workflowExecutionService";
@@ -50,9 +50,10 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
     );
   }
 
-  const [isResponsible, reassignPreview] = await Promise.all([
+  const [isResponsible, reassignPreview, governanceFixLinks] = await Promise.all([
     isActorResponsibleForExecutionStage(ctx),
     listAssignableMembers(params.id, actor.id),
+    loadGovernanceFixLinks(actor),
   ]);
 
   if (stageKey === "opPreparing") {
@@ -70,6 +71,7 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
             saveAction={saveHotfixExecutionFieldsAction}
             submitAction={submitHotfixExecutionAction}
             submitLabel="送主管簽核"
+            governanceFixLinks={governanceFixLinks}
           />
         ) : (
           <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={values} title="上版計畫" />

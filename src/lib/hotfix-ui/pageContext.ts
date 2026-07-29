@@ -4,6 +4,7 @@
 
 import { prisma } from "../prisma";
 import { getIssueWorkflowRuntime, evaluateActorEligibilityForStage, getCurrentExecutorUserId, type IssueWorkflowRuntime } from "../workflowExecutionService";
+import { getUserHasCapability } from "../permissions";
 import { nineStageIndexOfStageKey, routeForStageKey, isCancelledStageKey } from "./nineStage";
 import { HOTFIX_PRIORITY_FIELD_KEY } from "./priority";
 import type { TicketBasicInfoData } from "@/components/hotfix-nine-stage/TicketBasicInfo";
@@ -144,4 +145,19 @@ export async function buildApprovalReviewViewData(ctx: HotfixPageContext): Promi
 // 獨立一個函式，不硬塞進 isActorResponsibleForExecutionStage。
 export function isActorOriginalReporter(ctx: HotfixPageContext): boolean {
   return !!ctx.issue.reporterUserId && ctx.issue.reporterUserId === ctx.actor.id;
+}
+
+// 送簽核准人規則修正：送簽失敗於「承接團隊沒有其他可核准的主管／代理人」時，錯誤訊息下方
+// 要提供可實際完成設定的入口。這裡只回報「這位使用者按下去會不會被擋」，不決定授權本身——
+// 實際的團隊／治理設定授權仍由各該服務層現場重新判斷。
+export async function loadGovernanceFixLinks(actor: User): Promise<{ canManageTeams: boolean; canManageApprovalGovernance: boolean }> {
+  const [canManageTeams, canManageTeamLeads, canManageDelegation] = await Promise.all([
+    getUserHasCapability(actor, "team.manageMembers"),
+    getUserHasCapability(actor, "governance.manageTeamLeads"),
+    getUserHasCapability(actor, "governance.manageAnyDelegation"),
+  ]);
+  return {
+    canManageTeams: canManageTeams || canManageTeamLeads,
+    canManageApprovalGovernance: canManageDelegation,
+  };
 }
