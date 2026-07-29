@@ -23,8 +23,10 @@ import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, isClosed, statusLab
 import { requireCapability } from "./permissions";
 import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
 import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./hotfix-ui/priority";
-import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx } from "./workflowExecutionService";
+import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx, executeIssueTransitionInTx } from "./workflowExecutionService";
+import { missingDraftFields } from "./hotfix-ui/draftService";
 import { allocateNextIssueKey, isTransientTransactionConflict } from "./issue-key-sequence";
+import { Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
 
 const CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS = 3;
@@ -34,6 +36,25 @@ export class UnauthorizedIssueCreationError extends Error {
     super(message);
     this.name = "UnauthorizedIssueCreationError";
   }
+}
+
+// 雙重提交流程修正新增：按「建立工單」時必填欄位不齊，於任何寫入前就拒絕。
+export class IssueCreationValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IssueCreationValidationError";
+  }
+}
+
+export interface CreateIssueOptions {
+  /**
+   * true：於「同一個 transaction」內建立 Issue、啟動流程、完成第 1 關，並直接送出至
+   * 第 2 關「申請人直屬主管簽核」（含建立 pending ApprovalRecord）。任何一步失敗整組
+   * 回滾，不留下半成品 Issue／孤兒 ApprovalRecord／已完成第 1 關卻沒有核准人的工單。
+   *
+   * false（預設）：只建立草稿並停在第 1 關，不建立 ApprovalRecord、不推進 Workflow。
+   */
+  submitForApproval?: boolean;
 }
 
 export async function getFieldsMap(issueId: string): Promise<Record<string, string>> {
@@ -132,7 +153,11 @@ export async function findActiveUserOrNull(userId: string) {
 // 只回傳建立完成的 Issue，不執行 revalidatePath／redirect——這兩個動作只在真正的
 // Server Action（src/lib/actions.ts 的 createIssueAction）裡執行，本函式維持可在
 // 一般 Node/tsx 環境（例如驗證腳本）直接呼叫，不依賴 Next.js request context。
-export async function createIssueForActor(actorInput: User | null | undefined, formData: FormData) {
+export async function createIssueForActor(
+  actorInput: User | null | undefined,
+  formData: FormData,
+  options: CreateIssueOptions = {},
+) {
   if (!actorInput || !actorInput.isActive) {
     throw new UnauthorizedIssueCreationError();
   }
@@ -145,7 +170,7 @@ export async function createIssueForActor(actorInput: User | null | undefined, f
   const issueType = String(formData.get("issueType") || "");
   const workflow = getWorkflow(issueType);
   if (workflow.length === 0) {
-    throw new Error("無效的工單類型");
+    throw new IssueCreationValidationError("無效的工單類型");
   }
 
   const title = String(formData.get("title") || "").trim();
@@ -162,13 +187,33 @@ export async function createIssueForActor(actorInput: User | null | undefined, f
   // team 建立工單（Admin 可任選；非 Admin 僅能選自己是 active 成員的團隊）。
   const teamId = String(formData.get("teamId") || "");
   const applicantId = String(formData.get("applicantId") || "");
-  if (!teamId) throw new Error("請選擇團隊名稱");
-  if (!applicantId) throw new Error("請選擇申請人");
+  if (!teamId) throw new IssueCreationValidationError("請選擇團隊名稱");
+  if (!applicantId) throw new IssueCreationValidationError("請選擇申請人");
   await assertActorCanUseTeam(actor.id, teamId);
   const applicant = await assertValidApplicantForTeam(teamId, applicantId);
 
   const initialStatus = workflow[0].key;
   const waitingRole = suggestWaitingRole(issueType, initialStatus);
+
+  // 雙重提交流程修正：要求「建立後直接送簽」時，Hotfix 必填欄位必須在任何寫入之前就檢查
+  // 完畢——不得先建出一張缺欄位的草稿，再要求使用者到第 1 關頁面補齊後按第二次送出。
+  const submitForApproval = options.submitForApproval === true;
+  if (submitForApproval && issueType === "Hotfix") {
+    const missing = missingDraftFields({
+      title,
+      description,
+      systemName,
+      environment,
+      riskLevel,
+      dueDate: dueDateRaw,
+      hotfixPriority,
+      teamId,
+      applicantId,
+    });
+    if (missing.length > 0) {
+      throw new IssueCreationValidationError(`請先填寫必填欄位：${missing.join("、")}`);
+    }
+  }
 
   // M2-B：逐 issueType opt-in（Plan 第八節第 4 點）——若此 issueType 已有可供選用的 Published
   // WorkflowVersion（所屬 Definition 必須 isActive=true），新 Issue 於建立當下即自動啟動該
@@ -184,6 +229,17 @@ export async function createIssueForActor(actorInput: User | null | undefined, f
   // 缺口以外的副作用（號碼本身因回滾而不算數）。只對可判斷為暫時性交易衝突的錯誤
   // （isTransientTransactionConflict）重試整個 transaction，最多 3 次嘗試；其餘錯誤
   // （授權/驗證/業務規則拒絕等）第一次就直接往外拋，不得重試。
+  //
+  // 動態欄位（建立工單時只處理建單當下就已顯示的欄位，後續關卡欄位待推進至該關卡才會
+  // 出現在表單上）與團隊資料，必須在 retry 迴圈「之前」先求值——runCreateIssueTransaction
+  // 會捕捉這兩個 const，若宣告寫在迴圈之後，第一次呼叫時它們仍在 TDZ，會直接 ReferenceError。
+  const template = getVisibleFieldTemplate(issueType, initialStatus);
+  const dynamicFieldRows = template
+    .map((f) => ({ fieldKey: f.key, fieldLabel: f.label, fieldValue: readDynFieldValue(formData, f) }))
+    .filter((row) => row.fieldValue !== "");
+
+  const team = await prisma.team.findUnique({ where: { id: teamId } });
+
   let issue!: Awaited<ReturnType<typeof runCreateIssueTransaction>>;
   for (let attempt = 1; ; attempt++) {
     try {
@@ -219,51 +275,88 @@ export async function createIssueForActor(actorInput: User | null | undefined, f
         },
       });
 
-      if (versionToStart) {
-        await startWorkflowForIssueSystemTx(tx, {
-          issueId: created.id,
-          workflowVersionId: versionToStart.id,
-          actorId: actor.id,
-          reasonCode: "ISSUE_CREATED_AUTO_START",
-        });
-        return tx.issue.findUniqueOrThrow({ where: { id: created.id } });
+      // 欄位值必須與 Issue 同一 transaction 寫入：下方送簽時關卡 Requirement 會讀取這些
+      // 欄位，若留到 transaction 之外寫入，送簽當下會看到「欄位還不存在」而誤判為未填。
+      for (const row of dynamicFieldRows) {
+        await tx.issueFieldValue.create({ data: { issueId: created.id, ...row } });
       }
-      return created;
-    });
-  }
+      if (issueType === "Hotfix" && HOTFIX_PRIORITIES.some((p) => p.value === hotfixPriority)) {
+        await tx.issueFieldValue.create({
+          data: { issueId: created.id, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "Hotfix 工單優先級", fieldValue: hotfixPriority },
+        });
+      }
 
-  // 動態欄位（建立工單時只處理建單當下就已顯示的欄位，後續關卡欄位待推進至該關卡才會出現在表單上）
-  const template = getVisibleFieldTemplate(issueType, initialStatus);
-  for (const f of template) {
-    const value = readDynFieldValue(formData, f);
-    if (value !== "") {
-      await prisma.issueFieldValue.create({
-        data: { issueId: issue.id, fieldKey: f.key, fieldLabel: f.label, fieldValue: value },
+      // AuditLog 必須能回答：誰建立這張工單（actorUserId＝actor）、代表哪位申請人建立
+      // （summary 內的申請人姓名）、選擇哪個團隊、建立時間（createdAt）、工單編號（entityId／
+      // issueKey）。actor 與 applicant 可能不同（例如 Admin 代團隊成員建立），這裡明確分開記錄，
+      // 不得把申請人當成登入 actor、也不得反過來把 actor 覆寫成申請人。
+      const actorVsApplicantNote = actor.id === applicant.id ? "" : `，實際建立者：${actor.name}`;
+      await writeAuditLog(
+        {
+          entityType: "Issue",
+          entityId: created.id,
+          actionType: "IssueCreated",
+          summary: `建立工單「${created.issueKey}」「${created.title}」，申請人：${applicant.name}${actorVsApplicantNote}，團隊：${team?.name ?? teamId}，初始關卡：${statusLabel(issueType, initialStatus)}`,
+          actorUserId: actor.id,
+        },
+        tx,
+      );
+
+      if (!versionToStart) {
+        // 尚未導入執行引擎的 issueType：維持舊有線性 workflowStatus 行為，沒有第 2 關可送。
+        return created;
+      }
+
+      await startWorkflowForIssueSystemTx(tx, {
+        issueId: created.id,
+        workflowVersionId: versionToStart.id,
+        actorId: actor.id,
+        reasonCode: "ISSUE_CREATED_AUTO_START",
       });
-    }
-  }
 
-  if (issueType === "Hotfix" && HOTFIX_PRIORITIES.some((p) => p.value === hotfixPriority)) {
-    await prisma.issueFieldValue.create({
-      data: { issueId: issue.id, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "Hotfix 工單優先級", fieldValue: hotfixPriority },
+      if (submitForApproval) {
+        await submitCreatedIssueForApprovalTx(tx, created.id, actor.id);
+      }
+
+      return tx.issue.findUniqueOrThrow({ where: { id: created.id } });
     });
   }
-
-  // AuditLog 必須能回答：誰建立這張工單（actorUserId＝actor）、代表哪位申請人建立
-  // （summary 內的申請人姓名）、選擇哪個團隊、建立時間（createdAt）、工單編號（entityId／
-  // issueKey）。actor 與 applicant 可能不同（例如 Admin 代團隊成員建立），這裡明確分開記錄，
-  // 不得把申請人當成登入 actor、也不得反過來把 actor 覆寫成申請人。
-  const team = await prisma.team.findUnique({ where: { id: teamId } });
-  const actorVsApplicantNote = actor.id === applicant.id ? "" : `，實際建立者：${actor.name}`;
-  await writeAuditLog({
-    entityType: "Issue",
-    entityId: issue.id,
-    actionType: "IssueCreated",
-    summary: `建立工單「${issue.issueKey}」「${issue.title}」，申請人：${applicant.name}${actorVsApplicantNote}，團隊：${team?.name ?? teamId}，初始關卡：${statusLabel(issueType, initialStatus)}`,
-    actorUserId: actor.id,
-  });
 
   await recalcIssue(issue.id);
 
   return issue;
+}
+
+// 雙重提交流程修正：在「建立工單」的同一個 transaction 內，緊接著完成第 1 關並推進到
+// 第 2 關「申請人直屬主管簽核」。
+//
+// 一律走既有的 executeIssueTransitionInTx（與 UI 送簽同一條路徑），不另外手寫一套推進
+// 邏輯——關卡資格、Requirement 檢查、Workflow History、ApprovalRecord 建立（含
+// 直屬主管解析與 fail closed）全部沿用既有實作。找不到合法主管時
+// createRequiredApprovalRecordIfNeeded 會拋出 NoEligibleApproverError，本 transaction
+// 整組回滾，不會留下任何半成品資料。
+async function submitCreatedIssueForApprovalTx(tx: Prisma.TransactionClient, issueId: string, actorId: string) {
+  const issue = await tx.issue.findUniqueOrThrow({ where: { id: issueId } });
+  if (!issue.workflowVersionId || !issue.currentWorkflowStageId) {
+    throw new IssueCreationValidationError("工單流程尚未啟動，無法送出簽核");
+  }
+
+  const forwardTransitions = await tx.workflowTransition.findMany({
+    where: {
+      workflowVersionId: issue.workflowVersionId,
+      fromStageId: issue.currentWorkflowStageId,
+      transitionType: "FORWARD",
+    },
+  });
+  // fail closed：起始關卡的 FORWARD 出邊必須唯一，否則無法判斷該送往哪一關，不得任意挑選。
+  if (forwardTransitions.length !== 1) {
+    throw new IssueCreationValidationError("此工單流程的送出路徑不唯一或不存在，無法自動送出簽核");
+  }
+
+  await executeIssueTransitionInTx(tx, {
+    issueId,
+    transitionId: forwardTransitions[0].id,
+    actorId,
+    reasonCode: "HOTFIX_TICKET_SUBMITTED",
+  });
 }

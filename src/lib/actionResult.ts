@@ -48,6 +48,7 @@ import { TeamApplicantAccessDeniedError, TeamApplicantValidationError } from "./
 import { NoEligibleApproverError } from "./approvalService";
 import { TeamManagementValidationError, TeamManagementStateError, TeamManagementAccessDeniedError } from "./team-applicant/teamManagementService";
 import { IssueDeletionValidationError, IssueDeletionStateError, IssueDeletionAccessDeniedError } from "./issue-management/issueDeletionService";
+import { IssueCreationValidationError } from "./issueCreation";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T; message: string }
@@ -95,6 +96,7 @@ const KNOWN_DOMAIN_ERRORS = [
   IssueDeletionValidationError,
   IssueDeletionStateError,
   IssueDeletionAccessDeniedError,
+  IssueCreationValidationError,
 ] as const;
 
 export function toActionResult(err: unknown, fallbackMessage = "操作失敗，請稍後再試"): ActionResult<never> {

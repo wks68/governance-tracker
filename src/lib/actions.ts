@@ -11,18 +11,59 @@ import { requireCurrentUser } from "./auth";
 import { isIssueOnVersionedWorkflow } from "./workflowExecutionService";
 import { createIssueForActor, getFieldsMap, readDynFieldValue, recalcIssue } from "./issueCreation";
 import { assertActorCanUseTeam, assertValidApplicantForTeam } from "./team-applicant/teamApplicantService";
+import { NoEligibleApproverError } from "./approvalService";
+import { routeForStageKey } from "./hotfix-ui/nineStage";
+import { actionOk, toActionResult, type ActionResult } from "./actionResult";
 
 // ---------------------------------------------------------------------------
 // 建立工單
 // ---------------------------------------------------------------------------
 
-export async function createIssueAction(formData: FormData) {
+// 雙重提交流程修正：共用建立工單頁的兩個按鈕都走這個 Action，差別只在 submitForApproval。
+//
+//   暫存    ：建立／更新草稿，停在第 1 關，不建立 ApprovalRecord、不推進 Workflow。
+//   建立工單：於同一 transaction 內建立工單並直接送申請人直屬主管簽核，成功後導向第 2 關。
+//
+// 回傳 ActionResult（不再直接 redirect）——失敗時前端才能留在原頁保留使用者已填內容，
+// 並顯示可讀的中文訊息；成功時由前端依 redirectTo 導向。
+export interface CreateIssueActionData {
+  issueId: string;
+  issueKey: string;
+  redirectTo: string;
+}
+
+// 找不到申請人直屬主管／授權代理人時，一律只呈現這段業務訊息，不得洩漏
+// NoEligibleApproverError／ApprovalRecord／Prisma／stack trace 等技術細節。
+const NO_ELIGIBLE_APPROVER_MESSAGE =
+  "所選申請人尚未設定直屬主管或授權代理人，暫時無法建立並送出工單。請聯絡系統管理員完成設定。";
+
+export async function createIssueAction(formData: FormData): Promise<ActionResult<CreateIssueActionData>> {
   const currentUser = await requireCurrentUser();
-  const issue = await createIssueForActor(currentUser, formData);
+  const submitForApproval = String(formData.get("submitForApproval") ?? "") === "true";
+
+  let issue;
+  try {
+    issue = await createIssueForActor(currentUser, formData, { submitForApproval });
+  } catch (err) {
+    if (err instanceof NoEligibleApproverError) {
+      return { ok: false, code: err.name, message: NO_ELIGIBLE_APPROVER_MESSAGE };
+    }
+    return toActionResult(err, "建立工單失敗，請稍後再試");
+  }
 
   revalidatePath("/governance");
   revalidatePath("/issues");
-  redirect(`/issues/${issue.id}`);
+  revalidatePath(`/issues/${issue.id}`, "layout");
+
+  // 送簽成功後直接進第 2 關；只暫存則進第 1 關繼續編輯。不得導向第 1 關再要求按第二次建立。
+  const stageRoute = routeForStageKey(issue.id, issue.workflowStatus);
+  const redirectTo = stageRoute ?? `/issues/${issue.id}`;
+
+  return actionOk(submitForApproval ? "已建立工單，已送交申請人直屬主管簽核" : "已暫存草稿", {
+    issueId: issue.id,
+    issueKey: issue.issueKey,
+    redirectTo,
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -29,22 +29,20 @@ export default function HotfixDraftForm({
   initialValues,
   priorities,
   teams,
-  initialApplicantName,
+  initialApplicants,
 }: {
   issueId: string;
   initialValues: DraftValues;
   priorities: readonly HotfixPriorityDef[];
   teams: TeamOption[];
-  initialApplicantName: string;
+  /** 目前團隊的申請人選項（含正式角色名稱），由 Server Component 查好後傳入。 */
+  initialApplicants?: ApplicantOption[];
 }) {
   const router = useRouter();
   const [values, setValues] = useState<DraftValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-
-  const initialApplicants: ApplicantOption[] | undefined =
-    initialValues.teamId && initialValues.applicantId ? [{ id: initialValues.applicantId, name: initialApplicantName, roleLabel: "" }] : undefined;
 
   function set<K extends keyof DraftValues>(key: K, v: string) {
     setValues((prev) => ({ ...prev, [key]: v }));

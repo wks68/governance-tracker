@@ -9,6 +9,9 @@ export * from "./types";
 export { startIssueWorkflow, startWorkflowForIssueSystemTx } from "./startService";
 export {
   executeIssueTransition,
+  // 供「建立工單即送簽」等需要在自己 transaction 內接續推進關卡的呼叫端使用
+  // （見 src/lib/issueCreation.ts、claimService、assignmentService）。
+  executeIssueTransitionInTx,
   returnIssueToStage,
   cancelIssueWorkflow,
   completeIssueWorkflow,

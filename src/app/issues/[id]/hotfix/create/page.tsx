@@ -3,7 +3,7 @@ import { requireCurrentUser } from "@/lib/auth";
 import { loadHotfixPageContext, isActorOriginalReporter, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { HOTFIX_PRIORITIES } from "@/lib/hotfix-ui/priority";
-import { listCreatableTeamsForActor } from "@/lib/team-applicant/teamApplicantService";
+import { listCreatableTeamsForActor, listActiveApplicantsForTeam } from "@/lib/team-applicant/teamApplicantService";
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import HotfixDraftForm from "./HotfixDraftForm";
@@ -26,8 +26,15 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
     isResponsible ? listCreatableTeamsForActor(actor.id) : Promise.resolve([]),
   ]);
 
+  // 申請人下拉選單的初始選項一律由服務層提供（含正式角色名稱）。先前這裡沒有帶入清單，
+  // 前端只好用申請人姓名自行拼一筆 roleLabel="" 的假選項，畫面因此顯示成「Jonus（ ）」。
+  const initialApplicants =
+    isResponsible && ctx.issue.assignedTeamId
+      ? await listActiveApplicantsForTeam(actor.id, ctx.issue.assignedTeamId).catch(() => undefined)
+      : undefined;
+
   return (
-    <HotfixStageShell title="Hotfix 建立工單" subtitle="填寫工單基本資訊後送出，將轉交申請人直屬主管簽核" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
+    <HotfixStageShell title="Hotfix 建立工單" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
       {isResponsible ? (
         <HotfixDraftForm
           issueId={params.id}
@@ -44,7 +51,7 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
           }}
           priorities={HOTFIX_PRIORITIES}
           teams={teams}
-          initialApplicantName={ctx.ticketBasicInfo.reporterName}
+          initialApplicants={initialApplicants}
         />
       ) : (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
