@@ -12,6 +12,8 @@ import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSele
 import type { ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
 import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope";
 import HotfixUrgencyHelp from "@/components/hotfix-nine-stage/HotfixUrgencyHelp";
+import HotfixGovernanceRelationFields from "@/components/issue-relations/HotfixGovernanceRelationFields";
+import type { GovernanceRelationCandidates } from "@/lib/issue-relations/viewService";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -19,9 +21,11 @@ const labelCls = "mb-1 block text-sm font-medium text-gray-700";
 export default function NewIssueForm({
   scope,
   initialApplicants,
+  relationCandidates,
 }: {
   scope: IssueCreationScope;
   initialApplicants?: ApplicantOption[];
+  relationCandidates: GovernanceRelationCandidates;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -222,6 +226,10 @@ export default function NewIssueForm({
             </p>
           </div>
         </section>
+
+        {isHotfix && (
+          <HotfixGovernanceRelationFields candidates={relationCandidates} />
+        )}
 
         {template.length > 0 && (
           <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">

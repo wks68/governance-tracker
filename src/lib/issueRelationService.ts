@@ -5,6 +5,7 @@
 
 import { requireCurrentUser } from "./auth";
 import {
+  createIssueRelationBetweenIssuesForActor,
   createIssueRelationForActor,
   getDirectIssueRelationsForActor,
   getRelatedIssuesByTypeForActor,
@@ -17,6 +18,14 @@ import {
 export async function createIssueRelation(input: CreateIssueRelationInput) {
   const actor = await requireCurrentUser();
   return createIssueRelationForActor(actor.id, input);
+}
+
+export async function createIssueRelationBetweenIssues(
+  issueId: string,
+  relatedIssueId: string,
+) {
+  const actor = await requireCurrentUser();
+  return createIssueRelationBetweenIssuesForActor(actor.id, issueId, relatedIssueId);
 }
 
 export async function removeIssueRelation(input: RemoveIssueRelationInput) {

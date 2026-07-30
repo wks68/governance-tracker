@@ -28,6 +28,8 @@ import { canApplicantDeleteIssue, loadAdminDeleteImpactSummary } from "@/lib/iss
 import DeleteOwnDraftButton from "@/components/hotfix-nine-stage/DeleteOwnDraftButton";
 import AdminPermanentDeleteButton from "@/components/issue-management/AdminPermanentDeleteButton";
 import { formatDate } from "@/lib/datetime";
+import GovernanceRelationsCard from "@/components/issue-relations/GovernanceRelationsCard";
+import { loadGovernanceRelationViewForActor } from "@/lib/issue-relations/viewService";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +82,16 @@ export default async function IssueDetailPage({ params }: { params: { id: string
       startableVersions = selectable.map((v) => ({ id: v.id, versionNo: v.versionNo, definitionName: v.workflowDefinition.name }));
     }
   }
+
+  const supportsGovernanceRelations =
+    issue.issueType === "Incident" ||
+    issue.issueType === "RCA" ||
+    issue.issueType === "Hotfix" ||
+    (issue.issueType === "ChangeRelease" &&
+      issue.changeSubType === "QUARTERLY_RELEASE");
+  const relationView = supportsGovernanceRelations
+    ? await loadGovernanceRelationViewForActor(currentUser.id, issue.id)
+    : null;
 
   const fieldsMap: Record<string, string> = {};
   for (const f of issue.fieldValues) fieldsMap[f.fieldKey] = f.fieldValue;
@@ -170,6 +182,8 @@ export default async function IssueDetailPage({ params }: { params: { id: string
           </div>
         </div>
       </div>
+
+      {relationView && <GovernanceRelationsCard view={relationView} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">

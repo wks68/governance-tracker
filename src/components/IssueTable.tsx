@@ -4,6 +4,7 @@ import { issueTypeShortLabel } from "@/lib/constants";
 import { formatDate } from "@/lib/datetime";
 import { resolveHotfixPriority } from "@/lib/hotfix-ui/priority";
 import { hotfixTitleForDisplay } from "@/lib/hotfix-ui/title";
+import type { GovernanceRelationListSummary } from "@/lib/issue-relations/viewService";
 
 // RD/QA/OP 接單流程新增：操作按鈕文案集中對照，避免各處各自硬編碼中文字串。
 const ACTION_BUTTON_LABEL: Record<string, string> = {
@@ -18,6 +19,7 @@ export interface IssueRow {
   id: string;
   issueKey: string;
   issueType: string;
+  changeSubType?: string | null;
   systemName: string;
   environment: string;
   title: string;
@@ -43,6 +45,7 @@ export interface IssueRow {
   stageEnteredAt?: string | null;
   actionKind?: string;
   actionHref?: string;
+  relationSummary?: GovernanceRelationListSummary;
 }
 
 function overdueDays(dueDate: string | null): number {
@@ -81,6 +84,45 @@ function ActionCell({ issue }: { issue: IssueRow }) {
   );
 }
 
+function RelationSummaryCell({ issue }: { issue: IssueRow }) {
+  const summary = issue.relationSummary;
+  if (!summary) return <span className="text-xs text-gray-300">—</span>;
+
+  const labels: string[] = [];
+  if (issue.issueType === "Hotfix") {
+    if (summary.incidentCount > 0) labels.push(`事件 ${summary.incidentCount}`);
+    if (summary.rcaCount > 0) labels.push(`RCA ${summary.rcaCount}`);
+    if (summary.projectIssueKey) labels.push(summary.projectIssueKey);
+  } else if (issue.issueType === "Incident") {
+    if (summary.rcaCount > 0) labels.push(`RCA ${summary.rcaCount}`);
+    if (summary.hotfixCount > 0) labels.push(`Hotfix ${summary.hotfixCount}`);
+  } else if (issue.issueType === "RCA") {
+    if (summary.incidentCount > 0) labels.push(`事件 ${summary.incidentCount}`);
+    if (summary.hotfixCount > 0) labels.push(`Hotfix ${summary.hotfixCount}`);
+  } else if (
+    issue.issueType === "ChangeRelease" &&
+    issue.changeSubType === "QUARTERLY_RELEASE" &&
+    summary.hotfixCount > 0
+  ) {
+    labels.push(`Hotfix ${summary.hotfixCount}`);
+  }
+
+  return labels.length > 0 ? (
+    <div className="flex max-w-[180px] flex-wrap gap-1">
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
+        >
+          {label}
+        </span>
+      ))}
+    </div>
+  ) : (
+    <span className="text-xs text-gray-400">尚未關聯</span>
+  );
+}
+
 export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[]; mode?: "all" | "hotfix" }) {
   if (issues.length === 0) {
     return <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">目前沒有符合條件的工單。</div>;
@@ -102,6 +144,7 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
               <th className="px-3 py-2">承接團隊</th>
               <th className="px-3 py-2">執行人</th>
               <th className="px-3 py-2">等待角色</th>
+              <th className="px-3 py-2">關聯</th>
               <th className="px-3 py-2">操作</th>
             </tr>
           </thead>
@@ -121,6 +164,7 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.assignedTeamName ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.executorName ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.waitingRole || "—"}</td>
+                  <td className="px-3 py-2"><RelationSummaryCell issue={issue} /></td>
                   <td className="whitespace-nowrap px-3 py-2"><ActionCell issue={issue} /></td>
                 </tr>
               );
@@ -154,6 +198,7 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
             <th className="px-3 py-2">需風險例外</th>
             <th className="px-3 py-2">佐證狀態</th>
             <th className="px-3 py-2">下一步建議</th>
+            <th className="px-3 py-2">關聯</th>
             <th className="px-3 py-2">操作</th>
           </tr>
         </thead>
@@ -189,6 +234,7 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
                 <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.needRiskException ? "是" : "否"}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.evidenceStatus}</td>
                 <td className="max-w-[220px] truncate px-3 py-2 text-gray-600">{it.nextStep || "—"}</td>
+                <td className="px-3 py-2"><RelationSummaryCell issue={it} /></td>
                 <td className="whitespace-nowrap px-3 py-2">
                   <ActionCell issue={it} />
                 </td>

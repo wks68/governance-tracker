@@ -30,6 +30,7 @@ import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./cons
 import { Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
 import { normalizeHotfixTitleForStorage } from "./hotfix-ui/title";
+import { createIssueRelationInTx } from "./issue-relations/service";
 
 const CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS = 3;
 
@@ -57,6 +58,60 @@ export interface CreateIssueOptions {
    * false（預設）：只建立草稿並停在第 1 關，不建立 ApprovalRecord、不推進 Workflow。
    */
   submitForApproval?: boolean;
+}
+
+interface HotfixCreationRelations {
+  incidentIds: string[];
+  rcaIds: string[];
+  projectId: string | null;
+}
+
+function uniqueFormIds(formData: FormData, name: string): string[] {
+  return [
+    ...new Set(
+      formData
+        .getAll(name)
+        .map(String)
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function readHotfixCreationRelations(
+  issueType: string,
+  formData: FormData,
+): HotfixCreationRelations {
+  const relateIncidents = String(formData.get("relateIncidents") ?? "no") === "yes";
+  const relateRcas = String(formData.get("relateRcas") ?? "no") === "yes";
+  const relateProject = String(formData.get("relateProject") ?? "no") === "yes";
+  const submittedIncidentIds = uniqueFormIds(formData, "incidentRelationIds");
+  const submittedRcaIds = uniqueFormIds(formData, "rcaRelationIds");
+  const submittedProjectId = String(formData.get("projectRelationId") ?? "").trim();
+
+  if (
+    issueType !== "Hotfix" &&
+    (relateIncidents ||
+      relateRcas ||
+      relateProject ||
+      submittedIncidentIds.length > 0 ||
+      submittedRcaIds.length > 0 ||
+      submittedProjectId !== "")
+  ) {
+    throw new IssueCreationValidationError("只有 Hotfix 建立流程可同時建立治理紀錄關聯。");
+  }
+  if (issueType !== "Hotfix") {
+    return { incidentIds: [], rcaIds: [], projectId: null };
+  }
+  if (relateProject && !submittedProjectId) {
+    throw new IssueCreationValidationError("請選擇關聯專案。");
+  }
+
+  return {
+    incidentIds: relateIncidents ? submittedIncidentIds : [],
+    rcaIds: relateRcas ? submittedRcaIds : [],
+    projectId: relateProject ? submittedProjectId : null,
+  };
 }
 
 export async function getFieldsMap(issueId: string): Promise<Record<string, string>> {
@@ -184,6 +239,7 @@ export async function createIssueForActor(
   const priority = String(formData.get("priority") || "");
   const dueDateRaw = String(formData.get("dueDate") || "");
   const hotfixPriority = String(formData.get("hotfixPriority") || "");
+  const hotfixCreationRelations = readHotfixCreationRelations(issueType, formData);
 
   // 系統名稱值域收斂：前端已改為固定四項下拉選單，但一律不信任——非空值必須落在
   // SYSTEM_NAME_OPTIONS 內，偽造其他 systemName（含既有歷史工單的舊系統名稱）一律拒絕。
@@ -332,6 +388,43 @@ export async function createIssueForActor(
         },
         tx,
       );
+
+      // 治理紀錄關聯與 Issue、IssueCreated AuditLog、Workflow 啟動／送簽共用同一個 tx。
+      // 前端只提交所選 ID；relationType 與固定方向由 Server 在此建立，正式服務仍會依
+      // DB 中實際類型、有效狀態、active UserRole visibility／management 權限重新驗證。
+      for (const incidentId of hotfixCreationRelations.incidentIds) {
+        await createIssueRelationInTx(
+          actor.id,
+          {
+            sourceIssueId: incidentId,
+            targetIssueId: created.id,
+            relationType: "INCIDENT_TO_HOTFIX",
+          },
+          tx,
+        );
+      }
+      for (const rcaId of hotfixCreationRelations.rcaIds) {
+        await createIssueRelationInTx(
+          actor.id,
+          {
+            sourceIssueId: rcaId,
+            targetIssueId: created.id,
+            relationType: "RCA_TO_HOTFIX",
+          },
+          tx,
+        );
+      }
+      if (hotfixCreationRelations.projectId) {
+        await createIssueRelationInTx(
+          actor.id,
+          {
+            sourceIssueId: created.id,
+            targetIssueId: hotfixCreationRelations.projectId,
+            relationType: "HOTFIX_TO_PROJECT",
+          },
+          tx,
+        );
+      }
 
       if (!versionToStart) {
         // 尚未導入執行引擎的 issueType：維持舊有線性 workflowStatus 行為，沒有第 2 關可送。

@@ -7,14 +7,22 @@ import { requireCurrentUser } from "@/lib/auth";
 import { evaluateCurrentActorTask } from "@/lib/workflowExecutionService";
 import { routeForStageKey } from "@/lib/hotfix-ui/nineStage";
 import { HOTFIX_PRIORITY_FIELD_KEY } from "@/lib/hotfix-ui/priority";
+import {
+  loadGovernanceRelationListSummariesForActor,
+  type GovernanceRelationListSummary,
+} from "@/lib/issue-relations/viewService";
 
 export const dynamic = "force-dynamic";
 
-function toRow(issue: any): IssueRow {
+function toRow(
+  issue: any,
+  relationSummary?: GovernanceRelationListSummary,
+): IssueRow {
   return {
     id: issue.id,
     issueKey: issue.issueKey,
     issueType: issue.issueType,
+    changeSubType: issue.changeSubType,
     systemName: issue.systemName,
     environment: issue.environment,
     title: issue.title,
@@ -34,6 +42,7 @@ function toRow(issue: any): IssueRow {
     alertLevel: issue.alertLevel,
     firstResponseAt: issue.firstResponseAt ? issue.firstResponseAt.toISOString() : null,
     stageEnteredAt: issue.stageEnteredAt ? issue.stageEnteredAt.toISOString() : null,
+    relationSummary,
   };
 }
 
@@ -88,9 +97,13 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
   const systemNames = Array.from(new Set(allIssues.map((i) => i.systemName).filter(Boolean))).sort();
   const owners = Array.from(new Set(allIssues.map((i) => i.ownerName).filter(Boolean))).sort();
 
-  const [hotfixEnrichment, myActiveTeamIds] = await Promise.all([
+  const [hotfixEnrichment, myActiveTeamIds, relationSummaries] = await Promise.all([
     enrichHotfixRows(allIssues, actor.id),
     prisma.teamMember.findMany({ where: { userId: actor.id, isActive: true }, select: { teamId: true } }).then((rows) => new Set(rows.map((r) => r.teamId))),
+    loadGovernanceRelationListSummariesForActor(
+      actor.id,
+      allIssues.map((issue) => issue.id),
+    ),
   ]);
 
   let filtered = allIssues;
@@ -119,7 +132,7 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
   }
 
   const rows = filtered.map((issue) => {
-    const row = toRow(issue);
+    const row = toRow(issue, relationSummaries.get(issue.id));
     const enrichment = hotfixEnrichment.get(issue.id);
     return enrichment ? { ...row, ...enrichment } : row;
   });

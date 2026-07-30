@@ -153,6 +153,28 @@ function assertIssuePair(
   }
 }
 
+function assertIssueStateAllowsRelation(issue: {
+  issueType: string;
+  workflowStatus: string;
+  closedAt: Date | null;
+  currentWorkflowStage: { terminalOutcome: string | null } | null;
+}): void {
+  const cancelled =
+    issue.workflowStatus.toLowerCase() === "cancelled" ||
+    issue.currentWorkflowStage?.terminalOutcome === "CANCELLED";
+  if (cancelled) {
+    throw new IssueRelationValidationError("已取消或作廢的治理紀錄不可建立新關聯。");
+  }
+  if (
+    issue.issueType === "ChangeRelease" &&
+    (issue.closedAt !== null ||
+      issue.workflowStatus === "closed" ||
+      issue.currentWorkflowStage?.terminalOutcome === "COMPLETED")
+  ) {
+    throw new IssueRelationValidationError("已結案的季度專案不可建立新關聯。");
+  }
+}
+
 async function requireIssueView(actorId: string, client: Client): Promise<void> {
   try {
     await requireCapability({ id: actorId }, "issue.view", client);
@@ -235,6 +257,92 @@ export async function createIssueRelationForActor(
   actorId: string,
   input: CreateIssueRelationInput,
 ): Promise<IssueRelationWithIssues> {
+  return prisma.$transaction((tx) => createIssueRelationInTx(actorId, input, tx));
+}
+
+// UI 管理入口只提交「目前紀錄＋所選紀錄」兩個 ID，不讓 Client 決定 relationType 或方向。
+// Server 依資料庫內的實際 issueType／changeSubType 解析唯一合法方向，再交給同一個正式
+// createIssueRelationInTx 完成完整授權與唯一性驗證。
+export async function createIssueRelationBetweenIssuesForActor(
+  actorId: string,
+  firstIssueIdValue: string,
+  secondIssueIdValue: string,
+): Promise<IssueRelationWithIssues> {
+  const firstIssueId = normalizeId(firstIssueIdValue, "目前工單");
+  const secondIssueId = normalizeId(secondIssueIdValue, "關聯工單");
+  if (firstIssueId === secondIssueId) {
+    throw new IssueRelationValidationError("治理紀錄不可關聯自己。");
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const issues = await tx.issue.findMany({
+      where: { id: { in: [firstIssueId, secondIssueId] } },
+      select: { id: true, issueType: true, changeSubType: true },
+    });
+    if (issues.length !== 2) {
+      throw new IssueRelationNotFoundError("找不到目前或所選治理紀錄。");
+    }
+    const first = issues.find((issue) => issue.id === firstIssueId)!;
+    const second = issues.find((issue) => issue.id === secondIssueId)!;
+
+    let input: CreateIssueRelationInput | null = null;
+    const pair = [first.issueType, second.issueType];
+    if (pair.includes("Incident") && pair.includes("RCA")) {
+      const source = first.issueType === "Incident" ? first : second;
+      const target = first.issueType === "RCA" ? first : second;
+      input = {
+        sourceIssueId: source.id,
+        targetIssueId: target.id,
+        relationType: "INCIDENT_TO_RCA",
+      };
+    } else if (pair.includes("Incident") && pair.includes("Hotfix")) {
+      const source = first.issueType === "Incident" ? first : second;
+      const target = first.issueType === "Hotfix" ? first : second;
+      input = {
+        sourceIssueId: source.id,
+        targetIssueId: target.id,
+        relationType: "INCIDENT_TO_HOTFIX",
+      };
+    } else if (pair.includes("RCA") && pair.includes("Hotfix")) {
+      const source = first.issueType === "RCA" ? first : second;
+      const target = first.issueType === "Hotfix" ? first : second;
+      input = {
+        sourceIssueId: source.id,
+        targetIssueId: target.id,
+        relationType: "RCA_TO_HOTFIX",
+      };
+    } else {
+      const hotfix = first.issueType === "Hotfix" ? first : second.issueType === "Hotfix" ? second : null;
+      const project =
+        first.issueType === "ChangeRelease" && first.changeSubType === "QUARTERLY_RELEASE"
+          ? first
+          : second.issueType === "ChangeRelease" && second.changeSubType === "QUARTERLY_RELEASE"
+            ? second
+            : null;
+      if (hotfix && project) {
+        input = {
+          sourceIssueId: hotfix.id,
+          targetIssueId: project.id,
+          relationType: "HOTFIX_TO_PROJECT",
+        };
+      }
+    }
+    if (!input) {
+      throw new IssueRelationValidationError("目前與所選治理紀錄無法建立合法關聯。");
+    }
+    return createIssueRelationInTx(actorId, input, tx);
+  });
+}
+
+// Hotfix 建立流程使用的交易內入口。呼叫端必須傳入建立 Issue／啟動 Workflow 所使用的
+// 同一個 tx，才能保證任一關聯驗證失敗時整張工單、流程歷程、核准與關聯一併回滾。
+// 此入口仍會在 tx 內重新解析 active UserRole、驗證 source／target 與唯一性，不信任
+// 呼叫端已做過的前置檢查。
+export async function createIssueRelationInTx(
+  actorId: string,
+  input: CreateIssueRelationInput,
+  tx: Tx,
+): Promise<IssueRelationWithIssues> {
   const sourceIssueId = normalizeId(input.sourceIssueId, "來源工單");
   const targetIssueId = normalizeId(input.targetIssueId, "目標工單");
   const relationType = parseRelationType(input.relationType);
@@ -244,79 +352,95 @@ export async function createIssueRelationForActor(
   }
 
   try {
-    return await prisma.$transaction(async (tx) => {
-      await requireIssueRelationManagement(actorId, tx);
+    await requireIssueRelationManagement(actorId, tx);
 
-      const [source, target] = await Promise.all([
-        tx.issue.findUnique({
-          where: { id: sourceIssueId },
-          select: { id: true, issueKey: true, issueType: true, changeSubType: true },
-        }),
-        tx.issue.findUnique({
-          where: { id: targetIssueId },
-          select: { id: true, issueKey: true, issueType: true, changeSubType: true },
-        }),
-      ]);
-      if (!source || !target) {
-        throw new IssueRelationNotFoundError("找不到來源或目標治理紀錄。");
-      }
-      assertIssuePair(relationType, source, target);
+    const [source, target] = await Promise.all([
+      tx.issue.findUnique({
+        where: { id: sourceIssueId },
+        select: {
+          id: true,
+          issueKey: true,
+          issueType: true,
+          changeSubType: true,
+          workflowStatus: true,
+          closedAt: true,
+          currentWorkflowStage: { select: { terminalOutcome: true } },
+        },
+      }),
+      tx.issue.findUnique({
+        where: { id: targetIssueId },
+        select: {
+          id: true,
+          issueKey: true,
+          issueType: true,
+          changeSubType: true,
+          workflowStatus: true,
+          closedAt: true,
+          currentWorkflowStage: { select: { terminalOutcome: true } },
+        },
+      }),
+    ]);
+    if (!source || !target) {
+      throw new IssueRelationNotFoundError("找不到來源或目標治理紀錄。");
+    }
+    assertIssuePair(relationType, source, target);
+    assertIssueStateAllowsRelation(source);
+    assertIssueStateAllowsRelation(target);
 
-      const duplicates = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    const duplicates = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "IssueRelation"
+      WHERE "sourceIssueId" = ${sourceIssueId}
+        AND "targetIssueId" = ${targetIssueId}
+        AND "relationType" = ${relationType}
+        AND "removedAt" IS NULL
+      LIMIT 1
+    `);
+    if (duplicates.length > 0) {
+      throw new IssueRelationConflictError("相同的有效治理紀錄關聯已存在。");
+    }
+
+    if (relationType === "HOTFIX_TO_PROJECT") {
+      const currentProjects = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "id" FROM "IssueRelation"
         WHERE "sourceIssueId" = ${sourceIssueId}
-          AND "targetIssueId" = ${targetIssueId}
-          AND "relationType" = ${relationType}
+          AND "relationType" = 'HOTFIX_TO_PROJECT'
           AND "removedAt" IS NULL
         LIMIT 1
       `);
-      if (duplicates.length > 0) {
-        throw new IssueRelationConflictError("相同的有效治理紀錄關聯已存在。");
+      if (currentProjects.length > 0) {
+        throw new IssueRelationConflictError("此 Hotfix 已有一個有效的主要季度專案關聯。");
       }
+    }
 
-      if (relationType === "HOTFIX_TO_PROJECT") {
-        const currentProjects = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-          SELECT "id" FROM "IssueRelation"
-          WHERE "sourceIssueId" = ${sourceIssueId}
-            AND "relationType" = 'HOTFIX_TO_PROJECT'
-            AND "removedAt" IS NULL
-          LIMIT 1
-        `);
-        if (currentProjects.length > 0) {
-          throw new IssueRelationConflictError("此 Hotfix 已有一個有效的主要季度專案關聯。");
-        }
-      }
+    const relationId = randomUUID();
+    const createdAt = new Date();
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO "IssueRelation" (
+        "id", "sourceIssueId", "targetIssueId", "relationType",
+        "createdById", "createdAt"
+      ) VALUES (
+        ${relationId}, ${sourceIssueId}, ${targetIssueId}, ${relationType},
+        ${actorId}, ${createdAt}
+      )
+    `);
+    const relationRow = await findRelationRow(tx, relationId);
+    if (!relationRow) throw new IssueRelationNotFoundError("治理紀錄關聯建立失敗。");
+    const relation = await hydrateRelation(tx, relationRow);
 
-      const relationId = randomUUID();
-      const createdAt = new Date();
-      await tx.$executeRaw(Prisma.sql`
-        INSERT INTO "IssueRelation" (
-          "id", "sourceIssueId", "targetIssueId", "relationType",
-          "createdById", "createdAt"
-        ) VALUES (
-          ${relationId}, ${sourceIssueId}, ${targetIssueId}, ${relationType},
-          ${actorId}, ${createdAt}
-        )
-      `);
-      const relationRow = await findRelationRow(tx, relationId);
-      if (!relationRow) throw new IssueRelationNotFoundError("治理紀錄關聯建立失敗。");
-      const relation = await hydrateRelation(tx, relationRow);
+    await writeAuditLog(
+      {
+        entityType: "IssueRelation",
+        entityId: relation.id,
+        actionType: "IssueRelationCreated",
+        summary: `建立治理紀錄關聯：${source.issueKey} → ${target.issueKey}`,
+        actorUserId: actorId,
+        toValue: relationType,
+        reasonCode: relationType,
+      },
+      tx,
+    );
 
-      await writeAuditLog(
-        {
-          entityType: "IssueRelation",
-          entityId: relation.id,
-          actionType: "IssueRelationCreated",
-          summary: `建立治理紀錄關聯：${source.issueKey} → ${target.issueKey}`,
-          actorUserId: actorId,
-          toValue: relationType,
-          reasonCode: relationType,
-        },
-        tx,
-      );
-
-      return relation;
-    });
+    return relation;
   } catch (error) {
     if (isPrismaUniqueConflict(error)) {
       if (relationType === "HOTFIX_TO_PROJECT") {

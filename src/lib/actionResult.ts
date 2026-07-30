@@ -49,6 +49,12 @@ import { NoEligibleApproverError } from "./approvalService";
 import { TeamManagementValidationError, TeamManagementStateError, TeamManagementAccessDeniedError } from "./team-applicant/teamManagementService";
 import { IssueDeletionValidationError, IssueDeletionStateError, IssueDeletionAccessDeniedError } from "./issue-management/issueDeletionService";
 import { IssueCreationValidationError } from "./issueCreation";
+import {
+  IssueRelationAccessDeniedError,
+  IssueRelationConflictError,
+  IssueRelationNotFoundError,
+  IssueRelationValidationError,
+} from "./issue-relations/service";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T; message: string }
@@ -97,6 +103,10 @@ const KNOWN_DOMAIN_ERRORS = [
   IssueDeletionStateError,
   IssueDeletionAccessDeniedError,
   IssueCreationValidationError,
+  IssueRelationAccessDeniedError,
+  IssueRelationConflictError,
+  IssueRelationNotFoundError,
+  IssueRelationValidationError,
 ] as const;
 
 export function toActionResult(err: unknown, fallbackMessage = "操作失敗，請稍後再試"): ActionResult<never> {

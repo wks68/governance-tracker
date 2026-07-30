@@ -1,12 +1,16 @@
 import { requireCurrentUser } from "@/lib/auth";
 import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import NewIssueForm from "@/components/NewIssueForm";
+import { listGovernanceRelationCandidatesForActor } from "@/lib/issue-relations/viewService";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewIssuePage() {
   const currentUser = await requireCurrentUser();
-  const scope = await resolveIssueCreationScope(currentUser.id);
+  const [scope, relationCandidates] = await Promise.all([
+    resolveIssueCreationScope(currentUser.id),
+    listGovernanceRelationCandidatesForActor(currentUser.id),
+  ]);
   const initialTeamId = scope.fixedTeamId ?? "";
   const initialApplicants =
     initialTeamId && scope.canChooseApplicant && !scope.blockedReason
@@ -15,5 +19,11 @@ export default async function NewIssuePage() {
         ? [scope.fixedApplicant]
         : undefined;
 
-  return <NewIssueForm scope={scope} initialApplicants={initialApplicants} />;
+  return (
+    <NewIssueForm
+      scope={scope}
+      initialApplicants={initialApplicants}
+      relationCandidates={relationCandidates}
+    />
+  );
 }

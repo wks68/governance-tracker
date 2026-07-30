@@ -7,8 +7,10 @@ import TicketBasicInfo, { type TicketBasicInfoData } from "./TicketBasicInfo";
 import HotfixHeaderActions from "./HotfixHeaderActions";
 import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
 import CumulativeWorkflowContext from "./CumulativeWorkflowContext";
+import GovernanceRelationsCard from "@/components/issue-relations/GovernanceRelationsCard";
+import { loadGovernanceRelationViewForActor } from "@/lib/issue-relations/viewService";
 
-export default function HotfixStageShell({
+export default async function HotfixStageShell({
   title,
   subtitle,
   nineStageIndex,
@@ -34,6 +36,9 @@ export default function HotfixStageShell({
   // 副標題一律以「目前 Workflow 關卡」為準（見 nineStage.hotfixStageSubtitle）；
   // 頁面傳入的 subtitle 只在該關卡沒有對應說明時作為 fallback，不得覆蓋流程狀態。
   const resolvedSubtitle = (ctx ? hotfixStageSubtitle(ctx.runtime.currentStage.stageKey) : null) ?? subtitle;
+  const relationView = ctx
+    ? await loadGovernanceRelationViewForActor(ctx.actor.id, ctx.issue.id)
+    : null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
@@ -58,6 +63,8 @@ export default function HotfixStageShell({
       </div>
 
       <TicketBasicInfo data={ticketBasicInfo} />
+
+      {relationView && <GovernanceRelationsCard view={relationView} />}
 
       {ctx && <CumulativeWorkflowContext ctx={ctx} />}
 
