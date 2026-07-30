@@ -6,7 +6,7 @@ import { prisma } from "../prisma";
 import { getIssueWorkflowRuntime, evaluateActorEligibilityForStage, getCurrentExecutorUserId, type IssueWorkflowRuntime } from "../workflowExecutionService";
 import { getUserHasCapability } from "../permissions";
 import { nineStageIndexOfStageKey, routeForStageKey, isCancelledStageKey } from "./nineStage";
-import { HOTFIX_PRIORITY_FIELD_KEY } from "./priority";
+import { HOTFIX_PRIORITY_FIELD_KEY, resolveHotfixPriority } from "./priority";
 import type { TicketBasicInfoData } from "@/components/hotfix-nine-stage/TicketBasicInfo";
 import type { Issue, User } from "@prisma/client";
 import { getEligibleApproverUserIds } from "../approvalService";
@@ -74,7 +74,7 @@ export async function loadHotfixPageContext(issueId: string, actor: User, allowe
     description: issue.description,
     systemName: issue.systemName,
     riskLevel: issue.riskLevel,
-    hotfixPriority,
+    hotfixPriority: resolveHotfixPriority(hotfixPriority, issue.priority).value,
     dueDate: issue.dueDate ? issue.dueDate.toISOString() : null,
   };
 

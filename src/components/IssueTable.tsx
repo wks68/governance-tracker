@@ -2,6 +2,8 @@ import Link from "next/link";
 import StatusBadge from "./StatusBadge";
 import { issueTypeShortLabel } from "@/lib/constants";
 import { formatDate } from "@/lib/datetime";
+import { resolveHotfixPriority } from "@/lib/hotfix-ui/priority";
+import { hotfixTitleForDisplay } from "@/lib/hotfix-ui/title";
 
 // RD/QA/OP 接單流程新增：操作按鈕文案集中對照，避免各處各自硬編碼中文字串。
 const ACTION_BUTTON_LABEL: Record<string, string> = {
@@ -24,6 +26,9 @@ export interface IssueRow {
   blockReason: string;
   waitingRole: string;
   ownerName: string;
+  reporterName: string;
+  priority: string;
+  hotfixPriority?: string | null;
   dueDate: string | null;
   needRca: boolean;
   needRiskException: boolean;
@@ -52,9 +57,78 @@ function dwellDays(stageEnteredAt: string | null | undefined): number | null {
   return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
 }
 
-export default function IssueTable({ issues }: { issues: IssueRow[] }) {
+function HotfixUrgencyBadge({ value, legacyPriority }: { value?: string | null; legacyPriority: string }) {
+  const urgency = resolveHotfixPriority(value, legacyPriority);
+  return (
+    <span
+      aria-label={`緊急程度：${urgency.label}。${urgency.description}`}
+      title={urgency.description}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium ${urgency.badgeClass}`}
+    >
+      <span aria-hidden className={`h-2 w-2 rounded-full ${urgency.dotClass}`} />
+      {urgency.label}
+    </span>
+  );
+}
+
+function ActionCell({ issue }: { issue: IssueRow }) {
+  return issue.actionHref && issue.actionKind ? (
+    <Link href={issue.actionHref} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-hover">
+      {ACTION_BUTTON_LABEL[issue.actionKind] ?? issue.actionKind}
+    </Link>
+  ) : (
+    <span className="text-xs text-gray-300">—</span>
+  );
+}
+
+export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[]; mode?: "all" | "hotfix" }) {
   if (issues.length === 0) {
     return <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">目前沒有符合條件的工單。</div>;
+  }
+  if (mode === "hotfix") {
+    return (
+      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left text-xs font-medium text-gray-500">
+              <th className="px-3 py-2">緊急程度</th>
+              <th className="px-3 py-2">工單編號</th>
+              <th className="px-3 py-2">工單類型</th>
+              <th className="px-3 py-2">系統名稱</th>
+              <th className="px-3 py-2">標題</th>
+              <th className="px-3 py-2">申請人</th>
+              <th className="px-3 py-2">到期日</th>
+              <th className="px-3 py-2">目前階段</th>
+              <th className="px-3 py-2">承接團隊</th>
+              <th className="px-3 py-2">執行人</th>
+              <th className="px-3 py-2">等待角色</th>
+              <th className="px-3 py-2">操作</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {issues.map((issue) => {
+              const displayTitle = hotfixTitleForDisplay(issue.title);
+              return (
+                <tr key={issue.id} className="hover:bg-gray-50">
+                  <td className="whitespace-nowrap px-3 py-2"><HotfixUrgencyBadge value={issue.hotfixPriority} legacyPriority={issue.priority} /></td>
+                  <td className="whitespace-nowrap px-3 py-2"><Link href={`/issues/${issue.id}`} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issueTypeShortLabel(issue.issueType)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.systemName || "—"}</td>
+                  <td className="max-w-[260px] truncate px-3 py-2 text-gray-800" title={displayTitle}>{displayTitle}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.reporterName || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDate(issue.dueDate)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowStatus}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.assignedTeamName ?? "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.executorName ?? "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.waitingRole || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2"><ActionCell issue={issue} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
   }
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
@@ -116,13 +190,7 @@ export default function IssueTable({ issues }: { issues: IssueRow[] }) {
                 <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.evidenceStatus}</td>
                 <td className="max-w-[220px] truncate px-3 py-2 text-gray-600">{it.nextStep || "—"}</td>
                 <td className="whitespace-nowrap px-3 py-2">
-                  {it.actionHref && it.actionKind ? (
-                    <Link href={it.actionHref} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-hover">
-                      {ACTION_BUTTON_LABEL[it.actionKind] ?? it.actionKind}
-                    </Link>
-                  ) : (
-                    <span className="text-xs text-gray-300">—</span>
-                  )}
+                  <ActionCell issue={it} />
                 </td>
               </tr>
             );

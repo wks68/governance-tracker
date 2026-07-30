@@ -11,6 +11,7 @@ import DynamicFieldsForm from "@/components/DynamicFieldsForm";
 import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSelector";
 import type { ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
 import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope";
+import HotfixUrgencyHelp from "@/components/hotfix-nine-stage/HotfixUrgencyHelp";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -27,6 +28,7 @@ export default function NewIssueForm({
   const [issueType, setIssueType] = useState<string>(ISSUE_TYPES[0].key);
   const [teamId, setTeamId] = useState(scope.fixedTeamId ?? "");
   const [applicantId, setApplicantId] = useState(scope.fixedApplicant?.id ?? "");
+  const [hotfixPriority, setHotfixPriority] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const initialStatus = getWorkflow(issueType)[0]?.key ?? "";
@@ -111,7 +113,7 @@ export default function NewIssueForm({
             <input
               name="title"
               required
-              placeholder={isHotfix ? "[Hotfix][系統名稱][問題類型] 問題摘要" : "請輸入工單標題"}
+              placeholder={isHotfix ? "請輸入實際問題標題" : "請輸入工單標題"}
               className={inputCls}
             />
           </div>
@@ -176,9 +178,10 @@ export default function NewIssueForm({
             {isHotfix ? (
               <div>
                 <label className={labelCls}>
-                  Hotfix 工單優先級<span className="ml-1 text-danger">*</span>
+                  緊急程度<span className="ml-1 text-danger">*</span>
+                  <HotfixUrgencyHelp />
                 </label>
-                <select name="hotfixPriority" required className={inputCls} defaultValue="">
+                <select name="hotfixPriority" required className={inputCls} value={hotfixPriority} onChange={(event) => setHotfixPriority(event.target.value)}>
                   <option value="">請選擇</option>
                   {HOTFIX_PRIORITIES.map((p) => (
                     <option key={p.value} value={p.value}>
@@ -186,6 +189,11 @@ export default function NewIssueForm({
                     </option>
                   ))}
                 </select>
+                {hotfixPriority === "LOWEST" && (
+                  <p className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                    此項目原則上可評估改走季度上版，請確認使用 Hotfix 的必要性。
+                  </p>
+                )}
               </div>
             ) : (
               <div>

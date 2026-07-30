@@ -11,12 +11,13 @@ import { getIssueWorkflowRuntime, getAvailableIssueTransitions, executeIssueTran
 import { prisma } from "@/lib/prisma";
 import { HOTFIX_PRIORITY_FIELD_KEY } from "@/lib/hotfix-ui/priority";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
+import { normalizeHotfixTitleForStorage } from "@/lib/hotfix-ui/title";
 
 function readDraftFields(formData: FormData): Partial<HotfixDraftFields> {
   const fields: Partial<HotfixDraftFields> = {};
   for (const key of ["title", "description", "systemName", "environment", "riskLevel", "dueDate", "hotfixPriority", "teamId", "applicantId"] as const) {
     const v = formData.get(key);
-    if (v !== null) fields[key] = String(v);
+    if (v !== null) fields[key] = key === "title" ? normalizeHotfixTitleForStorage(String(v)) : String(v);
   }
   return fields;
 }

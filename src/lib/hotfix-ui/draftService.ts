@@ -9,6 +9,7 @@ import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError, Workfl
 import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./priority";
 import { assertCreationTeamAndApplicant } from "../team-applicant/issueCreationScope";
 import { ENVIRONMENTS, RISK_LEVELS, isValidSystemName } from "../constants";
+import { normalizeHotfixTitleForStorage } from "./title";
 
 export interface HotfixDraftFields {
   title: string;
@@ -42,7 +43,7 @@ export function missingDraftFields(fields: HotfixDraftFields): string[] {
     environment: "環境",
     riskLevel: "風險等級",
     dueDate: "預計完成日",
-    hotfixPriority: "Hotfix 工單優先級",
+    hotfixPriority: "緊急程度",
     teamId: "團隊名稱",
     applicantId: "申請人",
   };
@@ -113,7 +114,7 @@ export async function saveHotfixDraft(input: { issueId: string; actorId: string;
     await tx.issue.update({
       where: { id: input.issueId },
       data: {
-        ...(input.fields.title !== undefined ? { title: input.fields.title } : {}),
+        ...(input.fields.title !== undefined ? { title: normalizeHotfixTitleForStorage(input.fields.title) } : {}),
         ...(input.fields.description !== undefined ? { description: input.fields.description } : {}),
         ...(input.fields.systemName !== undefined ? { systemName: input.fields.systemName } : {}),
         ...(input.fields.environment !== undefined ? { environment: input.fields.environment } : {}),
@@ -126,7 +127,7 @@ export async function saveHotfixDraft(input: { issueId: string; actorId: string;
     if (input.fields.hotfixPriority !== undefined && input.fields.hotfixPriority !== "") {
       await tx.issueFieldValue.upsert({
         where: { issueId_fieldKey: { issueId: input.issueId, fieldKey: HOTFIX_PRIORITY_FIELD_KEY } },
-        create: { issueId: input.issueId, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "Hotfix 工單優先級", fieldValue: input.fields.hotfixPriority },
+        create: { issueId: input.issueId, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "緊急程度", fieldValue: input.fields.hotfixPriority },
         update: { fieldValue: input.fields.hotfixPriority },
       });
     }

@@ -6,6 +6,7 @@ import IssueTable, { IssueRow } from "@/components/IssueTable";
 import { requireCurrentUser } from "@/lib/auth";
 import { evaluateCurrentActorTask } from "@/lib/workflowExecutionService";
 import { routeForStageKey } from "@/lib/hotfix-ui/nineStage";
+import { HOTFIX_PRIORITY_FIELD_KEY } from "@/lib/hotfix-ui/priority";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,9 @@ function toRow(issue: any): IssueRow {
     blockReason: issue.blockReason,
     waitingRole: issue.waitingRole,
     ownerName: issue.ownerName,
+    reporterName: issue.reporter,
+    priority: issue.priority,
+    hotfixPriority: issue.fieldValues?.find((field: { fieldKey: string }) => field.fieldKey === HOTFIX_PRIORITY_FIELD_KEY)?.fieldValue ?? null,
     dueDate: issue.dueDate ? issue.dueDate.toISOString() : null,
     needRca: issue.needRca,
     needRiskException: issue.needRiskException,
@@ -68,7 +72,15 @@ async function enrichHotfixRows(issues: any[], actorId: string): Promise<Map<str
 
 export default async function IssuesPage({ searchParams }: { searchParams: Record<string, string | undefined> }) {
   const actor = await requireCurrentUser();
-  const allIssues = await prisma.issue.findMany({ orderBy: { createdAt: "desc" } });
+  const allIssues = await prisma.issue.findMany({
+    orderBy: { createdAt: "desc" },
+    include: {
+      fieldValues: {
+        where: { fieldKey: HOTFIX_PRIORITY_FIELD_KEY },
+        select: { fieldKey: true, fieldValue: true },
+      },
+    },
+  });
   const now = Date.now();
   const isOverdue = (i: (typeof allIssues)[number]) =>
     !!i.dueDate && i.dueDate.getTime() < now && !isClosed(i.issueType, i.workflowStatus);
@@ -83,6 +95,11 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
 
   let filtered = allIssues;
   if (searchParams.issueType) filtered = filtered.filter((i) => i.issueType === searchParams.issueType);
+  if (searchParams.changeSubType) filtered = filtered.filter((i) => i.changeSubType === searchParams.changeSubType);
+  if (searchParams.q) {
+    const query = searchParams.q.trim().toLocaleLowerCase("zh-TW");
+    filtered = filtered.filter((issue) => issue.title.toLocaleLowerCase("zh-TW").includes(query) || issue.issueKey.toLocaleLowerCase("zh-TW").includes(query));
+  }
   if (searchParams.light) filtered = filtered.filter((i) => i.statusLight === searchParams.light);
   if (searchParams.systemName) filtered = filtered.filter((i) => i.systemName === searchParams.systemName);
   if (searchParams.environment) filtered = filtered.filter((i) => i.environment === searchParams.environment);
@@ -124,7 +141,20 @@ export default async function IssuesPage({ searchParams }: { searchParams: Recor
 
       <FilterBar options={{ systemNames, owners }} />
 
-      <IssueTable issues={rows} />
+      <nav aria-label="治理紀錄獨立清單" className="flex flex-wrap gap-2">
+        {[
+          { href: "/issues?issueType=Hotfix", label: "Hotfix" },
+          { href: "/issues?issueType=ChangeRelease&changeSubType=QUARTERLY_RELEASE", label: "季度專案" },
+          { href: "/issues?issueType=Incident", label: "事件通報" },
+          { href: "/issues?issueType=RCA", label: "RCA" },
+        ].map((item) => (
+          <Link key={item.label} href={item.href} className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:border-primary hover:text-primary">
+            {item.label}
+          </Link>
+        ))}
+      </nav>
+
+      <IssueTable issues={rows} mode={searchParams.issueType === "Hotfix" ? "hotfix" : "all"} />
     </div>
   );
 }

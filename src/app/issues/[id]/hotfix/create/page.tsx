@@ -7,6 +7,7 @@ import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
 import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
+import { normalizeHotfixTitleForStorage } from "@/lib/hotfix-ui/title";
 import HotfixDraftForm from "./HotfixDraftForm";
 
 export default async function HotfixCreatePage({ params }: { params: { id: string } }) {
@@ -44,7 +45,7 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
         <HotfixDraftForm
           issueId={params.id}
           initialValues={{
-            title: ctx.ticketBasicInfo.title,
+            title: normalizeHotfixTitleForStorage(ctx.ticketBasicInfo.title),
             description: ctx.ticketBasicInfo.description,
             systemName: ctx.ticketBasicInfo.systemName,
             environment: ctx.ticketBasicInfo.environment,

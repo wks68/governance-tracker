@@ -29,6 +29,7 @@ import { allocateNextIssueKey, isTransientTransactionConflict } from "./issue-ke
 import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./constants";
 import { Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
+import { normalizeHotfixTitleForStorage } from "./hotfix-ui/title";
 
 const CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS = 3;
 
@@ -174,7 +175,8 @@ export async function createIssueForActor(
     throw new IssueCreationValidationError("無效的工單類型");
   }
 
-  const title = String(formData.get("title") || "").trim();
+  const rawTitle = String(formData.get("title") || "").trim();
+  const title = issueType === "Hotfix" ? normalizeHotfixTitleForStorage(rawTitle) : rawTitle;
   const description = String(formData.get("description") || "");
   const systemName = String(formData.get("systemName") || "");
   const environment = String(formData.get("environment") || "");
@@ -199,7 +201,7 @@ export async function createIssueForActor(
     throw new IssueCreationValidationError("請選擇優先級");
   }
   if (hotfixPriority !== "" && !HOTFIX_PRIORITIES.some((p) => p.value === hotfixPriority)) {
-    throw new IssueCreationValidationError("請選擇 Hotfix 工單優先級");
+    throw new IssueCreationValidationError("請選擇緊急程度");
   }
   if (dueDateRaw !== "" && Number.isNaN(new Date(dueDateRaw).getTime())) {
     throw new IssueCreationValidationError("請選擇有效的預計完成日");
@@ -235,7 +237,7 @@ export async function createIssueForActor(
     const missing =
       issueType === "Hotfix"
         ? missingDraftFields(baseFields)
-        : missingDraftFields(baseFields).filter((label) => label !== "Hotfix 工單優先級");
+        : missingDraftFields(baseFields).filter((label) => label !== "緊急程度");
     if (missing.length > 0) {
       throw new IssueCreationValidationError(`請先填寫必填欄位：${missing.join("、")}`);
     }
@@ -311,7 +313,7 @@ export async function createIssueForActor(
       }
       if (issueType === "Hotfix" && HOTFIX_PRIORITIES.some((p) => p.value === hotfixPriority)) {
         await tx.issueFieldValue.create({
-          data: { issueId: created.id, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "Hotfix 工單優先級", fieldValue: hotfixPriority },
+          data: { issueId: created.id, fieldKey: HOTFIX_PRIORITY_FIELD_KEY, fieldLabel: "緊急程度", fieldValue: hotfixPriority },
         });
       }
 

@@ -31,6 +31,16 @@ export default function FilterBar({ options }: { options: FilterOptions }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
+      <input
+        type="search"
+        aria-label="搜尋工單編號或正式標題"
+        placeholder="搜尋工單編號或標題"
+        defaultValue={searchParams.get("q") ?? ""}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") update("q", event.currentTarget.value.trim());
+        }}
+        className={sel}
+      />
       {/* RD/QA/OP 接單流程新增：快速篩選（僅新流程 Hotfix 工單納入計算，見 issues/page.tsx） */}
       <select className={sel} defaultValue={searchParams.get("quick") ?? ""} onChange={(e) => update("quick", e.target.value)}>
         <option value="">快速篩選：全部可見工單</option>

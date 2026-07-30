@@ -47,7 +47,7 @@ export default function TicketBasicInfo({ data }: { data: TicketBasicInfoData })
         <Field label="環境">{data.environment || "（未填寫）"}</Field>
         <Field label="系統名稱">{data.systemName || "（未填寫）"}</Field>
         <Field label="風險等級">{data.riskLevel || "（未填寫）"}</Field>
-        <Field label="Hotfix 工單優先級">
+        <Field label="緊急程度">
           {priorityDef ? (
             <span className={`inline-flex items-center gap-1 font-medium ${priorityDef.colorClass}`}>
               <span aria-hidden>{ARROW_GLYPH[priorityDef.arrow]}</span>

@@ -9,6 +9,7 @@ import type { HotfixPriorityDef } from "@/lib/hotfix-ui/priority";
 import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSelector";
 import type { ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
 import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope";
+import HotfixUrgencyHelp from "@/components/hotfix-nine-stage/HotfixUrgencyHelp";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -150,7 +151,8 @@ export default function HotfixDraftForm({
           </div>
           <div>
             <label className={labelCls}>
-              Hotfix 工單優先級<span className="ml-1 text-danger">*</span>
+              緊急程度<span className="ml-1 text-danger">*</span>
+              <HotfixUrgencyHelp />
             </label>
             <select value={values.hotfixPriority} onChange={(e) => set("hotfixPriority", e.target.value)} disabled={isPending} className={inputCls}>
               <option value="">請選擇</option>
@@ -160,6 +162,11 @@ export default function HotfixDraftForm({
                 </option>
               ))}
             </select>
+            {values.hotfixPriority === "LOWEST" && (
+              <p className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                此項目原則上可評估改走季度上版，請確認使用 Hotfix 的必要性。
+              </p>
+            )}
           </div>
           <div>
             <label className={labelCls}>
