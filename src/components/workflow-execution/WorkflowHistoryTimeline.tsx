@@ -19,6 +19,7 @@ const TRANSITION_TYPE_META: Record<string, { label: string; dotClass: string }> 
   FORWARDED: { label: "前進", dotClass: "bg-gov-green" },
   RETURNED: { label: "退回", dotClass: "bg-gov-yellow" },
   CANCELLED: { label: "取消", dotClass: "bg-gov-red" },
+  REASSIGNED: { label: "重新指派", dotClass: "bg-gov-blue" },
 };
 
 export default function WorkflowHistoryTimeline({ items }: { items: WorkflowHistoryItem[] }) {
@@ -39,7 +40,9 @@ export default function WorkflowHistoryTimeline({ items }: { items: WorkflowHist
               )}
             </div>
             <p className="mt-0.5 text-sm text-gray-800">
-              {item.fromStageLabel ? (
+              {item.transitionType === "REASSIGNED" ? (
+                <>於「{item.toStageLabel}」重新指派執行人</>
+              ) : item.fromStageLabel ? (
                 <>
                   「{item.fromStageLabel}」→「{item.toStageLabel}」{item.transitionLabel ? `（${item.transitionLabel}）` : ""}
                 </>

@@ -73,15 +73,20 @@ export async function setIssueAssignedTeamAtTriage(input: SetIssueAssignedTeamAt
 // transaction 內執行離開 CLAIM 的 FORWARD Transition（承接團隊 Lead 代替執行人本人送出，
 // 語意等同 M2-B 原本「認領」但改為 Lead 指派而非個人自助認領）。
 //
-// reassignIssueExecutor：僅能在 WORK／DEPLOYMENT 關卡（已指派、執行人正在處理、尚未送
-// 主管核准）呼叫，只更新執行人欄位，不移動關卡。一旦送出主管核准（關卡已離開 WORK 進入
-// APPROVAL），getExecutorDomainForStageKey 對 APPROVAL 關卡回傳 null，兩個函式都會 fail
-// closed 拒絕——天然滿足「正式提交主管核准後，不得任意重新指派」，不需要額外的鎖定欄位。
+// reassignIssueExecutor：僅能在 RD／QA／OP 尚未送主管簽核的 WORK 關卡呼叫，只更新執行人
+// 欄位，不移動關卡。明確 allowlist 三個執行 stageKey；核准、核准後部署與其他任何關卡皆
+// fail closed，不需要額外的鎖定欄位。
 // ---------------------------------------------------------------------------
 
 import { executeIssueTransitionInTx } from "./transitionService";
 import { getExecutorDomainForStageKey, executorFieldKey, executorAssignedByFieldKey, executorAssignedAtFieldKey } from "./hotfixDomainMap";
 import { WorkflowExecutionAccessDeniedError } from "./types";
+import { insertExecutorReassignmentHistoryRow } from "./historyService";
+
+const REASSIGNABLE_EXECUTION_STAGE_KEYS = new Set(["rdInProgress", "qaInProgress", "opPreparing"]);
+const REASSIGN_UNAUTHORIZED_MESSAGE = "只有目前承接團隊主管可重新指派執行人。";
+const REASSIGN_INVALID_MEMBER_MESSAGE = "所選人員不屬於目前承接團隊，無法指派。";
+const REASSIGN_INVALID_STAGE_MESSAGE = "此工單目前狀態不可重新指派執行人。";
 
 export interface AssignableMemberInfo {
   userId: string;
@@ -95,6 +100,7 @@ export interface AssignableMembersPreview {
   teamName: string | null;
   currentExecutorUserId: string | null;
   currentExecutorName: string | null;
+  currentExecutorAssignedAt: string | null;
   actorIsLead: boolean;
   members: AssignableMemberInfo[];
 }
@@ -114,6 +120,7 @@ export async function listAssignableMembers(issueId: string, actorId: string): P
     teamName: null,
     currentExecutorUserId: null,
     currentExecutorName: null,
+    currentExecutorAssignedAt: null,
     actorIsLead: false,
     members: [],
   };
@@ -126,28 +133,41 @@ export async function listAssignableMembers(issueId: string, actorId: string): P
   const team = await prisma.team.findUnique({ where: { id: issue.assignedTeamId } });
   if (!team) return empty;
 
-  const isReassignment = stage.stageType !== "CLAIM";
-  if (isReassignment && stage.stageType !== "WORK" && stage.stageType !== "DEPLOYMENT" && stage.stageType !== "CONFIRMATION") {
-    return empty;
-  }
+  const isInitialAssignment = stage.stageType === "CLAIM";
+  const isReassignment = REASSIGNABLE_EXECUTION_STAGE_KEYS.has(stage.stageKey);
+  const assignable = isInitialAssignment || isReassignment;
 
-  const [leadMembership, memberRows, currentExecutorId] = await Promise.all([
+  const [leadMembership, memberRows, currentExecutorId, assignedAtRow] = await Promise.all([
     prisma.teamMember.findFirst({ where: { teamId: team.id, userId: actorId, isActive: true, membershipRole: "LEAD" } }),
-    prisma.teamMember.findMany({ where: { teamId: team.id, isActive: true, user: { isActive: true } }, include: { user: true } }),
+    prisma.teamMember.findMany({
+      where: {
+        teamId: team.id,
+        isActive: true,
+        user: {
+          isActive: true,
+          userRoles: { some: { role: domain, isActive: true } },
+        },
+      },
+      include: { user: true },
+    }),
     loadExecutorFieldValue(prisma, issueId, domain),
+    prisma.issueFieldValue.findUnique({
+      where: { issueId_fieldKey: { issueId, fieldKey: executorAssignedAtFieldKey(domain) } },
+    }),
   ]);
 
   const currentExecutor = currentExecutorId ? memberRows.find((m) => m.userId === currentExecutorId) : null;
 
   return {
-    assignable: true,
+    assignable,
     isReassignment,
     teamId: team.id,
     teamName: team.name,
     currentExecutorUserId: currentExecutorId,
     currentExecutorName: currentExecutor?.user.name ?? null,
+    currentExecutorAssignedAt: assignedAtRow?.fieldValue || null,
     actorIsLead: !!leadMembership,
-    members: memberRows.map((m) => ({ userId: m.userId, userName: m.user.name })),
+    members: assignable ? memberRows.map((m) => ({ userId: m.userId, userName: m.user.name })) : [],
   };
 }
 
@@ -159,7 +179,7 @@ async function requireLeadOfAssignedTeam(tx: Tx, actorId: string, teamId: string
   }
 }
 
-async function requireActiveTeamMemberExecutor(tx: Tx, teamId: string, executorUserId: string) {
+async function requireActiveTeamMemberExecutor(tx: Tx, teamId: string, executorUserId: string, requiredRole?: string) {
   const membership = await tx.teamMember.findFirst({ where: { teamId, userId: executorUserId, isActive: true } });
   if (!membership) {
     throw new WorkflowExecutionAccessDeniedError("指派對象必須是承接團隊的 active 成員");
@@ -167,6 +187,12 @@ async function requireActiveTeamMemberExecutor(tx: Tx, teamId: string, executorU
   const user = await tx.user.findUnique({ where: { id: executorUserId } });
   if (!user || !user.isActive) {
     throw new WorkflowExecutionAccessDeniedError("指派對象帳號不存在或已停用");
+  }
+  if (requiredRole) {
+    const role = await tx.userRole.findFirst({ where: { userId: executorUserId, role: requiredRole, isActive: true } });
+    if (!role) {
+      throw new WorkflowExecutionAccessDeniedError("指派對象不具備此執行階段所需的 active 角色");
+    }
   }
   return user;
 }
@@ -196,7 +222,7 @@ async function assignIssueExecutorTx(tx: Tx, input: AssignIssueExecutorInput) {
   if (!domain) throw new WorkflowExecutionStateError(`目前關卡「${stage.stageKey}」不支援指派執行人`);
 
   await requireLeadOfAssignedTeam(tx, input.actorId, issue.assignedTeamId);
-  const executorUser = await requireActiveTeamMemberExecutor(tx, issue.assignedTeamId, input.executorUserId);
+  const executorUser = await requireActiveTeamMemberExecutor(tx, issue.assignedTeamId, input.executorUserId, domain);
 
   const now = new Date().toISOString();
   await tx.issueFieldValue.upsert({
@@ -254,30 +280,52 @@ export interface ReassignIssueExecutorInput {
 async function reassignIssueExecutorTx(tx: Tx, input: ReassignIssueExecutorInput) {
   const validationIssues: string[] = [];
   assertReasonCodeProvided(input.reasonCode, validationIssues);
-  if (!input.executorUserId) validationIssues.push("executorUserId 不得為空");
   throwIfInvalid(validationIssues);
+  if (!input.executorUserId) {
+    throw new WorkflowExecutionAccessDeniedError(REASSIGN_INVALID_MEMBER_MESSAGE);
+  }
 
   const issue = await getIssueOrThrow(tx, input.issueId);
   if (!issue.currentWorkflowStageId || !issue.assignedTeamId) {
-    throw new WorkflowExecutionStateError("Issue 尚未有承接團隊，無法重新指派執行人");
+    throw new WorkflowExecutionStateError(REASSIGN_INVALID_STAGE_MESSAGE);
   }
   const stage = await getStageOrThrow(tx, issue.currentWorkflowStageId);
   const domain = getExecutorDomainForStageKey(stage.stageKey);
-  // getExecutorDomainForStageKey 對 APPROVAL 等關卡回傳 null——一旦已送主管核准，本函式在此
-  // 天然 fail closed，滿足「正式提交主管核准後，不得任意重新指派」。
-  if (!domain || stage.stageType === "CLAIM") {
-    throw new WorkflowExecutionStateError(`目前關卡「${stage.stageKey}」不支援重新指派執行人（首次指派請使用 assignIssueExecutor；已送主管核准後不得重新指派）`);
+  if (!domain || !REASSIGNABLE_EXECUTION_STAGE_KEYS.has(stage.stageKey)) {
+    throw new WorkflowExecutionStateError(REASSIGN_INVALID_STAGE_MESSAGE);
   }
 
-  await requireLeadOfAssignedTeam(tx, input.actorId, issue.assignedTeamId);
-  const executorUser = await requireActiveTeamMemberExecutor(tx, issue.assignedTeamId, input.executorUserId);
+  try {
+    await requireLeadOfAssignedTeam(tx, input.actorId, issue.assignedTeamId);
+  } catch (err) {
+    if (err instanceof WorkflowExecutionAccessDeniedError) {
+      throw new WorkflowExecutionAccessDeniedError(REASSIGN_UNAUTHORIZED_MESSAGE);
+    }
+    throw err;
+  }
+
+  const executorUser = await requireActiveTeamMemberExecutor(tx, issue.assignedTeamId, input.executorUserId, domain).catch((err: unknown) => {
+    if (err instanceof WorkflowExecutionAccessDeniedError) {
+      throw new WorkflowExecutionAccessDeniedError(REASSIGN_INVALID_MEMBER_MESSAGE);
+    }
+    throw err;
+  });
 
   const previousExecutorId = await loadExecutorFieldValue(tx, issue.id, domain);
   if (!previousExecutorId) {
-    throw new WorkflowExecutionStateError("尚未指派過執行人，請使用 assignIssueExecutor 進行首次指派");
+    throw new WorkflowExecutionStateError(REASSIGN_INVALID_STAGE_MESSAGE);
+  }
+  if (previousExecutorId === input.executorUserId) {
+    return {
+      issue: await tx.issue.findUniqueOrThrow({ where: { id: issue.id } }),
+      executorName: executorUser.name,
+      changed: false,
+    };
   }
 
-  const now = new Date().toISOString();
+  const previousExecutor = await tx.user.findUnique({ where: { id: previousExecutorId } });
+  const executedAt = new Date();
+  const now = executedAt.toISOString();
   await tx.issueFieldValue.update({
     where: { issueId_fieldKey: { issueId: issue.id, fieldKey: executorFieldKey(domain) } },
     data: { fieldValue: input.executorUserId },
@@ -298,7 +346,7 @@ async function reassignIssueExecutorTx(tx: Tx, input: ReassignIssueExecutorInput
       entityType: "Issue",
       entityId: issue.id,
       actionType: "IssueExecutorReassigned",
-      summary: `重新指派 ${domain} 執行人：「${previousExecutorId}」→「${executorUser.name}」`,
+      summary: `重新指派 ${domain} 執行人：「${previousExecutor?.name ?? "原執行人"}」→「${executorUser.name}」`,
       actorUserId: input.actorId,
       reasonCode: input.reasonCode,
       fromValue: previousExecutorId,
@@ -307,7 +355,20 @@ async function reassignIssueExecutorTx(tx: Tx, input: ReassignIssueExecutorInput
     tx,
   );
 
-  return tx.issue.findUniqueOrThrow({ where: { id: issue.id } });
+  await insertExecutorReassignmentHistoryRow(tx, {
+    issueId: issue.id,
+    stageId: stage.id,
+    actorUserId: input.actorId,
+    reasonCode: input.reasonCode,
+    assignedTeamId: issue.assignedTeamId,
+    executedAt,
+  });
+
+  return {
+    issue: await tx.issue.findUniqueOrThrow({ where: { id: issue.id } }),
+    executorName: executorUser.name,
+    changed: true,
+  };
 }
 
 export async function reassignIssueExecutor(input: ReassignIssueExecutorInput) {

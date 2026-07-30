@@ -731,8 +731,8 @@ model IssueWorkflowStageHistory {
   issueId               String
   fromStageId           String? // null 僅用於 ENTERED（流程啟動，無來源關卡）
   toStageId             String // 本次事件進入的關卡
-  transitionId          String? // 實際執行的 WorkflowTransition；null 僅用於 ENTERED
-  transitionType        String // ENTERED / FORWARDED / RETURNED / CANCELLED
+  transitionId          String? // 實際執行的 WorkflowTransition；ENTERED／REASSIGNED 瞬時事件為 null
+  transitionType        String // ENTERED / FORWARDED / RETURNED / CANCELLED / REASSIGNED
   actorUserId           String
   reasonCode            String?
   assignedTeamIdBefore  String?

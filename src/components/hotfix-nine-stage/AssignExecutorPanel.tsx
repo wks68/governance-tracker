@@ -1,14 +1,13 @@
 "use client";
 
-// RD/QA/OP 接單流程新增：CLAIM 關卡（已接單，待指派）的指派執行人面板，以及 WORK 關卡內
-// 承接團隊 Lead 於執行人正式送出前重新指派的面板。
+// RD/QA/OP 接單流程新增：CLAIM 關卡（已接單，待指派）的首次指派執行人面板。
 //
 // 只有承接團隊的 active Lead 會看到下拉選單＋按鈕；其餘人員（含同團隊一般成員）唯讀顯示
 // 「等待 XX 團隊主管指派」或目前指派對象。
 
 import { useState, useTransition } from "react";
 import { ActionErrorText } from "@/components/ActionResultBanner";
-import { assignIssueExecutorAction, reassignIssueExecutorAction } from "@/app/issues/[id]/hotfix/claim-actions";
+import { assignIssueExecutorAction } from "@/app/issues/[id]/hotfix/claim-actions";
 import type { AssignableMembersPreview } from "@/lib/workflowExecutionService";
 
 export interface AssignExecutorPanelProps {
@@ -20,9 +19,13 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [selected, setSelected] = useState<string>(preview.currentExecutorUserId ?? "");
-  const [reason, setReason] = useState("");
 
   if (!preview.assignable) {
+    return null;
+  }
+
+  // WORK 關卡的重新指派已移至頁面右上角 Dialog，不得再於正文顯示表單。
+  if (preview.isReassignment) {
     return null;
   }
 
@@ -38,21 +41,15 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
     );
   }
 
-  const needsReasonForReassign = preview.isReassignment && selected !== preview.currentExecutorUserId;
-
   function submit() {
     if (!selected) return;
     setError(null);
     const fd = new FormData();
     fd.set("issueId", issueId);
     fd.set("executorUserId", selected);
-    if (preview.isReassignment) {
-      fd.set("reasonCode", reason.trim());
-    } else {
-      fd.set("reasonCode", "ASSIGN_EXECUTOR");
-    }
+    fd.set("reasonCode", "ASSIGN_EXECUTOR");
     startTransition(async () => {
-      const result = preview.isReassignment ? await reassignIssueExecutorAction(fd) : await assignIssueExecutorAction(fd);
+      const result = await assignIssueExecutorAction(fd);
       if (!result.ok) {
         setError(result.message);
         return;
@@ -63,7 +60,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-gray-800">{preview.isReassignment ? "重新指派執行人" : "指派執行人"}</h2>
+      <h2 className="text-sm font-semibold text-gray-800">指派執行人</h2>
       <p className="mt-1 text-xs text-gray-500">承接團隊：{preview.teamName}</p>
 
       <ActionErrorText message={error} />
@@ -83,24 +80,13 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
           ))}
         </select>
 
-        {needsReasonForReassign && (
-          <textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={2}
-            disabled={isPending}
-            className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
-            placeholder="重新指派原因（必填）"
-          />
-        )}
-
         <button
           type="button"
-          disabled={isPending || !selected || (needsReasonForReassign && !reason.trim())}
+          disabled={isPending || !selected}
           onClick={submit}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40"
         >
-          {isPending ? "處理中…" : preview.isReassignment ? "確認重新指派" : "確認指派"}
+          {isPending ? "處理中…" : "確認指派"}
         </button>
       </div>
     </section>

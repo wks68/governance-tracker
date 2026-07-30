@@ -15,6 +15,7 @@ export default function HotfixStageShell({
   ticketBasicInfo,
   backHref,
   ctx,
+  headerActions,
   children,
 }: {
   title: string;
@@ -25,6 +26,8 @@ export default function HotfixStageShell({
   backHref: string;
   /** 提供時會在標題下方顯示取消／刪除／Admin 改派等動作列，不提供則不顯示（唯讀情境）。 */
   ctx?: HotfixPageContext;
+  /** 當前頁面專屬的次要操作，與共用操作一起置於頁面右上角。 */
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   // 副標題一律以「目前 Workflow 關卡」為準（見 nineStage.hotfixStageSubtitle）；
@@ -41,7 +44,12 @@ export default function HotfixStageShell({
           <h1 className="mt-1 text-xl font-bold text-gray-900">{title}</h1>
           {resolvedSubtitle && <p className="mt-0.5 text-sm text-gray-500">{resolvedSubtitle}</p>}
         </div>
-        {ctx && <HotfixHeaderActions ctx={ctx} />}
+        {(headerActions || ctx) && (
+          <div className="flex flex-wrap items-start justify-end gap-2">
+            {headerActions}
+            {ctx && <HotfixHeaderActions ctx={ctx} />}
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-gray-200 bg-white p-4">

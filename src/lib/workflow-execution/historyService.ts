@@ -30,17 +30,51 @@ export interface InsertStageHistoryRowInput {
   fromStageId: string | null;
   toStageId: string;
   transitionId: string | null;
-  transitionType: "ENTERED" | "FORWARDED" | "RETURNED" | "CANCELLED";
+  transitionType: "ENTERED" | "FORWARDED" | "RETURNED" | "CANCELLED" | "REASSIGNED";
   actorUserId: string;
   reasonCode: string | null;
   assignedTeamIdBefore: string | null;
   assignedTeamIdAfter: string | null;
   terminalOutcome: string | null;
   executedAt: Date;
+  exitedAt?: Date;
 }
 
 export async function insertStageHistoryRow(tx: Tx, input: InsertStageHistoryRowInput) {
   return tx.issueWorkflowStageHistory.create({ data: input });
+}
+
+/**
+ * 重新指派不移動關卡，但仍須留下 append-only Workflow 歷程。
+ *
+ * 這是一筆已完成的瞬時事件（executedAt === exitedAt），因此不會與目前關卡唯一一筆
+ * exitedAt=null 的開放歷程互相衝突。
+ */
+export async function insertExecutorReassignmentHistoryRow(
+  tx: Tx,
+  input: {
+    issueId: string;
+    stageId: string;
+    actorUserId: string;
+    reasonCode: string;
+    assignedTeamId: string;
+    executedAt: Date;
+  },
+) {
+  return insertStageHistoryRow(tx, {
+    issueId: input.issueId,
+    fromStageId: input.stageId,
+    toStageId: input.stageId,
+    transitionId: null,
+    transitionType: "REASSIGNED",
+    actorUserId: input.actorUserId,
+    reasonCode: input.reasonCode,
+    assignedTeamIdBefore: input.assignedTeamId,
+    assignedTeamIdAfter: input.assignedTeamId,
+    terminalOutcome: null,
+    executedAt: input.executedAt,
+    exitedAt: input.executedAt,
+  });
 }
 
 // ---------------------------------------------------------------------------

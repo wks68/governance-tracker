@@ -39,21 +39,35 @@ export async function assignIssueExecutorAction(formData: FormData): Promise<Act
   }
 }
 
-export async function reassignIssueExecutorAction(formData: FormData): Promise<ActionResult> {
+export async function reassignIssueExecutorAction(
+  formData: FormData,
+): Promise<ActionResult<{ changed: boolean; executorName: string }>> {
   const actor = await requireCurrentUser();
   const issueId = String(formData.get("issueId") ?? "");
   const executorUserId = String(formData.get("executorUserId") ?? "");
-  const reasonCode = String(formData.get("reasonCode") ?? "").trim();
-
-  if (!reasonCode) {
-    return toActionResult(new Error("重新指派必須填寫原因"));
-  }
 
   try {
-    await reassignIssueExecutor({ issueId, executorUserId, actorId: actor.id, reasonCode });
+    const result = await reassignIssueExecutor({ issueId, executorUserId, actorId: actor.id, reasonCode: "REASSIGN_EXECUTOR" });
     revalidatePath(`/issues/${issueId}`, "layout");
-    return actionOk("已重新指派執行人");
+    if (!result.changed) {
+      return actionOk("已是目前執行人", { changed: false, executorName: result.executorName });
+    }
+    return actionOk(`已成功重新指派給 ${result.executorName}`, { changed: true, executorName: result.executorName });
   } catch (err) {
-    return toActionResult(err);
+    const safeMessages = new Map([
+      ["只有目前承接團隊主管可重新指派執行人。", "EXECUTOR_REASSIGNMENT_UNAUTHORIZED"],
+      ["所選人員不屬於目前承接團隊，無法指派。", "EXECUTOR_REASSIGNMENT_INVALID_MEMBER"],
+      ["此工單目前狀態不可重新指派執行人。", "EXECUTOR_REASSIGNMENT_INVALID_STAGE"],
+    ]);
+    if (err instanceof Error) {
+      const code = safeMessages.get(err.message);
+      if (code) return { ok: false, code, message: err.message };
+    }
+    console.error("[reassignIssueExecutorAction] 未預期錯誤：", err);
+    return {
+      ok: false,
+      code: "EXECUTOR_REASSIGNMENT_FAILED",
+      message: "重新指派失敗，請稍後再試；若持續發生，請聯絡管理員。",
+    };
   }
 }

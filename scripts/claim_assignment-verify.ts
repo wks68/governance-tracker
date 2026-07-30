@@ -28,6 +28,7 @@ import {
   getAvailableIssueTransitions,
   claimIssueForTeam,
   assignIssueExecutor,
+  reassignIssueExecutor,
   listClaimableTeamsForStage,
   listAssignableMembers,
   evaluateCurrentActorTask,
@@ -155,9 +156,11 @@ async function main() {
   const iadTeam = await createTeamWithDomain("IAD", "RD", admin.id);
   const iadLead = await createUser("IadLead", "RD");
   const iadMemberA = await createUser("IadMemberA", "RD");
+  const iadMemberB = await createUser("IadMemberB", "RD");
   const iadMemberInactive = await createUser("IadInactive", "RD");
   await addMember(iadTeam.id, iadLead.id, "LEAD");
   await addMember(iadTeam.id, iadMemberA.id, "MEMBER");
+  await addMember(iadTeam.id, iadMemberB.id, "MEMBER");
   await addMember(iadTeam.id, iadMemberInactive.id, "MEMBER", false);
 
   const aadTeam = await createTeamWithDomain("AAD", "RD", admin.id);
@@ -322,6 +325,85 @@ async function main() {
     }
   });
 
+  await checkAsync("[16a] 非主管不可重新指派", async () => {
+    try {
+      await reassignIssueExecutor({ issueId: issue1.id, executorUserId: iadMemberB.id, actorId: iadMemberA.id, reasonCode: "VERIFY_REASSIGN" });
+      return false;
+    } catch (err) {
+      return err instanceof WorkflowExecutionAccessDeniedError && err.message === "只有目前承接團隊主管可重新指派執行人。";
+    }
+  });
+
+  await checkAsync("[16b] 不可跨團隊重新指派", async () => {
+    try {
+      await reassignIssueExecutor({ issueId: issue1.id, executorUserId: aadMemberA.id, actorId: iadLead.id, reasonCode: "VERIFY_REASSIGN" });
+      return false;
+    } catch (err) {
+      return err instanceof WorkflowExecutionAccessDeniedError && err.message === "所選人員不屬於目前承接團隊，無法指派。";
+    }
+  });
+
+  await checkAsync("[16c] 可成功改派不同成員，並同步寫入執行人、指派時間、History 與 AuditLog", async () => {
+    const beforeHistory = await prisma.issueWorkflowStageHistory.count({ where: { issueId: issue1.id } });
+    const beforeAudit = await prisma.auditLog.count({ where: { entityType: "Issue", entityId: issue1.id, actionType: "IssueExecutorReassigned" } });
+    const result = await reassignIssueExecutor({
+      issueId: issue1.id,
+      executorUserId: iadMemberB.id,
+      actorId: iadLead.id,
+      reasonCode: "VERIFY_REASSIGN",
+    });
+    const preview = await listAssignableMembers(issue1.id, iadLead.id);
+    const history = await prisma.issueWorkflowStageHistory.findFirst({
+      where: { issueId: issue1.id, transitionType: "REASSIGNED" },
+      orderBy: { executedAt: "desc" },
+    });
+    const audit = await prisma.auditLog.findFirst({
+      where: { entityType: "Issue", entityId: issue1.id, actionType: "IssueExecutorReassigned" },
+      orderBy: { createdAt: "desc" },
+    });
+    return (
+      result.changed &&
+      result.executorName === iadMemberB.name &&
+      preview.currentExecutorUserId === iadMemberB.id &&
+      preview.currentExecutorName === iadMemberB.name &&
+      preview.currentExecutorAssignedAt !== null &&
+      (await prisma.issueWorkflowStageHistory.count({ where: { issueId: issue1.id } })) === beforeHistory + 1 &&
+      (await prisma.auditLog.count({ where: { entityType: "Issue", entityId: issue1.id, actionType: "IssueExecutorReassigned" } })) === beforeAudit + 1 &&
+      history?.fromStageId === hotfix.stageIds.rdInProgress &&
+      history.toStageId === hotfix.stageIds.rdInProgress &&
+      history.exitedAt?.getTime() === history.executedAt.getTime() &&
+      audit?.fromValue === iadMemberA.id &&
+      audit.toValue === iadMemberB.id &&
+      audit.summary.includes(iadMemberA.name) &&
+      audit.summary.includes(iadMemberB.name)
+    );
+  });
+
+  await checkAsync("[16d] 選同一人為成功 no-op，不新增 History／AuditLog", async () => {
+    const beforeHistory = await prisma.issueWorkflowStageHistory.count({ where: { issueId: issue1.id } });
+    const beforeAudit = await prisma.auditLog.count({ where: { entityType: "Issue", entityId: issue1.id, actionType: "IssueExecutorReassigned" } });
+    const result = await reassignIssueExecutor({
+      issueId: issue1.id,
+      executorUserId: iadMemberB.id,
+      actorId: iadLead.id,
+      reasonCode: "VERIFY_REASSIGN",
+    });
+    return (
+      !result.changed &&
+      result.executorName === iadMemberB.name &&
+      (await prisma.issueWorkflowStageHistory.count({ where: { issueId: issue1.id } })) === beforeHistory &&
+      (await prisma.auditLog.count({ where: { entityType: "Issue", entityId: issue1.id, actionType: "IssueExecutorReassigned" } })) === beforeAudit
+    );
+  });
+
+  // 後續既有流程仍由 iadMemberA 驗證，故由 Lead 正常改派回 A。
+  await reassignIssueExecutor({
+    issueId: issue1.id,
+    executorUserId: iadMemberA.id,
+    actorId: iadLead.id,
+    reasonCode: "VERIFY_REASSIGN_BACK",
+  });
+
   await saveExecutionFieldValues({
     issueId: issue1.id,
     actorId: iadMemberA.id,
@@ -332,6 +414,15 @@ async function main() {
     const t = await findTransition(hotfix.version.id, hotfix.stageIds.rdInProgress, "rdSubmit");
     await executeIssueTransition({ issueId: issue1.id, transitionId: t.id, actorId: iadMemberA.id, reasonCode: "VERIFY" });
   }
+
+  await checkAsync("[16e] 已送主管簽核後不可重新指派", async () => {
+    try {
+      await reassignIssueExecutor({ issueId: issue1.id, executorUserId: iadMemberB.id, actorId: iadLead.id, reasonCode: "VERIFY_REASSIGN" });
+      return false;
+    } catch (err) {
+      return err instanceof WorkflowExecutionStateError && err.message === "此工單目前狀態不可重新指派執行人。";
+    }
+  });
 
   await checkAsync("[17] RD 提交後 expected approver 來自 assigned RD Team（IAD Lead）", async () => {
     const approval = await findActiveApproval(issue1.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
@@ -552,6 +643,21 @@ async function main() {
         !fs.readFileSync("src/lib/workflow-execution/hotfixDomainMap.ts", "utf8").match(/name\.includes\(|name\.startsWith\(/),
     ),
   );
+
+  await checkAsync("[29] 重新指派表單已移出正文，右上角操作區使用 Dialog 並處理同人提示", () => {
+    const shell = fs.readFileSync("src/components/hotfix-nine-stage/HotfixStageShell.tsx", "utf8");
+    const dialog = fs.readFileSync("src/components/hotfix-nine-stage/ReassignExecutorDialog.tsx", "utf8");
+    const pages = ["rd", "qa", "op"].map((domain) => fs.readFileSync(`src/app/issues/[id]/hotfix/${domain}/page.tsx`, "utf8"));
+    const executionPageHasInlinePanel = pages.some((source) => /<AssignExecutorPanel issueId=\{params\.id\} preview=\{reassignPreview\}/.test(source));
+    return Promise.resolve(
+      !executionPageHasInlinePanel &&
+        shell.includes("headerActions") &&
+        dialog.includes('role="dialog"') &&
+        dialog.includes("已是目前執行人") &&
+        dialog.includes("disabled={!canSubmit}") &&
+        pages.every((source) => source.includes("<ExecutorAssignmentSummary preview={reassignPreview} />")),
+    );
+  });
 
   const finalHash = fs.existsSync(officialDevDb) ? crypto.createHash("sha256").update(fs.readFileSync(officialDevDb)).digest("hex") : null;
   check("[30] 正式 dev.db 前後完全不變", beforeHash === finalHash, `before=${beforeHash} after=${finalHash}`);

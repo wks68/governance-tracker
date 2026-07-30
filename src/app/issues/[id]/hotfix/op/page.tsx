@@ -11,6 +11,8 @@ import ClaimTeamPanel from "@/components/hotfix-nine-stage/ClaimTeamPanel";
 import AssignExecutorPanel from "@/components/hotfix-nine-stage/AssignExecutorPanel";
 import ExecutionFieldsForm, { ExecutionFieldsReadOnly } from "@/components/hotfix-nine-stage/ExecutionFieldsForm";
 import OpCompletedContinueButton from "./OpCompletedContinueButton";
+import ExecutorAssignmentSummary from "@/components/hotfix-nine-stage/ExecutorAssignmentSummary";
+import ReassignExecutorDialog from "@/components/hotfix-nine-stage/ReassignExecutorDialog";
 
 const ALLOWED = ["pendingOpTriage", "pendingOpClaim", "opPreparing", "opDeploying", "opCompleted"];
 
@@ -59,8 +61,13 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
   if (stageKey === "opPreparing") {
     const values = await loadExecutionFieldValues(params.id, stageKey);
     return (
-      <HotfixStageShell title="OP 上版" subtitle="填寫上版計畫後送出，將轉交 OP 主管簽核" {...shellProps}>
-        <AssignExecutorPanel issueId={params.id} preview={reassignPreview} />
+      <HotfixStageShell
+        title="OP 上版"
+        subtitle="填寫上版計畫後送出，將轉交 OP 主管簽核"
+        headerActions={<ReassignExecutorDialog issueId={params.id} preview={reassignPreview} />}
+        {...shellProps}
+      >
+        <ExecutorAssignmentSummary preview={reassignPreview} />
         {isResponsible ? (
           <ExecutionFieldsForm
             issueId={params.id}
@@ -83,14 +90,13 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
 
   // opDeploying／opCompleted：OP 主管已核准通過，進入實際部署執行與結果記錄——內部仍歸類在
   // 「OP上版」（見 src/lib/hotfix-ui/nineStage.ts 說明），不新增第 10 個進度節點。承接團隊
-  // Lead 仍可在此重新指派執行人（例如原指派者臨時無法處理部署結果記錄），與 opPreparing
-  // 階段規則相同：僅承接團隊 active Lead 可操作，必填 reasonCode，寫入 AuditLog。
+  // 主管已核准後不可再重新指派；只保留目前執行資訊供查閱。
   const planValues = await loadExecutionFieldValues(params.id, "opPreparing");
   const resultValues = await loadExecutionFieldValues(params.id, "opDeploying");
 
   return (
     <HotfixStageShell title="OP 上版" subtitle="OP 主管已核准，執行上版並記錄結果" {...shellProps}>
-      <AssignExecutorPanel issueId={params.id} preview={reassignPreview} />
+      <ExecutorAssignmentSummary preview={reassignPreview} />
       <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={planValues} title="上版計畫（已核准）" />
 
       {stageKey === "opDeploying" &&
