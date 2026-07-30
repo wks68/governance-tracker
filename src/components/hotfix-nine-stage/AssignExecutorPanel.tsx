@@ -1,11 +1,12 @@
 "use client";
 
-// RD/QA/OP 接單流程新增：CLAIM 關卡（已接單，待指派）的首次指派執行人面板。
+// RD/QA/OP 接單流程新增：CLAIM 關卡（已接單，待指派）的共用首次指派 Dialog。
 //
-// 只有承接團隊的 active Lead 會看到下拉選單＋按鈕；其餘人員（含同團隊一般成員）唯讀顯示
-// 「等待 XX 團隊主管指派」或目前指派對象。
+// 只有承接團隊的 active Lead 會看到右上角按鈕與 Dialog；其餘人員不渲染操作入口，
+// 正文由 ExecutorAssignmentSummary 唯讀顯示目前承接狀態。
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { assignIssueExecutorAction } from "@/app/issues/[id]/hotfix/claim-actions";
 import type { AssignableMembersPreview } from "@/lib/workflowExecutionService";
@@ -16,29 +17,30 @@ export interface AssignExecutorPanelProps {
 }
 
 export default function AssignExecutorPanel({ issueId, preview }: AssignExecutorPanelProps) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [selected, setSelected] = useState<string>(preview.currentExecutorUserId ?? "");
+  const [selected, setSelected] = useState("");
 
-  if (!preview.assignable) {
-    return null;
-  }
+  useEffect(() => {
+    if (!open) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isPending) setOpen(false);
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open, isPending]);
 
-  // WORK 關卡的重新指派已移至頁面右上角 Dialog，不得再於正文顯示表單。
-  if (preview.isReassignment) {
-    return null;
-  }
+  if (!preview.assignable || preview.isReassignment || !preview.actorIsLead || !preview.domain) return null;
 
-  if (!preview.actorIsLead) {
-    const readOnlyText = preview.currentExecutorName
-      ? `目前指派：${preview.currentExecutorName}`
-      : `已由 ${preview.teamName ?? "承接團隊"} 團隊承接，待指派`;
-    return (
-      <section className="rounded-lg border border-gray-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-gray-800">執行人指派</h2>
-        <p className="mt-1 text-xs text-gray-500">{readOnlyText}</p>
-      </section>
-    );
+  const actionLabel = `指派 ${preview.domain} 成員`;
+
+  function closeDialog() {
+    if (isPending) return;
+    setOpen(false);
+    setSelected("");
+    setError(null);
   }
 
   function submit() {
@@ -54,41 +56,87 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
         setError(result.message);
         return;
       }
-      window.location.reload();
+      setOpen(false);
+      router.refresh();
     });
   }
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-gray-800">指派執行人</h2>
-      <p className="mt-1 text-xs text-gray-500">承接團隊：{preview.teamName}</p>
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setSelected("");
+          setError(null);
+          setOpen(true);
+        }}
+        className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+      >
+        {actionLabel}
+      </button>
 
-      <ActionErrorText message={error} />
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeDialog}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assign-executor-title"
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="assign-executor-title" className="text-base font-semibold text-gray-900">
+              {actionLabel}
+            </h2>
+            <p className="mt-1 text-xs text-gray-500">承接團隊：{preview.teamName}</p>
 
-      <div className="mt-3 space-y-2">
-        <select
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          disabled={isPending}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-        >
-          <option value="">請選擇團隊成員</option>
-          {preview.members.map((m) => (
-            <option key={m.userId} value={m.userId}>
-              {m.userName}
-            </option>
-          ))}
-        </select>
+            <div className="mt-4">
+              <label htmlFor="assign-executor" className="mb-1 block text-sm font-medium text-gray-700">
+                執行人
+              </label>
+              <select
+                id="assign-executor"
+                value={selected}
+                onChange={(event) => {
+                  setSelected(event.target.value);
+                  setError(null);
+                }}
+                disabled={isPending}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              >
+                <option value="">請選擇團隊成員</option>
+                {preview.members.map((member) => (
+                  <option key={member.userId} value={member.userId}>
+                    {member.userName}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        <button
-          type="button"
-          disabled={isPending || !selected}
-          onClick={submit}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40"
-        >
-          {isPending ? "處理中…" : "確認指派"}
-        </button>
-      </div>
-    </section>
+            <div className="mt-3">
+              <ActionErrorText message={error} />
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={closeDialog}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={isPending || !selected}
+                onClick={submit}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isPending ? "處理中…" : "確認指派"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

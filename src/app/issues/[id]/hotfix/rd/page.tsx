@@ -44,8 +44,8 @@ export default async function HotfixRdPage({ params }: { params: { id: string } 
   if (stageKey === "pendingRdClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="RD 修正與自測" {...shellProps}>
-        <AssignExecutorPanel issueId={params.id} preview={preview} />
+      <HotfixStageShell title="RD 修正與自測" headerActions={<AssignExecutorPanel issueId={params.id} preview={preview} />} {...shellProps}>
+        <ExecutorAssignmentSummary preview={preview} />
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       </HotfixStageShell>
     );

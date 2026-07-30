@@ -82,6 +82,7 @@ import { executeIssueTransitionInTx } from "./transitionService";
 import { getExecutorDomainForStageKey, executorFieldKey, executorAssignedByFieldKey, executorAssignedAtFieldKey } from "./hotfixDomainMap";
 import { WorkflowExecutionAccessDeniedError } from "./types";
 import { insertExecutorReassignmentHistoryRow } from "./historyService";
+import type { TeamDomain } from "../constants";
 
 const REASSIGNABLE_EXECUTION_STAGE_KEYS = new Set(["rdInProgress", "qaInProgress", "opPreparing"]);
 const REASSIGN_UNAUTHORIZED_MESSAGE = "只有目前承接團隊主管可重新指派執行人。";
@@ -98,6 +99,7 @@ export interface AssignableMembersPreview {
   isReassignment: boolean; // true：目前在 WORK 階段重新指派；false：CLAIM 階段首次指派
   teamId: string | null;
   teamName: string | null;
+  domain: TeamDomain | null;
   currentExecutorUserId: string | null;
   currentExecutorName: string | null;
   currentExecutorAssignedAt: string | null;
@@ -118,6 +120,7 @@ export async function listAssignableMembers(issueId: string, actorId: string): P
     isReassignment: false,
     teamId: null,
     teamName: null,
+    domain: null,
     currentExecutorUserId: null,
     currentExecutorName: null,
     currentExecutorAssignedAt: null,
@@ -138,11 +141,14 @@ export async function listAssignableMembers(issueId: string, actorId: string): P
   const assignable = isInitialAssignment || isReassignment;
 
   const [leadMembership, memberRows, currentExecutorId, assignedAtRow] = await Promise.all([
-    prisma.teamMember.findFirst({ where: { teamId: team.id, userId: actorId, isActive: true, membershipRole: "LEAD" } }),
+    prisma.teamMember.findFirst({
+      where: { teamId: team.id, userId: actorId, isActive: true, membershipRole: "LEAD", user: { isActive: true } },
+    }),
     prisma.teamMember.findMany({
       where: {
         teamId: team.id,
         isActive: true,
+        membershipRole: "MEMBER",
         user: {
           isActive: true,
           userRoles: { some: { role: domain, isActive: true } },
@@ -163,11 +169,12 @@ export async function listAssignableMembers(issueId: string, actorId: string): P
     isReassignment,
     teamId: team.id,
     teamName: team.name,
+    domain,
     currentExecutorUserId: currentExecutorId,
     currentExecutorName: currentExecutor?.user.name ?? null,
     currentExecutorAssignedAt: assignedAtRow?.fieldValue || null,
     actorIsLead: !!leadMembership,
-    members: assignable ? memberRows.map((m) => ({ userId: m.userId, userName: m.user.name })) : [],
+    members: assignable && !!leadMembership ? memberRows.map((m) => ({ userId: m.userId, userName: m.user.name })) : [],
   };
 }
 
@@ -181,7 +188,7 @@ async function requireLeadOfAssignedTeam(tx: Tx, actorId: string, teamId: string
 
 async function requireActiveTeamMemberExecutor(tx: Tx, teamId: string, executorUserId: string, requiredRole?: string) {
   const membership = await tx.teamMember.findFirst({ where: { teamId, userId: executorUserId, isActive: true } });
-  if (!membership) {
+  if (!membership || membership.membershipRole !== "MEMBER") {
     throw new WorkflowExecutionAccessDeniedError("指派對象必須是承接團隊的 active 成員");
   }
   const user = await tx.user.findUnique({ where: { id: executorUserId } });

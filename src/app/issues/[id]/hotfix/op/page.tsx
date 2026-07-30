@@ -45,8 +45,8 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
   if (stageKey === "pendingOpClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="OP 上版" {...shellProps}>
-        <AssignExecutorPanel issueId={params.id} preview={preview} />
+      <HotfixStageShell title="OP 上版" headerActions={<AssignExecutorPanel issueId={params.id} preview={preview} />} {...shellProps}>
+        <ExecutorAssignmentSummary preview={preview} />
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       </HotfixStageShell>
     );
