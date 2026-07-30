@@ -13,6 +13,7 @@ export {
   // （見 src/lib/issueCreation.ts、claimService、assignmentService）。
   executeIssueTransitionInTx,
   returnIssueToStage,
+  returnPostDeploymentForCorrection,
   cancelIssueWorkflow,
   completeIssueWorkflow,
   getAvailableIssueTransitions,

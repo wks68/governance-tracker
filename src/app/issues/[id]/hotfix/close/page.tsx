@@ -51,15 +51,15 @@ export default async function HotfixClosePage({ params }: { params: { id: string
         <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
           <div>
             <dt className="text-xs text-gray-400">正式環境確認結果</dt>
-            <dd className="mt-0.5 text-sm text-gray-800">{opResultValues.opProdConfirmResult || "（未填寫）"}</dd>
+            <dd className="mt-0.5 text-sm text-gray-800">{opResultValues.opPostMonitoringResult || "—"}</dd>
           </div>
           <div>
             <dt className="text-xs text-gray-400">上版結果</dt>
-            <dd className="mt-0.5 text-sm text-gray-800">{opResultValues.opDeployResult || "（未填寫）"}</dd>
+            <dd className="mt-0.5 text-sm text-gray-800">{opResultValues.opDeployResult || "—"}</dd>
           </div>
           <div>
             <dt className="text-xs text-gray-400">上版時間</dt>
-            <dd className="mt-0.5 text-sm text-gray-800">{planValues.opDeployPlannedAt || "（未填寫）"}</dd>
+            <dd className="mt-0.5 text-sm text-gray-800">{planValues.opDeployPlannedAt || "—"}</dd>
           </div>
           <div>
             <dt className="text-xs text-gray-400">上版人員</dt>
@@ -74,17 +74,17 @@ export default async function HotfixClosePage({ params }: { params: { id: string
 
       <ExecutionFieldsReadOnly fields={OP_RESULT_FIELDS} values={opResultValues} title="上版結果記錄" />
 
-      <AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible || isClosed} canUpload={isResponsible && !isClosed} />
+      <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
 
       {isClosed ? (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-gray-800">結案摘要</h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{closureSummary.summary || "（未填寫）"}</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{closureSummary.summary || "已由原申請人確認結案"}</p>
           <h2 className="mt-4 text-sm font-semibold text-gray-800">後續觀察追蹤結果</h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{closureSummary.followUpNotes || "（未填寫）"}</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{closureSummary.followUpNotes || "—"}</p>
         </section>
       ) : isResponsible ? (
-        <ClosureConfirmPanel issueId={params.id} initialSummary={closureSummary.summary} initialFollowUpNotes={closureSummary.followUpNotes} />
+        <ClosureConfirmPanel issueId={params.id} />
       ) : (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
           <p className="text-sm text-gray-500">僅原始填單人可確認結案或退回處理，此頁為唯讀。</p>

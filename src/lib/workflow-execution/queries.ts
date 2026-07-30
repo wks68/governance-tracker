@@ -49,7 +49,9 @@ export async function getIssueWorkflowRuntime(issueId: string, actorId: string):
   const [stageRequirements, availableTransitions, pendingApproval] = await Promise.all([
     evaluateWorkflowStageRequirements(prisma, issue.id, currentStage.id),
     getAvailableIssueTransitions(issueId, actorId),
-    currentStage.stageType === "APPROVAL" && currentStage.approvalType
+    currentStage.stageKey === "opCompleted"
+      ? findLatestActiveApprovalRecord(prisma, issue.id, "DEPLOYMENT_APPROVAL", currentStage.stageKey)
+      : currentStage.stageType === "APPROVAL" && currentStage.approvalType
       ? findLatestActiveApprovalRecord(prisma, issue.id, currentStage.approvalType, currentStage.stageKey)
       : Promise.resolve(null),
   ]);

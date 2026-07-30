@@ -112,11 +112,12 @@ const FORWARD_EDGES: Array<{ from: keyof HotfixWorkflowV1StageKeys; to: keyof Ho
   { from: "reporterConfirming", to: "closed", actionKey: "reporterClose", label: "確認完成，結案" },
 ];
 
-// RETURN（8 條，reason 一律必填）：3 條 APPROVAL 關卡駁回 + Plan 第四節 Category B/C 表列 5 條。
+// RETURN（9 條，reason 一律必填）：包含兩次 OP 主管決策各自的駁回路徑。
 const RETURN_EDGES: Array<{ from: keyof HotfixWorkflowV1StageKeys; to: keyof HotfixWorkflowV1StageKeys; actionKey: string; label: string }> = [
   { from: "pendingRdLeadApproval", to: "rdInProgress", actionKey: "rdLeadReject", label: "RD 主管駁回" },
   { from: "pendingQaLeadApproval", to: "qaInProgress", actionKey: "qaLeadReject", label: "QA 主管駁回" },
   { from: "pendingDeploymentApproval", to: "opPreparing", actionKey: "opLeadReject", label: "部署核准駁回" },
+  { from: "opCompleted", to: "opDeploying", actionKey: "opPostConfirmReject", label: "上版後主管確認駁回" },
   { from: "opDeploying", to: "opPreparing", actionKey: "opRollbackStart", label: "部署回滾" },
   { from: "reporterConfirming", to: "pendingOpTriage", actionKey: "reporterRejectConfirm", label: "開單人發現異常" },
   { from: "pendingOpTriage", to: "rdInProgress", actionKey: "opTriageNeedsRdFix", label: "OP 分流判定需 RD 修正" },
@@ -131,12 +132,10 @@ const CANCEL_EDGES: Array<{ from: keyof HotfixWorkflowV1StageKeys; actionKey: st
   { from: "pendingBusinessApproval", actionKey: "cancelPendingBusinessApproval", label: "取消（待業務核准階段）" },
 ];
 
-// 示範性 Requirement（REQUIRE_FIELD／REQUIRE_EVIDENCE／REQUIRE_COMMENT 各至少一筆），
-// 證明 evaluateWorkflowStageRequirements 三種類型皆確實生效，非窮舉 gateRules.ts 既有規則。
+// 正式結構化表單即為 OP 流程紀錄，附件選填，不再以 REQUIRE_EVIDENCE 阻擋 OP 送核。
 const REQUIREMENT_SPECS: Array<{ stage: keyof HotfixWorkflowV1StageKeys; requirementType: string; targetKey: string }> = [
   { stage: "rdInProgress", requirementType: "REQUIRE_FIELD", targetKey: "rdFixVersion" },
   { stage: "qaInProgress", requirementType: "REQUIRE_FIELD", targetKey: "qaTestResult" },
-  { stage: "opPreparing", requirementType: "REQUIRE_EVIDENCE", targetKey: "ANY" },
   { stage: "reporterConfirming", requirementType: "REQUIRE_COMMENT", targetKey: "ANY" },
 ];
 
@@ -145,7 +144,7 @@ export async function buildHotfixWorkflowV1(input: BuildHotfixWorkflowV1Input) {
   const defInput: CreateWorkflowDefinitionInput = {
     key: `hotfix-workflow-${suffix}`,
     name: "Hotfix 標準流程",
-    description: "依 Plan M2 第四節最終定案建構的 Hotfix v1 流程（20 關卡／18 FORWARD／8 RETURN／2 CANCEL）",
+    description: "Hotfix 正式九階段流程（20 個內部關卡／18 FORWARD／9 RETURN／2 CANCEL）",
     issueType: "Hotfix",
     actorId: input.actorId,
     reasonCode: input.reasonCode,

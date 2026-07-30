@@ -9,6 +9,7 @@ import { nineStageIndexOfStageKey, routeForStageKey, isCancelledStageKey } from 
 import { HOTFIX_PRIORITY_FIELD_KEY } from "./priority";
 import type { TicketBasicInfoData } from "@/components/hotfix-nine-stage/TicketBasicInfo";
 import type { Issue, User } from "@prisma/client";
+import { getEligibleApproverUserIds } from "../approvalService";
 
 export class HotfixPageNotApplicableError extends Error {
   constructor(message: string) {
@@ -54,11 +55,19 @@ export async function loadHotfixPageContext(issueId: string, actor: User, allowe
     redirectTo = routeForStageKey(issueId, stageKey);
   }
 
-  const hotfixPriority = await loadHotfixPriority(issueId);
-  const team = issue.assignedTeamId ? await prisma.team.findUnique({ where: { id: issue.assignedTeamId } }) : null;
+  const [hotfixPriority, team, createdAudit] = await Promise.all([
+    loadHotfixPriority(issueId),
+    issue.assignedTeamId ? prisma.team.findUnique({ where: { id: issue.assignedTeamId } }) : Promise.resolve(null),
+    prisma.auditLog.findFirst({
+      where: { entityType: "Issue", entityId: issue.id, actionType: "IssueCreated" },
+      orderBy: { createdAt: "asc" },
+      include: { actor: true },
+    }),
+  ]);
   const ticketBasicInfo: TicketBasicInfoData = {
     issueKey: issue.issueKey,
     reporterName: issue.reporter,
+    creatorName: createdAudit?.actor?.name ?? null,
     teamName: team?.name ?? null,
     environment: issue.environment,
     title: issue.title,
@@ -122,13 +131,8 @@ export async function buildApprovalReviewViewData(ctx: HotfixPageContext): Promi
   } else if (record.expectedApproverUserId !== null) {
     isResponsible = record.expectedApproverUserId === ctx.actor.id;
   } else {
-    const leadEligibility = await evaluateActorEligibilityForStage(
-      prisma,
-      ctx.actor.id,
-      { assignedTeamId: ctx.issue.assignedTeamId },
-      { requiredExecutionRole: null, requiredMembershipRole: "LEAD", stageKey: ctx.runtime.currentStage.stageKey },
-    );
-    isResponsible = leadEligibility.eligible;
+    const eligibleApprovers = await getEligibleApproverUserIds(record);
+    isResponsible = eligibleApprovers.includes(ctx.actor.id) && ctx.actor.id !== record.requestedByUserId;
   }
 
   return {

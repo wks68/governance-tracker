@@ -8,7 +8,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ActionErrorText, ActionSuccessText } from "@/components/ActionResultBanner";
-import type { ExecutionFieldDef } from "@/lib/hotfix-ui/executionFields";
+import { displayExecutionValue, type ExecutionFieldDef } from "@/lib/hotfix-ui/executionFields";
 import type { ActionResult } from "@/lib/actionResult";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
@@ -47,17 +47,22 @@ function NoApproverGuidance({ links }: { links: GovernanceFixLinks }) {
 }
 
 export function ExecutionFieldsReadOnly({ fields, values, title }: { fields: readonly ExecutionFieldDef[]; values: Record<string, string>; title: string }) {
+  const populated = fields.filter((field) => values[field.key]?.trim());
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-gray-800">{title}</h2>
-      <dl className="mt-3 space-y-3">
-        {fields.map((f) => (
+      {populated.length === 0 ? (
+        <p className="mt-3 text-sm text-gray-500">尚未正式提交。</p>
+      ) : (
+      <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+        {populated.map((f) => (
           <div key={f.key}>
             <dt className="text-xs text-gray-400">{f.label}</dt>
-            <dd className="mt-0.5 whitespace-pre-wrap text-sm text-gray-800">{values[f.key] || "（未填寫）"}</dd>
+            <dd className="mt-0.5 whitespace-pre-wrap text-sm text-gray-800">{displayExecutionValue(values[f.key])}</dd>
           </div>
         ))}
       </dl>
+      )}
     </section>
   );
 }

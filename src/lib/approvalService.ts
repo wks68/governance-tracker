@@ -591,7 +591,7 @@ function validateBasicCreateInput(input: CreatePendingApprovalInput): void {
 async function createPendingApprovalRecordTx(tx: Tx, input: CreatePendingApprovalInput) {
   const now = new Date();
 
-  if (RISK_CHECK_GATED_TYPES.has(input.approvalType)) {
+  if (RISK_CHECK_GATED_TYPES.has(input.approvalType) && input.relatedStageKey !== "opCompleted") {
     await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
   }
 
@@ -790,7 +790,7 @@ async function resubmitApprovalRecordTx(tx: Tx, input: ResubmitApprovalInput) {
     throw new ApprovalStateError("僅 decision=REJECTED／CANCELLED 的核准紀錄可被重新送核取代");
   }
 
-  if (RISK_CHECK_GATED_TYPES.has(input.approvalType)) {
+  if (RISK_CHECK_GATED_TYPES.has(input.approvalType) && input.relatedStageKey !== "opCompleted") {
     await assertRiskChecksReadyForSubmission(tx, input.issueId, input.relatedStageKey);
   }
 
@@ -885,4 +885,12 @@ export async function getEligibleApproverUserIdsInTx(
     now,
   });
   return eligible.map((e) => e.userId);
+}
+
+export async function getEligibleApproverUserIds(record: {
+  approvalType: string;
+  requestedByUserId: string;
+  approverTeamId: string | null;
+}): Promise<string[]> {
+  return prisma.$transaction((tx) => getEligibleApproverUserIdsInTx(tx, record));
 }

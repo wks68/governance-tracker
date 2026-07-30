@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { confirmHotfixClosureAction, rejectHotfixClosureAction } from "../closure-actions";
 
-const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const MAX_REASON_LENGTH = 500;
 
 function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void; onConfirm: (reason: string) => void; isPending: boolean }) {
@@ -22,7 +21,7 @@ function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void;
           rows={4}
           maxLength={MAX_REASON_LENGTH}
           disabled={isPending}
-          className={`mt-3 ${inputCls}`}
+          className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
           placeholder="請說明退回原因（必填，最多 500 字）"
         />
         <p className="mt-1 text-right text-xs text-gray-400">
@@ -46,10 +45,8 @@ function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void;
   );
 }
 
-export default function ClosureConfirmPanel({ issueId, initialSummary, initialFollowUpNotes }: { issueId: string; initialSummary: string; initialFollowUpNotes: string }) {
+export default function ClosureConfirmPanel({ issueId }: { issueId: string }) {
   const router = useRouter();
-  const [summary, setSummary] = useState(initialSummary);
-  const [followUpNotes, setFollowUpNotes] = useState(initialFollowUpNotes);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -59,8 +56,6 @@ export default function ClosureConfirmPanel({ issueId, initialSummary, initialFo
     startTransition(async () => {
       const fd = new FormData();
       fd.set("issueId", issueId);
-      fd.set("summary", summary);
-      fd.set("followUpNotes", followUpNotes);
       const result = await confirmHotfixClosureAction(fd);
       if (!result.ok) {
         setError(result.message);
@@ -89,19 +84,8 @@ export default function ClosureConfirmPanel({ issueId, initialSummary, initialFo
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-gray-800">確認結案</h2>
+      <p className="mt-1 text-sm text-gray-500">請唯讀確認全部流程資料；此處不會修改任何已提交或已核准的內容。</p>
       <ActionErrorText message={error} />
-      <div className="mt-3 space-y-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            結案摘要<span className="ml-1 text-danger">*</span>
-          </label>
-          <textarea rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} disabled={isPending} className={inputCls} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">後續觀察追蹤結果</label>
-          <textarea rows={2} value={followUpNotes} onChange={(e) => setFollowUpNotes(e.target.value)} disabled={isPending} className={inputCls} />
-        </div>
-      </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" disabled={isPending} onClick={confirm} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40">
           {isPending ? "處理中…" : "確認結案"}

@@ -16,9 +16,23 @@
 
 import { revalidatePath } from "next/cache";
 import { requireCurrentUser } from "@/lib/auth";
-import { decideApprovalRecord } from "@/lib/approvalService";
-import { getAvailableIssueTransitions, executeIssueTransition, returnIssueToStage } from "@/lib/workflowExecutionService";
+import {
+  decideApprovalRecord,
+  ApprovalAuthorityMismatchError,
+  ApprovalStateError,
+  NoEligibleApproverError,
+} from "@/lib/approvalService";
+import {
+  getAvailableIssueTransitions,
+  executeIssueTransition,
+  returnIssueToStage,
+  returnPostDeploymentForCorrection,
+  getIssueWorkflowRuntime,
+  WorkflowExecutionBlockedError,
+  WorkflowExecutionStateError,
+} from "@/lib/workflowExecutionService";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
+import { writeAuditLog } from "@/lib/audit";
 
 export async function decideHotfixApprovalAction(formData: FormData): Promise<ActionResult> {
   const actor = await requireCurrentUser();
@@ -28,16 +42,18 @@ export async function decideHotfixApprovalAction(formData: FormData): Promise<Ac
   const reasonText = String(formData.get("decisionReasonCode") ?? "").trim();
 
   if (decision !== "APPROVED" && decision !== "REJECTED") {
-    return toActionResult(new Error("decision 必須是 APPROVED 或 REJECTED"));
+    return { ok: false, code: "INVALID_DECISION", message: "請選擇同意或駁回。" };
   }
   if (decision === "REJECTED" && !reasonText) {
-    return toActionResult(new Error("駁回必須填寫原因"));
+    return { ok: false, code: "REASON_REQUIRED", message: "駁回必須填寫原因。" };
   }
   if (reasonText.length > 500) {
-    return toActionResult(new Error("原因說明不得超過 500 字"));
+    return { ok: false, code: "REASON_TOO_LONG", message: "原因說明不得超過 500 字。" };
   }
 
   try {
+    const runtimeBefore = await getIssueWorkflowRuntime(issueId, actor.id);
+    const stageKey = runtimeBefore.onVersionedWorkflow ? runtimeBefore.currentStage.stageKey : "";
     await decideApprovalRecord({
       approvalRecordId,
       actorUserId: actor.id,
@@ -45,24 +61,44 @@ export async function decideHotfixApprovalAction(formData: FormData): Promise<Ac
       decisionReasonCode: decision === "REJECTED" ? "SUPERVISOR_REJECTED" : null,
       decisionComment: reasonText || null,
     });
-  } catch (err) {
-    return toActionResult(err);
-  }
+    await writeAuditLog({
+      entityType: "Issue",
+      entityId: issueId,
+      actionType: decision === "APPROVED" ? "ApprovalApproved" : "ApprovalRejected",
+      summary:
+        stageKey === "opCompleted"
+          ? `維運主管${decision === "APPROVED" ? "同意上版後確認" : "駁回正式環境部署紀錄"}`
+          : `主管已${decision === "APPROVED" ? "同意" : "駁回"}核准`,
+      actorUserId: actor.id,
+      reasonCode: decision === "REJECTED" ? reasonText : undefined,
+    });
 
-  try {
     const kind = decision === "APPROVED" ? "FORWARD" : "RETURN";
     const transitions = await getAvailableIssueTransitions(issueId, actor.id);
     const target = transitions.find((t) => t.transition.transitionType === kind);
-    if (!target) {
-      return toActionResult(new Error(`「${decision === "APPROVED" ? "同意" : "駁回"}」已記錄，但找不到對應的關卡轉移，請重新整理頁面確認狀態`));
-    }
-    if (kind === "FORWARD") {
-      await executeIssueTransition({ issueId, transitionId: target.transition.id, actorId: actor.id, reasonCode: "SUPERVISOR_APPROVED" });
+    if (target) {
+      if (kind === "FORWARD") {
+        await executeIssueTransition({ issueId, transitionId: target.transition.id, actorId: actor.id, reasonCode: "SUPERVISOR_APPROVED" });
+      } else {
+        await returnIssueToStage({ issueId, transitionId: target.transition.id, actorId: actor.id, reasonCode: reasonText });
+      }
+    } else if (stageKey === "opCompleted" && decision === "REJECTED") {
+      await returnPostDeploymentForCorrection({ issueId, actorId: actor.id, reasonCode: reasonText });
     } else {
-      await returnIssueToStage({ issueId, transitionId: target.transition.id, actorId: actor.id, reasonCode: reasonText });
+      return { ok: false, code: "NO_MATCHING_TRANSITION", message: "簽核意見已記錄，請重新整理頁面確認目前狀態。" };
     }
   } catch (err) {
-    return toActionResult(err, "簽核意見已記錄，但關卡轉移失敗，請重新整理頁面確認狀態");
+    if (err instanceof NoEligibleApproverError) return toActionResult(err);
+    if (err instanceof ApprovalAuthorityMismatchError) {
+      return { ok: false, code: "NOT_ELIGIBLE_APPROVER", message: "您不是目前承接團隊合法主管或核准代理人，無法完成核准。" };
+    }
+    if (err instanceof ApprovalStateError) {
+      return { ok: false, code: "APPROVAL_NOT_PENDING", message: "此核准已完成或目前不可操作，請重新整理頁面。" };
+    }
+    if (err instanceof WorkflowExecutionBlockedError || err instanceof WorkflowExecutionStateError) {
+      return { ok: false, code: "WORKFLOW_NOT_READY", message: "目前狀態不可執行此簽核操作，請重新整理頁面。" };
+    }
+    return toActionResult(err, "簽核失敗，請稍後再試；若持續發生，請聯絡管理員。");
   }
 
   revalidatePath(`/issues/${issueId}`, "layout");

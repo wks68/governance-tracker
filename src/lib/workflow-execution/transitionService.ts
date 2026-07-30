@@ -186,6 +186,82 @@ export async function returnIssueToStage(input: ExecuteTransitionInput) {
   return prisma.$transaction((tx) => executeTransitionCore(tx, input, "RETURN"));
 }
 
+// 相容已發布且尚未重建的 Hotfix workflow：舊版本沒有 opCompleted → opDeploying 的
+// RETURN 邊。這個受限入口只處理「上版後主管已駁回」這一種情況，仍在 transaction 內
+// 重新驗證目前關卡、核准人、核准結果、同一 workflow 目標關卡，並寫入 History/AuditLog。
+export async function returnPostDeploymentForCorrection(input: {
+  issueId: string;
+  actorId: string;
+  reasonCode: string;
+}) {
+  if (!input.reasonCode.trim()) {
+    throw new WorkflowExecutionBlockedError([{ code: "REASON_CODE_REQUIRED", message: "駁回必須填寫原因" }]);
+  }
+  return prisma.$transaction(async (tx) => {
+    const issue = await getIssueOrThrow(tx, input.issueId);
+    if (!issue.workflowVersionId || !issue.currentWorkflowStageId) {
+      throw new WorkflowExecutionStateError("此工單目前無法執行上版後補正");
+    }
+    const fromStage = await tx.workflowStage.findUniqueOrThrow({ where: { id: issue.currentWorkflowStageId } });
+    if (fromStage.stageKey !== "opCompleted") {
+      throw new WorkflowExecutionStateError("此工單目前不在上版後主管確認階段");
+    }
+    await requireActorEligibleForStage(tx, input.actorId, issue, fromStage);
+    const approval = await tx.approvalRecord.findFirst({
+      where: {
+        issueId: issue.id,
+        approvalType: "DEPLOYMENT_APPROVAL",
+        relatedStageKey: "opCompleted",
+        recordStatus: "ACTIVE",
+      },
+      orderBy: { revisionNo: "desc" },
+    });
+    if (!approval || approval.decision !== "REJECTED" || approval.approverUserId !== input.actorId) {
+      throw new WorkflowExecutionBlockedError([{ code: "APPROVAL_NOT_REJECTED", message: "尚未完成合法的上版後主管駁回決策" }]);
+    }
+    const toStage = await tx.workflowStage.findFirstOrThrow({
+      where: { workflowVersionId: issue.workflowVersionId, stageKey: "opDeploying" },
+    });
+    const now = new Date();
+    await closeOpenHistoryRow(tx, issue.id, fromStage.id, now);
+    const updatedIssue = await tx.issue.update({
+      where: { id: issue.id },
+      data: {
+        currentWorkflowStageId: toStage.id,
+        workflowStatus: toStage.stageKey,
+        stageEnteredAt: now,
+      },
+    });
+    await insertStageHistoryRow(tx, {
+      issueId: issue.id,
+      fromStageId: fromStage.id,
+      toStageId: toStage.id,
+      transitionId: null,
+      transitionType: "RETURNED",
+      actorUserId: input.actorId,
+      reasonCode: input.reasonCode,
+      assignedTeamIdBefore: issue.assignedTeamId,
+      assignedTeamIdAfter: issue.assignedTeamId,
+      terminalOutcome: null,
+      executedAt: now,
+    });
+    await writeAuditLog(
+      {
+        entityType: "Issue",
+        entityId: issue.id,
+        actionType: "IssueWorkflowReturned",
+        summary: "維運主管駁回正式環境部署紀錄，退回原 OP 執行人補正",
+        actorUserId: input.actorId,
+        reasonCode: input.reasonCode,
+        fromValue: "上版後主管確認",
+        toValue: "正式環境部署紀錄補正",
+      },
+      tx,
+    );
+    return { issue: updatedIssue };
+  });
+}
+
 export async function cancelIssueWorkflow(input: ExecuteTransitionInput) {
   if (!input.reasonCode?.trim()) {
     throw new WorkflowExecutionBlockedError([{ code: "REASON_CODE_REQUIRED", message: "CANCEL 必須填寫 reasonCode" }]);

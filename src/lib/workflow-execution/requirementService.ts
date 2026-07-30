@@ -24,6 +24,10 @@ type Client = PrismaClient | Tx;
 // ---------------------------------------------------------------------------
 
 export async function evaluateWorkflowStageRequirements(client: Client, issueId: string, workflowStageId: string): Promise<StageRequirementStatus[]> {
+  const stage = await client.workflowStage.findUniqueOrThrow({
+    where: { id: workflowStageId },
+    select: { stageKey: true },
+  });
   const requirements = await client.workflowStageRequirement.findMany({
     where: { workflowStageId, isActive: true },
   });
@@ -40,6 +44,19 @@ export async function evaluateWorkflowStageRequirements(client: Client, issueId:
       satisfied = !!field && field.fieldValue.trim() !== "";
       message = satisfied ? `欄位「${req.targetKey}」已填寫` : `欄位「${req.targetKey}」尚未填寫`;
     } else if (req.requirementType === "REQUIRE_EVIDENCE") {
+      // OP 的正式紀錄由結構化表單、核准紀錄、History 與 AuditLog 組成；附件永遠選填。
+      // 已發布的舊 Preview workflow 仍可能帶有這筆 legacy requirement，因此執行期也要
+      // 明確忽略，避免未重建 Preview DB 時再次出現「尚缺佐證資料」。
+      if (stage.stageKey === "opPreparing") {
+        results.push({
+          requirementId: req.id,
+          requirementType: req.requirementType,
+          targetKey: req.targetKey,
+          satisfied: true,
+          message: "附件為選填",
+        });
+        continue;
+      }
       // targetKey="ANY" 是慣例值，代表「不限類型，任一筆佐證即可」——
       // WorkflowStageRequirement.targetKey 依 M2-A 既有驗證規則不得為空字串
       // （見 src/lib/workflow/stageService.ts），因此不能直接用空字串表達「無限制」。
@@ -214,9 +231,15 @@ export async function checkApprovalGateForLeaving(
   fromStage: { stageType: string; approvalType: string | null; stageKey: string },
   transitionType: "FORWARD" | "RETURN",
 ): Promise<BlockedReason[]> {
-  if (fromStage.stageType !== "APPROVAL" || !fromStage.approvalType) return [];
+  const approvalType =
+    fromStage.stageKey === "opCompleted"
+      ? "DEPLOYMENT_APPROVAL"
+      : fromStage.stageType === "APPROVAL"
+        ? fromStage.approvalType
+        : null;
+  if (!approvalType) return [];
 
-  const record = await findLatestActiveApprovalRecord(client, issueId, fromStage.approvalType, fromStage.stageKey);
+  const record = await findLatestActiveApprovalRecord(client, issueId, approvalType, fromStage.stageKey);
 
   if (transitionType === "FORWARD") {
     if (!record || record.decision !== "APPROVED") {
@@ -247,8 +270,14 @@ export async function createRequiredApprovalRecordIfNeeded(
   targetStage: { stageType: string; approvalType: string | null; stageKey: string },
   actorId: string,
 ): Promise<void> {
-  if (targetStage.stageType !== "APPROVAL") return;
-  if (!targetStage.approvalType || !isApprovalType(targetStage.approvalType)) {
+  const approvalType =
+    targetStage.stageKey === "opCompleted"
+      ? "DEPLOYMENT_APPROVAL"
+      : targetStage.stageType === "APPROVAL"
+        ? targetStage.approvalType
+        : null;
+  if (!approvalType) return;
+  if (!isApprovalType(approvalType)) {
     throw new WorkflowExecutionStateError(`WorkflowStage「${targetStage.stageKey}」為 APPROVAL 類型但 approvalType 不合法，資料異常`);
   }
 
@@ -260,7 +289,7 @@ export async function createRequiredApprovalRecordIfNeeded(
   // 自我核准檢查與稽核追溯，維持既有語意（= 實際送出當下這一關工作的 actor），不受本次調整
   // 影響。
   let requestedByUserId = actorId;
-  if (targetStage.approvalType === "BUSINESS_APPROVAL") {
+  if (approvalType === "BUSINESS_APPROVAL") {
     const issue = await tx.issue.findUniqueOrThrow({ where: { id: issueId } });
     if (!issue.reporterUserId) {
       throw new WorkflowExecutionStateError("此工單尚未設定申請人，無法送出主管簽核");
@@ -269,7 +298,7 @@ export async function createRequiredApprovalRecordIfNeeded(
   }
 
   const previous = await tx.approvalRecord.findFirst({
-    where: { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, recordStatus: "ACTIVE" },
+    where: { issueId, approvalType, relatedStageKey: targetStage.stageKey, recordStatus: "ACTIVE" },
     orderBy: { revisionNo: "desc" },
   });
 
@@ -278,7 +307,7 @@ export async function createRequiredApprovalRecordIfNeeded(
       ? await resubmitApprovalRecord(
           {
             issueId,
-            approvalType: targetStage.approvalType,
+            approvalType,
             relatedStageKey: targetStage.stageKey,
             requestedByUserId,
             previousApprovalRecordId: previous.id,
@@ -286,16 +315,41 @@ export async function createRequiredApprovalRecordIfNeeded(
           tx,
         )
       : await createPendingApprovalRecord(
-          { issueId, approvalType: targetStage.approvalType, relatedStageKey: targetStage.stageKey, requestedByUserId },
+          { issueId, approvalType, relatedStageKey: targetStage.stageKey, requestedByUserId },
           tx,
         );
+
+  // 以既有 IssueFieldValue 保存「這次正式送出」的 append-only 快照。後續補正仍可更新
+  // 當前草稿欄位，但已送出的內容會以 ApprovalRecord id 區分，不會覆蓋舊輪次。
+  const submittedFields = await tx.issueFieldValue.findMany({
+    where: {
+      issueId,
+      NOT: { fieldKey: { startsWith: "workflowSubmission:" } },
+    },
+    select: { fieldKey: true, fieldLabel: true, fieldValue: true },
+  });
+  await tx.issueFieldValue.create({
+    data: {
+      issueId,
+      fieldKey: `workflowSubmission:${targetStage.stageKey}:${created.id}`,
+      fieldLabel: "正式提交紀錄",
+      fieldValue: JSON.stringify({
+        submittedAt: created.requestedAt.toISOString(),
+        submittedByUserId: requestedByUserId,
+        values: Object.fromEntries(submittedFields.map((field) => [field.fieldKey, field.fieldValue])),
+      }),
+    },
+  });
 
   await writeAuditLog(
     {
       entityType: "Issue",
       entityId: issueId,
       actionType: "ApprovalRequested",
-      summary: `進入關卡「${targetStage.stageKey}」，自動建立待核准紀錄（${targetStage.approvalType}）`,
+      summary:
+        targetStage.stageKey === "opCompleted"
+          ? "正式環境部署紀錄已提交，建立上版後主管確認"
+          : `進入關卡「${targetStage.stageKey}」，自動建立待核准紀錄`,
       actorUserId: actorId,
       reasonCode: "WORKFLOW_STAGE_ENTRY",
     },

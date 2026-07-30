@@ -1,20 +1,48 @@
 import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
-import { loadHotfixPageContext, isActorResponsibleForExecutionStage, loadGovernanceFixLinks, HotfixPageNotApplicableError } from "@/lib/hotfix-ui/pageContext";
+import {
+  loadHotfixPageContext,
+  isActorResponsibleForExecutionStage,
+  buildApprovalReviewViewData,
+  HotfixPageNotApplicableError,
+} from "@/lib/hotfix-ui/pageContext";
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { OP_DEPLOY_FIELDS, OP_RESULT_FIELDS, loadExecutionFieldValues } from "@/lib/hotfix-ui/executionFields";
 import { listClaimableTeamsForStage, listAssignableMembers } from "@/lib/workflowExecutionService";
-import { saveHotfixExecutionFieldsAction, submitHotfixExecutionAction, advanceHotfixOpDeploymentAction } from "../execution-actions";
+import { saveHotfixExecutionFieldsAction, submitHotfixExecutionAction } from "../execution-actions";
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import ClaimTeamPanel from "@/components/hotfix-nine-stage/ClaimTeamPanel";
 import AssignExecutorPanel from "@/components/hotfix-nine-stage/AssignExecutorPanel";
-import ExecutionFieldsForm, { ExecutionFieldsReadOnly } from "@/components/hotfix-nine-stage/ExecutionFieldsForm";
-import OpCompletedContinueButton from "./OpCompletedContinueButton";
+import { ExecutionFieldsReadOnly } from "@/components/hotfix-nine-stage/ExecutionFieldsForm";
+import { OpPreDeploymentForm, OpDeploymentResultForm } from "@/components/hotfix-nine-stage/OpDeploymentForms";
+import ApprovalReviewPanel from "@/components/hotfix-nine-stage/ApprovalReviewPanel";
 import ExecutorAssignmentSummary from "@/components/hotfix-nine-stage/ExecutorAssignmentSummary";
 import ReassignExecutorDialog from "@/components/hotfix-nine-stage/ReassignExecutorDialog";
 
 const ALLOWED = ["pendingOpTriage", "pendingOpClaim", "opPreparing", "opDeploying", "opCompleted"];
+
+function OpSubsteps({ stageKey }: { stageKey: string }) {
+  const current = stageKey === "opPreparing" ? 1 : stageKey === "opDeploying" ? 3 : 3;
+  const approvedPre = stageKey === "opDeploying" || stageKey === "opCompleted";
+  const steps = [
+    { label: "上版前確認", done: approvedPre || stageKey === "opCompleted" },
+    { label: "OP 主管上版前核准", done: approvedPre },
+    { label: "正式環境部署紀錄", done: stageKey === "opCompleted" },
+  ];
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4">
+      <h2 className="text-sm font-semibold text-gray-800">第 7 關子步驟</h2>
+      <ol className="mt-3 grid gap-2 sm:grid-cols-3">
+        {steps.map((step, index) => (
+          <li key={step.label} className={`rounded-md border px-3 py-2 text-sm ${step.done ? "border-green-200 bg-green-50 text-green-800" : index + 1 === current ? "border-blue-200 bg-blue-50 text-blue-800" : "border-gray-200 text-gray-500"}`}>
+            {index + 1}. {step.label}{step.done ? " ✓" : ""}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
 
 export default async function HotfixOpPage({ params }: { params: { id: string } }) {
   const actor = await requireCurrentUser();
@@ -52,10 +80,9 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
     );
   }
 
-  const [isResponsible, reassignPreview, governanceFixLinks] = await Promise.all([
+  const [isResponsible, reassignPreview] = await Promise.all([
     isActorResponsibleForExecutionStage(ctx),
     listAssignableMembers(params.id, actor.id),
-    loadGovernanceFixLinks(actor),
   ]);
 
   if (stageKey === "opPreparing") {
@@ -68,17 +95,13 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
         {...shellProps}
       >
         <ExecutorAssignmentSummary preview={reassignPreview} />
+        <OpSubsteps stageKey={stageKey} />
         {isResponsible ? (
-          <ExecutionFieldsForm
+          <OpPreDeploymentForm
             issueId={params.id}
-            stageKey={stageKey}
-            title="上版計畫"
-            fields={OP_DEPLOY_FIELDS}
             initialValues={values}
             saveAction={saveHotfixExecutionFieldsAction}
             submitAction={submitHotfixExecutionAction}
-            submitLabel="送主管簽核"
-            governanceFixLinks={governanceFixLinks}
           />
         ) : (
           <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={values} title="上版計畫" />
@@ -93,42 +116,44 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
   // 主管已核准後不可再重新指派；只保留目前執行資訊供查閱。
   const planValues = await loadExecutionFieldValues(params.id, "opPreparing");
   const resultValues = await loadExecutionFieldValues(params.id, "opDeploying");
+  const postApprovalReview = stageKey === "opCompleted" ? await buildApprovalReviewViewData(ctx) : null;
 
   return (
-    <HotfixStageShell title="OP 上版" subtitle="OP 主管已核准，執行上版並記錄結果" {...shellProps}>
+    <HotfixStageShell title={stageKey === "opCompleted" ? "OP 主管上版後確認" : "OP 上版"} subtitle="OP 主管已核准，執行上版並記錄結果" {...shellProps}>
       <ExecutorAssignmentSummary preview={reassignPreview} />
-      <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={planValues} title="上版計畫（已核准）" />
+      <OpSubsteps stageKey={stageKey} />
+      <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={planValues} title="OP 上版前確認（已核准）" />
 
       {stageKey === "opDeploying" &&
         (isResponsible ? (
-          <ExecutionFieldsForm
+          <OpDeploymentResultForm
             issueId={params.id}
-            stageKey="opDeploying"
-            title="上版結果記錄"
-            fields={OP_RESULT_FIELDS}
             initialValues={resultValues}
             saveAction={saveHotfixExecutionFieldsAction}
             submitAction={submitHotfixExecutionAction}
-            submitLabel="確認上版完成"
           />
         ) : (
-          <ExecutionFieldsReadOnly fields={OP_RESULT_FIELDS} values={resultValues} title="上版結果記錄" />
+          <ExecutionFieldsReadOnly fields={OP_RESULT_FIELDS} values={resultValues} title="正式環境部署紀錄" />
         ))}
 
       {stageKey === "opCompleted" && (
         <>
-          <ExecutionFieldsReadOnly fields={OP_RESULT_FIELDS} values={resultValues} title="上版結果記錄（已完成）" />
-          {isResponsible ? (
-            <OpCompletedContinueButton issueId={params.id} />
-          ) : (
-            <section className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-sm text-gray-500">上版已完成，待開放結案確認。</p>
-            </section>
+          <ExecutionFieldsReadOnly fields={OP_RESULT_FIELDS} values={resultValues} title="正式環境部署紀錄（已提交）" />
+          {postApprovalReview && (
+            <ApprovalReviewPanel
+              issueId={params.id}
+              approvalRecordId={postApprovalReview.approvalRecordId}
+              roleLabel="維運主管"
+              requestedByName={postApprovalReview.requestedByName}
+              requestedAt={postApprovalReview.requestedAt}
+              isResponsible={postApprovalReview.isResponsible}
+              expectedApproverLabel={postApprovalReview.expectedApproverLabel}
+            />
           )}
         </>
       )}
 
-      <AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />
+      <AttachmentSection issueId={params.id} items={attachments} readOnly={stageKey === "opCompleted" || !isResponsible} canUpload={stageKey !== "opCompleted" && isResponsible} />
     </HotfixStageShell>
   );
 }

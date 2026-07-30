@@ -12,14 +12,12 @@
 //   4 RD主管簽核            pendingRdLeadApproval
 //   5 QA驗證                pendingQaTriage / pendingQaClaim / qaInProgress
 //   6 QA主管簽核            pendingQaLeadApproval
-//   7 OP上版                pendingOpTriage / pendingOpClaim / opPreparing
-//   8 OP主管簽核            pendingDeploymentApproval / opDeploying / opCompleted
+//   7 OP上版作業            pendingOpTriage / pendingOpClaim / opPreparing /
+//                           pendingDeploymentApproval / opDeploying
+//   8 OP主管上版後確認       opCompleted
 //   9 結案                  pendingReporterConfirmation / reporterConfirming / closed
 //
-// opDeploying／opCompleted 刻意併入第 8 階段（不是第 7 階段）：核准通過後的部署執行／
-// 結果記錄，性質上緊接在 OP 主管核准之後、結案之前，若併入第 7 階段會讓進度列的「目前
-// 階段索引」在核准通過後倒退（8→7），破壞「completed=打勾／current=實心藍點」的單調
-// 前進語意；併入第 8 階段可維持索引單調遞增（7→8→8→8→9），且不需要新增第 10 個節點。
+// 上版前核准是第 7 關的子步驟；正式部署紀錄送出後才進入第 8 關的獨立上版後主管確認。
 // cancelled 不屬於 9 個正式業務階段中任何一個，回傳 null，UI 端須另行顯示「已取消」。
 
 export interface NineStageDef {
@@ -35,8 +33,8 @@ export const NINE_STAGES: readonly NineStageDef[] = [
   { index: 4, key: "RD_APPROVAL", label: "RD主管簽核" },
   { index: 5, key: "QA_VERIFY", label: "QA驗證" },
   { index: 6, key: "QA_APPROVAL", label: "QA主管簽核" },
-  { index: 7, key: "OP_DEPLOY", label: "OP上版" },
-  { index: 8, key: "OP_APPROVAL", label: "OP主管簽核" },
+  { index: 7, key: "OP_DEPLOY", label: "OP上版作業" },
+  { index: 8, key: "OP_APPROVAL", label: "OP主管上版後確認" },
   { index: 9, key: "CLOSURE", label: "結案" },
 ];
 
@@ -54,8 +52,8 @@ const STAGE_KEY_TO_NINE_STAGE_INDEX: Record<string, number> = {
   pendingOpTriage: 7,
   pendingOpClaim: 7,
   opPreparing: 7,
-  pendingDeploymentApproval: 8,
-  opDeploying: 8,
+  pendingDeploymentApproval: 7,
+  opDeploying: 7,
   opCompleted: 8,
   pendingReporterConfirmation: 9,
   reporterConfirming: 9,
@@ -162,11 +160,11 @@ const STAGE_KEY_TO_SUBTITLE: Record<string, string> = {
   pendingQaLeadApproval: "等待 QA 主管簽核中。",
   pendingOpTriage: "已完成 QA 主管簽核，等待 OP 團隊接單。",
   pendingOpClaim: "OP 團隊已接單，等待主管指派執行人。",
-  opPreparing: "OP 執行人準備上版中。",
-  pendingDeploymentApproval: "等待 OP 主管簽核中。",
-  opDeploying: "已核准上版，OP 執行人部署中。",
-  opCompleted: "部署已完成，等待轉交原申請人確認結案。",
-  pendingReporterConfirmation: "等待原申請人確認結案。",
+  opPreparing: "OP 團隊處理中，請完成上版前確認。",
+  pendingDeploymentApproval: "上版計畫已提交，等待維運主管核准。",
+  opDeploying: "上版前核准已完成，等待正式環境部署。",
+  opCompleted: "正式環境部署已完成，等待維運主管確認。",
+  pendingReporterConfirmation: "正式環境部署已確認，等待申請人確認結案。",
   reporterConfirming: "原申請人確認結案中。",
   closed: "此工單已結案。",
   cancelled: "此工單已取消，不再走正式九階段流程。",

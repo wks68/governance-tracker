@@ -6,6 +6,7 @@ import { hotfixStageSubtitle } from "@/lib/hotfix-ui/nineStage";
 import TicketBasicInfo, { type TicketBasicInfoData } from "./TicketBasicInfo";
 import HotfixHeaderActions from "./HotfixHeaderActions";
 import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
+import CumulativeWorkflowContext from "./CumulativeWorkflowContext";
 
 export default function HotfixStageShell({
   title,
@@ -57,6 +58,8 @@ export default function HotfixStageShell({
       </div>
 
       <TicketBasicInfo data={ticketBasicInfo} />
+
+      {ctx && <CumulativeWorkflowContext ctx={ctx} />}
 
       {children}
     </div>

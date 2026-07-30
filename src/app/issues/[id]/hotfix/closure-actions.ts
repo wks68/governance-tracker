@@ -6,7 +6,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireCurrentUser } from "@/lib/auth";
-import { saveClosureSummary, requireClosureOwnership } from "@/lib/hotfix-ui/closureService";
+import { requireClosureOwnership } from "@/lib/hotfix-ui/closureService";
 import { getIssueWorkflowRuntime, getAvailableIssueTransitions, executeIssueTransition, completeIssueWorkflow, returnIssueToStage } from "@/lib/workflowExecutionService";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
@@ -27,16 +27,8 @@ async function ensureClaimedForClosure(issueId: string, actorId: string): Promis
 export async function confirmHotfixClosureAction(formData: FormData): Promise<ActionResult> {
   const actor = await requireCurrentUser();
   const issueId = String(formData.get("issueId") ?? "");
-  const summary = String(formData.get("summary") ?? "").trim();
-  const followUpNotes = String(formData.get("followUpNotes") ?? "").trim();
-
-  if (!summary) {
-    return toActionResult(new Error("請先填寫結案摘要"));
-  }
-
   try {
     await requireClosureOwnership(issueId, actor.id);
-    await saveClosureSummary({ issueId, actorId: actor.id, summary, followUpNotes });
     await ensureClaimedForClosure(issueId, actor.id);
 
     const transitions = await getAvailableIssueTransitions(issueId, actor.id);

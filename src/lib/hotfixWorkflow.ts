@@ -191,7 +191,21 @@ export const STATE_TRANSITIONS: Record<HotfixState, HotfixTransition[]> = {
     { event: "resumeToOpPreparing", to: "opPreparing", actor: "exceptionTriageRole" },
     { event: "cancelIssue", to: "cancelled", actor: "exceptionTriageRole" },
   ],
-  opCompleted: [{ event: "reporterConfirmOpen", to: "pendingReporterConfirmation", actor: "system" }],
+  opCompleted: [
+    {
+      event: "opPostConfirmReject",
+      to: "opDeploying",
+      actor: "opLeadApprover",
+      requiresApprovalType: "DEPLOYMENT_APPROVAL",
+      isReject: true,
+    },
+    {
+      event: "reporterConfirmOpen",
+      to: "pendingReporterConfirmation",
+      actor: "opLeadApprover",
+      requiresApprovalType: "DEPLOYMENT_APPROVAL",
+    },
+  ],
   pendingReporterConfirmation: [
     { event: "reporterClaim", to: "reporterConfirming", actor: "reporterOrDesignatedConfirmer" },
   ],
