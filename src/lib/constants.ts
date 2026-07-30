@@ -160,6 +160,19 @@ export function isChangeSubType(value: string): value is ChangeSubType {
   return (CHANGE_SUB_TYPES as readonly string[]).includes(value);
 }
 
+// 治理紀錄關聯固定值域。資料庫因 SQLite connector 限制使用 String，所有寫入入口必須
+// 先經此型別守衛，且服務層依 relationType 再驗證 source／target 的固定方向。
+export const ISSUE_RELATION_TYPES = [
+  "INCIDENT_TO_RCA",
+  "INCIDENT_TO_HOTFIX",
+  "RCA_TO_HOTFIX",
+  "HOTFIX_TO_PROJECT",
+] as const;
+export type IssueRelationType = (typeof ISSUE_RELATION_TYPES)[number];
+export function isIssueRelationType(value: string): value is IssueRelationType {
+  return (ISSUE_RELATION_TYPES as readonly string[]).includes(value);
+}
+
 // ---------------------------------------------------------------------------
 // M1.5-A 新增：核准治理層固定值域（SQLite 不支援原生 enum，沿用 M1 慣例）。
 // ---------------------------------------------------------------------------

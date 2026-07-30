@@ -54,6 +54,8 @@ model User {
   delegationsReceived          ApprovalDelegation[]       @relation("DelegationDelegate")
   delegationsRevoked           ApprovalDelegation[]       @relation("DelegationRevokedBy")
   delegationsCreated           ApprovalDelegation[]       @relation("DelegationCreatedBy")
+  issueRelationsCreated        IssueRelation[]            @relation("IssueRelationCreatedBy")
+  issueRelationsRemoved        IssueRelation[]            @relation("IssueRelationRemovedBy")
 
   // ---- M1.5-C1-A 新增：人員停用 self-relation 與角色/Team 歷程反向關聯 ----
   disabledBy    User?  @relation("UserDisabledBy", fields: [disabledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -309,6 +311,8 @@ model Issue {
   workflowVersion      WorkflowVersion?            @relation("IssueWorkflowVersion", fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   currentWorkflowStage WorkflowStage?              @relation("IssueCurrentStage", fields: [currentWorkflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   workflowStageHistory IssueWorkflowStageHistory[]
+  outgoingRelations    IssueRelation[]             @relation("IssueRelationSource")
+  incomingRelations    IssueRelation[]             @relation("IssueRelationTarget")
 
   @@index([issueType])
   @@index([workflowStatus])
@@ -318,6 +322,33 @@ model Issue {
   @@index([assignedTeamId])
   @@index([workflowVersionId])
   @@index([currentWorkflowStageId])
+}
+
+// 治理紀錄之間的類型化關聯。固定方向與 relationType 的合法組合由服務層強制驗證：
+// Incident → RCA、Incident → Hotfix、RCA → Hotfix、Hotfix → 季度 ChangeRelease。
+// SQLite 沿用專案既有慣例以受控 String 保存固定值域；解除以 removedAt 非 null 表示，
+// 永不 hard delete 或重新啟用舊資料列。有效關聯唯一性由 additive migration 中的
+// SQLite partial unique indexes 保護，Schema 只宣告可跨資料庫沿用的一般索引。
+model IssueRelation {
+  id            String    @id @default(cuid())
+  sourceIssueId String
+  targetIssueId String
+  relationType  String
+  createdById   String
+  createdAt     DateTime  @default(now())
+  removedById   String?
+  removedAt     DateTime?
+  removalReason String?
+
+  sourceIssue Issue @relation("IssueRelationSource", fields: [sourceIssueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targetIssue Issue @relation("IssueRelationTarget", fields: [targetIssueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User  @relation("IssueRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  removedBy   User? @relation("IssueRelationRemovedBy", fields: [removedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([sourceIssueId])
+  @@index([targetIssueId])
+  @@index([relationType])
+  @@index([removedAt])
 }
 
 // 工單編號持久化計數器（一 issueType 一列）。issueType 直接沿用 Issue.issueType 的實際值
@@ -671,7 +702,7 @@ model WorkflowStage {
   // ---- M2-B 新增：IssueWorkflowStageHistory 對 WorkflowStage 有兩條 FK（fromStageId／toStageId），
   // Prisma 要求以具名 relation 區分兩個反向關聯 ----
   stageHistoryAsTo   IssueWorkflowStageHistory[] @relation("ToStageHistory")
-  stageHistoryAsFrom IssueWorkflowStageHistory[] @relation("FromStageHistory")
+  stageHistoryAsFrom  IssueWorkflowStageHistory[] @relation("FromStageHistory")
 
   @@unique([workflowVersionId, stageKey])
 }

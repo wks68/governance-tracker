@@ -82,7 +82,10 @@ export type ActionType =
   // ---- 成員管理權限收斂新增：完全未被任何資料引用的成員帳號永久刪除 ----
   | "UserPermanentlyDeleted"
   | "TeamActivated"
-  | "TeamDeactivated";
+  | "TeamDeactivated"
+  // ---- 治理紀錄類型化關聯 ----
+  | "IssueRelationCreated"
+  | "IssueRelationRemoved";
 
 // M1.5-A 新增：ApprovalRecord；M1.5-B 新增：UserSupervisorAssignment／TeamMember／ApprovalDelegation；
 // C1-B3 新增：UserRole；M2-A 新增：WorkflowDefinition／WorkflowVersion／WorkflowStage／
@@ -100,7 +103,8 @@ export type EntityType =
   | "WorkflowStage"
   | "WorkflowTransition"
   | "WorkflowStageRequirement"
-  | "Team";
+  | "Team"
+  | "IssueRelation";
 
 export async function writeAuditLog(
   params: {
