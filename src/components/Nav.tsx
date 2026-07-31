@@ -6,6 +6,7 @@ import { getUserEffectiveRoles, hasCapability, resolveGovernanceAccessContext } 
 import { resolveMemberManagementScope } from "@/lib/peopleService";
 import { prisma } from "@/lib/prisma";
 import AppShell from "./app-shell/AppShell";
+import AppToastProvider from "./toast/AppToastProvider";
 import type { ReactNode } from "react";
 
 export default async function Nav({ children }: { children: ReactNode }) {
@@ -13,20 +14,22 @@ export default async function Nav({ children }: { children: ReactNode }) {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-background">
-        <header className="border-b border-border bg-surface">
-          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
-            <span>
-              <span className="block text-base font-bold text-text-primary">DMS WorkHub</span>
-              <span className="block text-xs text-text-muted">DMS 工作管理平台</span>
-            </span>
-            <Link href="/login" className="text-sm font-semibold text-primary hover:text-primary-hover">
-            登入
-            </Link>
-          </div>
-        </header>
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
-      </div>
+      <AppToastProvider>
+        <div className="min-h-screen bg-background">
+          <header className="border-b border-border bg-surface">
+            <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
+              <span>
+                <span className="block text-base font-bold text-text-primary">DMS WorkHub</span>
+                <span className="block text-xs text-text-muted">DMS 工作管理平台</span>
+              </span>
+              <Link href="/login" className="text-sm font-semibold text-primary hover:text-primary-hover">
+              登入
+              </Link>
+            </div>
+          </header>
+          <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        </div>
+      </AppToastProvider>
     );
   }
 
@@ -73,17 +76,19 @@ export default async function Nav({ children }: { children: ReactNode }) {
     supervisorCount > 0;
 
   return (
-    <AppShell
-      user={{
-        id: user.id,
-        name: user.name,
-        roleLabel: `${roles.map(roleLabel).join("、") || "未指派角色"}${managementScope.ledTeamIds.length > 0 ? " Lead" : ""}`,
-      }}
-      tasks={notificationTasks}
-      canUseWorkManagement={canUseWorkManagement}
-      settingsAccess={{ people: canManagePeople, teams: canManageTeams, responsibility: canManageResponsibility }}
-    >
-      {children}
-    </AppShell>
+    <AppToastProvider canManageResponsibility={canManageResponsibility}>
+      <AppShell
+        user={{
+          id: user.id,
+          name: user.name,
+          roleLabel: `${roles.map(roleLabel).join("、") || "未指派角色"}${managementScope.ledTeamIds.length > 0 ? " Lead" : ""}`,
+        }}
+        tasks={notificationTasks}
+        canUseWorkManagement={canUseWorkManagement}
+        settingsAccess={{ people: canManagePeople, teams: canManageTeams, responsibility: canManageResponsibility }}
+      >
+        {children}
+      </AppShell>
+    </AppToastProvider>
   );
 }

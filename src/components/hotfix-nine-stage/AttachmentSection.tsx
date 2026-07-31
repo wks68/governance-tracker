@@ -50,7 +50,7 @@ function TextPreviewModal({ url, fileName, onClose }: { url: string; fileName: s
           </button>
         </div>
         <div className="max-h-[65vh] overflow-auto p-4">
-          {error && <p className="text-sm text-danger-text">{error}</p>}
+          <ActionErrorText message={error} title="附件預覽失敗" />
           {!error && content === null && <p className="text-sm text-gray-400">載入中…</p>}
           {content !== null && <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{content}</pre>}
         </div>

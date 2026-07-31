@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { validateWorkflowVersionAction } from "@/app/admin/workflows/actions";
 import type { WorkflowValidationIssue } from "@/lib/workflowService";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 // M2-A3 新增：發布前驗證結果面板——顯示結構化問題清單（code／severity／entityType／
 // message／suggestedAction），不得只顯示一段字串。
@@ -40,7 +41,7 @@ export default function WorkflowValidationPanel({ versionId }: { versionId: stri
         </button>
       </div>
 
-      {error && <p className="mt-3 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger-text">{error}</p>}
+      <ActionErrorText message={error} />
 
       {result && (
         <div className="mt-3">

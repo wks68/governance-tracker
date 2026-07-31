@@ -34,6 +34,7 @@ export default function TransitionActionForm({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const needsForm = requireReason || !!confirmMessage;
@@ -42,10 +43,12 @@ export default function TransitionActionForm({
     formData.set("issueId", issueId);
     formData.set("transitionId", transitionId);
     setError(null);
+    setErrorCode(null);
     startTransition(async () => {
       const result = await action(formData);
       if (!result.ok) {
         setError(result.message);
+        setErrorCode(result.code);
         return;
       }
       setOpen(false);
@@ -58,7 +61,7 @@ export default function TransitionActionForm({
   if (!needsForm) {
     return (
       <div>
-        <ActionErrorText message={error} />
+        <ActionErrorText message={error} code={errorCode} itemKey={issueId} />
         <button type="button" disabled={disabled || isPending} onClick={() => submit(new FormData())} className={buttonClassName ?? defaultButtonClass}>
           {isPending ? "處理中…" : submitLabel}
         </button>
@@ -82,7 +85,7 @@ export default function TransitionActionForm({
       }}
       className="mt-2 space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3"
     >
-      <ActionErrorText message={error} />
+      <ActionErrorText message={error} code={errorCode} itemKey={issueId} />
       {confirmMessage && <p className="text-xs font-medium text-danger-text">{confirmMessage}</p>}
       {requireReason && <ReasonCodeField disabled={isPending} name="reasonCode" />}
       <div className="flex gap-2">
@@ -95,6 +98,7 @@ export default function TransitionActionForm({
           onClick={() => {
             setOpen(false);
             setError(null);
+            setErrorCode(null);
           }}
           className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100"
         >

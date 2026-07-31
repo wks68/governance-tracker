@@ -118,8 +118,8 @@ export default function EditTeamPanel({
           <span className="text-xs text-gray-400">此團隊已被工單、成員歷程或核准紀錄引用，無法永久刪除。</span>
         )}
       </div>
-      {toggleError && <p className="text-xs text-danger-text">{toggleError}</p>}
-      {deleteError && <p className="text-xs text-danger-text">{deleteError}</p>}
+      <ActionErrorText message={toggleError} />
+      <ActionErrorText message={deleteError} />
     </section>
   );
 }

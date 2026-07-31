@@ -18,6 +18,7 @@ export interface ClaimTeamPanelProps {
 
 export default function ClaimTeamPanel({ issueId, preview }: ClaimTeamPanelProps) {
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [pendingTeamId, setPendingTeamId] = useState<string | null>(null);
 
@@ -31,6 +32,7 @@ export default function ClaimTeamPanel({ issueId, preview }: ClaimTeamPanelProps
 
   function claim(teamId: string) {
     setError(null);
+    setErrorCode(null);
     setPendingTeamId(teamId);
     const fd = new FormData();
     fd.set("issueId", issueId);
@@ -40,6 +42,7 @@ export default function ClaimTeamPanel({ issueId, preview }: ClaimTeamPanelProps
       const result = await claimIssueForTeamAction(fd);
       if (!result.ok) {
         setError(result.message);
+        setErrorCode(result.code);
         return;
       }
       window.location.reload();
@@ -54,7 +57,7 @@ export default function ClaimTeamPanel({ issueId, preview }: ClaimTeamPanelProps
       <h2 className="text-sm font-semibold text-gray-800">待 {preview.domain} 團隊接單</h2>
       <p className="mt-1 text-xs text-gray-500">符合資格的 {preview.domain} 團隊主管皆可接單，第一個成功接單的團隊將取得此工單。</p>
 
-      <ActionErrorText message={error} />
+      <ActionErrorText message={error} code={errorCode} itemKey={issueId} />
 
       {eligibleTeams.length > 0 && (
         <div className="mt-3 space-y-2">

@@ -10,6 +10,7 @@ import {
   cancelScheduledSupervisorAssignmentAction,
   replaceSupervisorAssignmentAction,
 } from "@/lib/approvalGovernanceActions";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 // M1.5-B2：主管指派的新增／終止／取消排程／更換操作面板。純 UI，不做任何規則判斷——
 // 重疊、循環、reasonCode 必填等全部由 approvalGovernanceActions.ts 呼叫的服務層檢查，
@@ -34,8 +35,7 @@ const submitClass =
   "rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50";
 
 function ErrorText({ error }: { error: string | null }) {
-  if (!error) return null;
-  return <p className="mb-3 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger-text">{error}</p>;
+  return <ActionErrorText message={error} />;
 }
 
 export function CreateSupervisorAssignmentPanel({ users }: { users: UserOption[] }) {

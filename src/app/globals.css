@@ -73,6 +73,21 @@ body {
   }
 }
 
+@keyframes app-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-toast-enter {
+  animation: app-toast-enter 180ms ease-out;
+}
+
 .animate-notification-bell {
   animation: notification-bell-wiggle 2.4s ease-in-out infinite;
   will-change: transform;
@@ -102,6 +117,9 @@ body {
   .animate-notification-bell,
   .animate-stage-halo,
   .animate-stage-core {
+    animation: none !important;
+  }
+  .app-toast-enter {
     animation: none !important;
   }
   .animate-stage-halo {

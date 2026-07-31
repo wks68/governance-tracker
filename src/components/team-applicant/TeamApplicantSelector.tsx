@@ -9,6 +9,7 @@ import { useEffect, useState, useTransition } from "react";
 import { listApplicantsForTeamAction } from "@/app/team-applicant-actions";
 import type { TeamOption, ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
 import { ReadOnlyField } from "@/components/ui/FormPrimitives";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 const inputCls = "ui-input";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -161,7 +162,7 @@ export default function TeamApplicantSelector({
               </select>
             </>
           )}
-          {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+          <ActionErrorText message={error} title="載入申請人失敗" />
         </div>
       </div>
     </div>

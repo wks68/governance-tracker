@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Drawer from "./Drawer";
 import ConfirmButton from "./ConfirmButton";
 import { assignTeamLeadAction, removeTeamLeadAction } from "@/lib/approvalGovernanceActions";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 // M1.5-B2：設定／移除 Team LEAD 的操作面板。純 UI——「目標必須已是啟用中成員」
 // 「reasonCode 必填」等規則全部由 approvalGovernanceActions.ts 呼叫的服務層檢查。
@@ -71,9 +72,7 @@ export function TeamLeadManagePanel({
         isSubmitting={isPending}
       >
         <form ref={formRef} onSubmit={(e) => e.preventDefault()} className="space-y-3">
-          {error && (
-            <p className="mb-1 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger-text">{error}</p>
-          )}
+          <ActionErrorText message={error} />
           <input type="hidden" name="teamId" value={teamId} />
           <input type="hidden" name="userId" value={userId} />
           <div>

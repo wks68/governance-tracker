@@ -170,6 +170,7 @@ DMS 工作管理平台
 - `ReadOnlyField`：以 definition list 呈現固定團隊／申請人，不用空白 disabled select。
 - `StatusBadge`／`PriorityIndicator`：重要狀態一律有文字、圖示與顏色，並提供 `aria-label`。
 - `NotificationBell`／`NotificationPopover`：Badge、動作文字、動態稱呼、keyboard、outside click／Esc；查看不改變 resolver 狀態。
+- `AppToastProvider`／`ActionErrorText`：全站共用 action error 浮動通知；欄位 validation 仍由 `FormField` 在欄位旁呈現。
 - `EmptyState`／`LoadingState`／`ErrorState`：短標題、白話說明與必要下一步，不以顏色作唯一訊號。
 - `ConfirmDialog`／`ActionMenu`／`SectionTabs`：沿用現有領域元件；Phase 1 不全面替換。
 - `HelpTooltip`／`SearchableSelect`／`MultiSelect`：先列為 Phase 2 後續可重用項，只有實際頁面需要時才引入，避免依賴膨脹。
@@ -195,6 +196,14 @@ DMS 工作管理平台
 - Drawer／popover 支援 Esc、outside click 與焦點回復；背景不接收 Drawer focus。
 - Status／高風險／逾期／失敗使用圖示＋文字＋顏色；Tooltip 只補充，不是唯一資訊來源。
 - 動畫尊重 reduced motion；表格容器可控水平捲動，頁面本身不產生明顯水平 overflow。
+
+### 12.1 Action error Toast
+
+- 固定在 Topbar 下方右上角，桌面寬度上限 440px；手機保留 16px 安全間距，不參與頁面排版。
+- 使用 surface、danger-muted、danger、12px 圓角與 overlay shadow；不使用高飽和整塊紅底。
+- 預設顯示 7 秒，最後 400ms 漸淡；hover／focus 暫停，最多三則，新通知在最上方，同 code 與事項短時間去重。
+- 每則使用 `role="alert"`、可聚焦並提供有 accessible name 的關閉按鈕；reduced motion 取消位移進場動畫。
+- 未知或疑似技術錯誤只顯示通用文案，不輸出 stack、SQL、Prisma 或內部路徑。
 
 ## 13. 頁面遷移與重構順序
 

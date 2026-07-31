@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { roleLabel } from "@/lib/constants";
 import LoginUserForm from "./LoginUserForm";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -21,16 +22,17 @@ export default async function LoginPage({ searchParams }: { searchParams: Record
         <p className="mt-1 text-sm text-gray-500">
           MVP 版本尚未串接企業 SSO，請選擇您的帳號登入。角色與權限由系統管理員於「使用者與角色」設定，登入後無法自行變更。
         </p>
-        {searchParams.error === "inactive" && (
-          <p className="mt-2 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger-text">
-            該帳號已被停用或不存在，請聯繫系統管理員。
-          </p>
-        )}
-        {searchParams.error === "request" && (
-          <p className="mt-2 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger-text">
-            登入請求無法完成，請重新整理頁面後再試一次。
-          </p>
-        )}
+        <ActionErrorText
+          message={
+            searchParams.error === "inactive"
+              ? "該帳號已被停用或不存在，請聯繫系統管理員。"
+              : searchParams.error === "request"
+                ? "登入請求無法完成，請重新整理頁面後再試一次。"
+                : null
+          }
+          code={searchParams.error === "inactive" ? "LOGIN_INACTIVE" : searchParams.error === "request" ? "LOGIN_REQUEST_FAILED" : undefined}
+          title="登入失敗"
+        />
       </div>
 
       <div className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">

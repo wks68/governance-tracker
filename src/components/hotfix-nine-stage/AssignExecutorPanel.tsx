@@ -20,6 +20,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [selected, setSelected] = useState("");
 
@@ -41,11 +42,13 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
     setOpen(false);
     setSelected("");
     setError(null);
+    setErrorCode(null);
   }
 
   function submit() {
     if (!selected) return;
     setError(null);
+    setErrorCode(null);
     const fd = new FormData();
     fd.set("issueId", issueId);
     fd.set("executorUserId", selected);
@@ -54,6 +57,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
       const result = await assignIssueExecutorAction(fd);
       if (!result.ok) {
         setError(result.message);
+        setErrorCode(result.code);
         return;
       }
       setOpen(false);
@@ -68,6 +72,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
         onClick={() => {
           setSelected("");
           setError(null);
+          setErrorCode(null);
           setOpen(true);
         }}
         className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
@@ -99,6 +104,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
                 onChange={(event) => {
                   setSelected(event.target.value);
                   setError(null);
+                  setErrorCode(null);
                 }}
                 disabled={isPending}
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
@@ -113,7 +119,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
             </div>
 
             <div className="mt-3">
-              <ActionErrorText message={error} />
+              <ActionErrorText message={error} code={errorCode} itemKey={issueId} />
             </div>
 
             <div className="mt-5 flex justify-end gap-2">

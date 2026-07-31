@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Drawer from "./Drawer";
 import ConfirmButton from "./ConfirmButton";
 import { createApprovalDelegationAction, revokeApprovalDelegationAction } from "@/lib/approvalGovernanceActions";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 // M1.5-B2：核准代理的建立／撤銷操作面板。純 UI——delegator 是否具備原始資格、
 // Team／approvalType 範圍是否一致、reasonCode／revocationReason 必填規則，全部由
@@ -18,8 +19,7 @@ const submitClass =
   "rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50";
 
 function ErrorText({ error }: { error: string | null }) {
-  if (!error) return null;
-  return <p className="mb-1 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger-text">{error}</p>;
+  return <ActionErrorText message={error} />;
 }
 
 const DELEGATION_APPROVAL_TYPES: { value: string; label: string; requiresTeam: boolean }[] = [

@@ -40,6 +40,7 @@ export default function NewIssueForm({
   const [applicantId, setApplicantId] = useState(scope.fixedApplicant?.id ?? "");
   const [hotfixPriority, setHotfixPriority] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const initialStatus = getWorkflow(issueType)[0]?.key ?? "";
   const template = getVisibleFieldTemplate(issueType, initialStatus);
@@ -59,10 +60,12 @@ export default function NewIssueForm({
     const formData = new FormData(formEl);
     formData.set("submitForApproval", String(submitForApproval));
     setError(null);
+    setErrorCode(null);
     startTransition(async () => {
       const result = await createIssueAction(formData);
       if (!result.ok) {
         setError(result.message);
+        setErrorCode(result.code);
         return;
       }
       router.push(result.data!.redirectTo);
@@ -86,7 +89,7 @@ export default function NewIssueForm({
         {issueType === "ChangeRelease" && (
           <input type="hidden" name="changeSubType" value={initialChangeSubType ?? "QUARTERLY_RELEASE"} />
         )}
-        <ActionErrorText message={error} />
+        <ActionErrorText message={error} code={errorCode} />
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>

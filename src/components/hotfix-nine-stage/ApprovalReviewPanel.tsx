@@ -62,10 +62,12 @@ export interface ApprovalReviewPanelProps {
 export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLabel, requestedByName, requestedAt, isResponsible, expectedApproverLabel }: ApprovalReviewPanelProps) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function submit(decision: "APPROVED" | "REJECTED", reason: string) {
     setError(null);
+    setErrorCode(null);
     const fd = new FormData();
     fd.set("issueId", issueId);
     fd.set("approvalRecordId", approvalRecordId);
@@ -75,6 +77,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
       const result = await decideHotfixApprovalAction(fd);
       if (!result.ok) {
         setError(result.message);
+        setErrorCode(result.code);
         return;
       }
       setRejectOpen(false);
@@ -94,7 +97,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
         <p className="mt-3 text-xs text-gray-400">僅{roleLabel}可簽核，此頁為唯讀。{expectedApproverLabel ? `目前應由：${expectedApproverLabel}` : ""}</p>
       ) : (
         <>
-          <ActionErrorText message={error} />
+          <ActionErrorText message={error} code={errorCode} itemKey={issueId} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"

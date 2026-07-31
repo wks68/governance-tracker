@@ -5,6 +5,7 @@ import {
   loginAsUserAction,
   loginAsUserProgressiveAction,
 } from "@/lib/authActions";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 const LOGIN_REQUEST_FAILED_MESSAGE = "登入請求無法完成，請重新整理頁面後再試一次。";
 
@@ -64,11 +65,7 @@ export default function LoginUserForm({
           {isPending ? "登入中…" : "登入"}
         </button>
       </div>
-      {error && (
-        <p className="mt-2 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger-text">
-          {error}
-        </p>
-      )}
+      <ActionErrorText message={error} title="登入失敗" />
     </form>
   );
 }
