@@ -74,7 +74,11 @@ export default async function Nav({ children }: { children: ReactNode }) {
 
   return (
     <AppShell
-      user={{ name: user.name, roleLabel: roleLabel(user.role) }}
+      user={{
+        id: user.id,
+        name: user.name,
+        roleLabel: `${roles.map(roleLabel).join("、") || "未指派角色"}${managementScope.ledTeamIds.length > 0 ? " Lead" : ""}`,
+      }}
       tasks={notificationTasks}
       canUseWorkManagement={canUseWorkManagement}
       settingsAccess={{ people: canManagePeople, teams: canManageTeams, responsibility: canManageResponsibility }}

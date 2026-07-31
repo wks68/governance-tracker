@@ -5,7 +5,11 @@ import LoginUserForm from "./LoginUserForm";
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: { searchParams: Record<string, string | undefined> }) {
-  const users = await prisma.user.findMany({ where: { isActive: true }, orderBy: { name: "asc" } });
+  const users = await prisma.user.findMany({
+    where: { isActive: true },
+    include: { userRoles: { where: { isActive: true }, orderBy: { createdAt: "asc" } } },
+    orderBy: { name: "asc" },
+  });
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 py-10">
@@ -32,7 +36,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Record
             key={u.id}
             userId={u.id}
             name={u.name}
-            detail={`${u.email} · ${u.department || "—"} · ${roleLabel(u.role)}`}
+            detail={`${u.email} · ${u.department || "—"} · ${u.userRoles.map((role) => roleLabel(role.role)).join("、") || "未指派角色"}`}
           />
         ))}
         {users.length === 0 && <p className="p-4 text-sm text-gray-400">目前沒有已啟用的使用者，請聯繫系統管理員。</p>}

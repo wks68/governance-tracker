@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import {
   loginAsUserAction,
   loginAsUserProgressiveAction,
@@ -18,7 +17,6 @@ export default function LoginUserForm({
   name: string;
   detail: string;
 }) {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -34,8 +32,9 @@ export default function LoginUserForm({
           setError(result.message);
           return;
         }
-        router.replace("/governance");
-        router.refresh();
+        // Session actor 已更換，必須重新載入整棵 Server Component／Root Layout，避免
+        // App Router 沿用上一位使用者的 Topbar、Sidebar、待辦或建立範圍快取。
+        window.location.replace("/governance");
       } catch (actionError) {
         // Server Action 在送達 action 前就被 proxy／Origin 驗證拒絕時仍會 reject；
         // 捕捉後顯示頁內訊息，console 保留診斷線索，不產生未處理的 Runtime Error。

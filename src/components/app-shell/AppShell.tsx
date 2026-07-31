@@ -41,7 +41,7 @@ export interface ShellSettingsAccess {
 }
 
 interface AppShellProps {
-  user: { name: string; roleLabel: string };
+  user: { id: string; name: string; roleLabel: string };
   tasks: NotificationTask[];
   settingsAccess: ShellSettingsAccess;
   canUseWorkManagement: boolean;
@@ -164,7 +164,11 @@ export default function AppShell({
   const locationLabel = useMemo(() => breadcrumbLabel(pathname, searchParams.get("view")), [pathname, searchParams]);
 
   return (
-    <div className="min-h-screen bg-background text-text-primary">
+    <div
+      className="min-h-screen bg-background text-text-primary"
+      data-session-actor-id={user.id}
+      data-session-actor-name={user.name}
+    >
       <a
         href="#main-content"
         className="fixed left-3 top-3 z-[70] -translate-y-20 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition focus:translate-y-0"
