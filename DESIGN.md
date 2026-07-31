@@ -4,7 +4,7 @@
 
 - 正式中文名稱：**DMS 工作管理平台**。
 - 英文產品識別：**DMS WorkHub**。
-- 主要功能名稱：**工作管理中心**。
+- Sidebar 主要功能名稱：**工作管理**；`/work-management` 頁面主標題為 **DMS 工作管理中心**。
 - 統一建立入口：**新增事項**；建立頁主標題固定為「你現在要辦理什麼？」。
 - 設計目標：以既有 Issue、Workflow、IssueRelation、Audit Log、權限服務與 actionability resolver 為唯一業務來源，提供資訊密度適中、易辨識、可逐步遷移的企業工作台。
 - 主要使用者：PM、RD、QA、OP、資安推動小組、DMS 主管、Admin，以及不熟悉內部 enum、資料表或治理術語的一般申請人。
@@ -70,8 +70,8 @@
 ```text
 DMS 工作管理平台
 ├─ 治理儀表板                         /governance
-├─ 工作管理中心                       /work-management
-│  ├─ 專案流程與緊急修正（Hotfix）
+├─ 工作管理                           /work-management
+│  ├─ 專案流程與緊急修正
 │  │  ├─ 季度專案                     /issues?view=quarterly
 │  │  └─ Hotfix 緊急修正              /issues?view=hotfix
 │  ├─ 事件通報與改善
@@ -79,11 +79,12 @@ DMS 工作管理平台
 │  │  └─ RCA 根因分析                 /rca
 │  ├─ 申請與紀錄
 │  │  └─ OP 帳號與權限申請（預留）    不建立 route
-│  └─ 工作列表
-│     ├─ Hotfix 清單                  /issues?view=hotfix
-│     ├─ 季度專案清單                 /issues?view=quarterly
-│     ├─ 事件通報清單                 /incidents
-│     └─ RCA 清單                     /rca
+│  ├─ 工作列表
+│  │  ├─ Hotfix 清單                  /issues?view=hotfix
+│  │  ├─ 季度專案清單                 /issues?view=quarterly
+│  │  ├─ 事件通報清單                 /incidents
+│  │  └─ RCA 清單                     /rca
+│  └─ 我的待辦                       /issues?view=hotfix&quick=mine
 ├─ 新增事項                           /issues/new
 ├─ 事件通報                           /incidents
 ├─ RCA 根因分析                       /rca
@@ -93,8 +94,8 @@ DMS 工作管理平台
    └─ 權責設定                        /settings/approval-governance
 ```
 
-- 「工作管理中心」父項目可點擊 `/work-management`，獨立箭頭只控制展開。
-- 「待我處理」只存在於 `/issues` 的既有 FilterBar，使用 `quick=mine`；不放 Sidebar、不另建頁。
+- 「工作管理」父項目可點擊 `/work-management`，獨立箭頭只控制展開；頁面主標題維持「DMS 工作管理中心」。
+- 「我的待辦」沿用 `/issues` 的既有 `quick=mine`、actionability resolver 與通知鈴鐺同一份待辦資料，不另建頁或判斷邏輯。
 - 事件通報與 RCA 仍使用現有 route、Issue model 與 IssueRelation。
 - Sidebar 之外，Topbar 提供搜尋入口、通知鈴鐺、使用者資訊與登出。
 
@@ -103,7 +104,7 @@ DMS 工作管理平台
 - 首頁只聚合既有資料：Hotfix、季度專案、事件、RCA 數量；待辦由 actionability resolver 取得；高風險／逾期依既有 Issue 欄位與 workflow helper 顯示。
 - 最近更新連回既有詳情；快速入口連回四個既有清單與 `/issues/new`。
 - 不複製 `/issues`、`/incidents`、`/rca`，不新增第二套 visibility 或 actionability。
-- 「專案流程與緊急修正（Hotfix）」說明：季度專案管理本季度開發、改善、測試與上版；Hotfix 處理正式環境急迫修正、驗證與上版。
+- 「專案流程與緊急修正」說明：季度專案管理本季度開發、改善、測試與上版；Hotfix 處理正式環境急迫修正、驗證與上版。
 - 「事件通報與改善」說明：事件通報記錄異常、中斷與資料錯誤；RCA 追查原因與改善措施。
 
 ## 5. 新增事項

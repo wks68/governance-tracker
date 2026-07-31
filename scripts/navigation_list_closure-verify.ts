@@ -55,7 +55,7 @@ async function main() {
   const bell = source("src/components/ActionableNotificationBell.tsx");
   const css = source("src/app/globals.css");
   check(
-    "[1] Sidebar 正式順序含工作管理中心、事件通報、RCA 與系統設定",
+    "[1] Sidebar 正式順序含工作管理、事件通報、RCA 與系統設定",
     [
       'label: "治理儀表板"',
       'href: "/work-management"',

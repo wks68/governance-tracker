@@ -55,7 +55,7 @@ export default async function WorkManagementPage() {
     <div className="space-y-5">
       <PageHeader
         eyebrow="工作總覽"
-        title="工作管理中心"
+        title="DMS 工作管理中心"
         description="集中查看待處理摘要、最近更新與四類正式工作事項；所有數據沿用既有可見性與待辦解析。"
         actions={
           <Link href="/issues/new" className="ui-button-primary">

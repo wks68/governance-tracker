@@ -14,6 +14,7 @@ import {
   Flame,
   FolderKanban,
   LayoutDashboard,
+  ListTodo,
   Menu,
   Network,
   PanelLeftClose,
@@ -62,7 +63,7 @@ const TOP_LINKS: NavLink[] = [
 
 const WORK_GROUPS = [
   {
-    label: "專案流程與緊急修正（Hotfix）",
+    label: "專案流程與緊急修正",
     icon: FolderKanban,
     items: [
       { href: "/issues?view=quarterly", label: "季度專案", icon: CalendarRange },
@@ -181,11 +182,13 @@ export default function AppShell({
         <SidebarContent
           pathname={pathname}
           currentView={searchParams.get("view")}
+          currentQuick={searchParams.get("quick")}
           collapsed={collapsed}
           workOpen={workOpen}
           settingsOpen={settingsOpen}
           visibleSettings={visibleSettings}
           canUseWorkManagement={canUseWorkManagement}
+          taskCount={tasks.length}
           onToggleWork={() => setWorkOpen((value) => !value)}
           onToggleSettings={() => setSettingsOpen((value) => !value)}
         />
@@ -218,11 +221,13 @@ export default function AppShell({
             <SidebarContent
               pathname={pathname}
               currentView={searchParams.get("view")}
+              currentQuick={searchParams.get("quick")}
               collapsed={false}
               workOpen={workOpen}
               settingsOpen={settingsOpen}
               visibleSettings={visibleSettings}
               canUseWorkManagement={canUseWorkManagement}
+              taskCount={tasks.length}
               onToggleWork={() => setWorkOpen((value) => !value)}
               onToggleSettings={() => setSettingsOpen((value) => !value)}
             />
@@ -283,21 +288,25 @@ export default function AppShell({
 function SidebarContent({
   pathname,
   currentView,
+  currentQuick,
   collapsed,
   workOpen,
   settingsOpen,
   visibleSettings,
   canUseWorkManagement,
+  taskCount,
   onToggleWork,
   onToggleSettings,
 }: {
   pathname: string;
   currentView: string | null;
+  currentQuick: string | null;
   collapsed: boolean;
   workOpen: boolean;
   settingsOpen: boolean;
   visibleSettings: typeof SETTINGS_LINKS[number][];
   canUseWorkManagement: boolean;
+  taskCount: number;
   onToggleWork: () => void;
   onToggleSettings: () => void;
 }) {
@@ -339,7 +348,7 @@ function SidebarContent({
           <div className="mt-1">
             <div className="flex items-center gap-1">
               <NavItem
-                item={{ href: "/work-management", label: "工作管理中心", icon: BriefcaseBusiness }}
+                item={{ href: "/work-management", label: "工作管理", icon: BriefcaseBusiness }}
                 active={pathname === "/work-management"}
                 collapsed={collapsed}
                 className="min-w-0 flex-1"
@@ -347,7 +356,7 @@ function SidebarContent({
               {!collapsed && (
                 <button
                   type="button"
-                  aria-label={workOpen ? "收合工作管理中心" : "展開工作管理中心"}
+                  aria-label={workOpen ? "收合工作管理" : "展開工作管理"}
                   aria-expanded={workOpen}
                   onClick={onToggleWork}
                   className="rounded-lg p-2 text-text-muted hover:bg-primary-muted hover:text-primary"
@@ -360,31 +369,21 @@ function SidebarContent({
             {!collapsed && workOpen && (
               <div className="ml-4 mt-1 space-y-3 border-l border-border pl-3">
                 {WORK_GROUPS.map((group) => (
-                  <div key={group.label}>
-                    <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-semibold leading-4 text-text-muted">
-                      <group.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                      <span>{group.label}</span>
-                    </div>
-                    {group.label === "申請與紀錄" ? (
-                      <div className="mt-1 rounded-lg bg-surface-muted px-2.5 py-2 text-xs text-text-muted" aria-disabled="true">
-                        <span className="block font-medium text-text-secondary">OP 帳號與權限申請</span>
-                        <span className="mt-0.5 block">即將提供</span>
-                      </div>
-                    ) : (
-                      <div className="mt-0.5 space-y-0.5">
-                        {group.items.map((item) => (
-                          <NavItem
-                            key={`${group.label}-${item.label}`}
-                            item={item}
-                            active={isHrefActive(item.href, pathname, currentView)}
-                            collapsed={false}
-                            nested
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <WorkGroupSection
+                    key={group.label}
+                    group={group}
+                    pathname={pathname}
+                    currentView={currentView}
+                    currentQuick={currentQuick}
+                  />
                 ))}
+                <NavItem
+                  item={{ href: "/issues?view=hotfix&quick=mine", label: "我的待辦", icon: ListTodo }}
+                  active={isHrefActive("/issues?view=hotfix&quick=mine", pathname, currentView, currentQuick)}
+                  collapsed={false}
+                  nested
+                  badge={taskCount}
+                />
               </div>
             )}
           </div>
@@ -441,12 +440,14 @@ function NavItem({
   collapsed,
   nested = false,
   className,
+  badge,
 }: {
   item: NavLink;
   active: boolean;
   collapsed: boolean;
   nested?: boolean;
   className?: string;
+  badge?: number;
 }) {
   const Icon = item.icon;
   return (
@@ -463,8 +464,61 @@ function NavItem({
       )}
     >
       <Icon className={clsx("shrink-0", nested ? "h-3.5 w-3.5" : "h-5 w-5")} aria-hidden />
-      {!collapsed && <span className="min-w-0 truncate">{item.label}</span>}
+      {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
+      {!collapsed && badge !== undefined && badge > 0 && (
+        <span className="min-w-5 rounded-full bg-danger px-1.5 py-0.5 text-center text-[10px] font-bold leading-4 text-white" aria-label={`${badge} 件待辦`}>
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
     </Link>
+  );
+}
+
+function WorkGroupSection({
+  group,
+  pathname,
+  currentView,
+  currentQuick,
+}: {
+  group: (typeof WORK_GROUPS)[number];
+  pathname: string;
+  currentView: string | null;
+  currentQuick: string | null;
+}) {
+  const [open, setOpen] = useState(true);
+  const GroupIcon = group.icon;
+
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[11px] font-semibold leading-4 text-text-muted hover:bg-surface-muted hover:text-primary"
+      >
+        <GroupIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1">{group.label}</span>
+        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+      </button>
+      {open && (group.label === "申請與紀錄" ? (
+        <div className="mt-1 rounded-lg bg-surface-muted px-2.5 py-2 text-xs text-text-muted" aria-disabled="true">
+          <span className="block font-medium text-text-secondary">OP 帳號與權限申請</span>
+          <span className="mt-0.5 block">即將提供</span>
+        </div>
+      ) : (
+        <div className="mt-0.5 space-y-0.5">
+          {group.items.map((item) => (
+            <NavItem
+              key={`${group.label}-${item.label}`}
+              item={item}
+              active={isHrefActive(item.href, pathname, currentView, currentQuick)}
+              collapsed={false}
+              nested
+            />
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -527,17 +581,17 @@ function UserMenu({ user }: { user: { name: string; roleLabel: string } }) {
   );
 }
 
-function isHrefActive(href: string, pathname: string, currentView: string | null): boolean {
+function isHrefActive(href: string, pathname: string, currentView: string | null, currentQuick: string | null): boolean {
   const [path, query] = href.split("?");
   if (pathname !== path) return false;
   if (!query) return true;
-  const expectedView = new URLSearchParams(query).get("view");
-  return expectedView === (currentView ?? "hotfix");
+  const expected = new URLSearchParams(query);
+  return expected.get("view") === (currentView ?? "hotfix") && expected.get("quick") === currentQuick;
 }
 
 function breadcrumbLabel(pathname: string, currentView: string | null): string {
   if (pathname === "/governance" || pathname === "/dashboard") return "治理儀表板";
-  if (pathname === "/work-management") return "工作管理中心";
+  if (pathname === "/work-management") return "DMS 工作管理中心";
   if (pathname === "/issues/new") return "新增事項";
   if (pathname === "/issues") return currentView === "quarterly" ? "季度專案清單" : "Hotfix 清單";
   if (pathname === "/incidents") return "事件通報";
@@ -545,6 +599,6 @@ function breadcrumbLabel(pathname: string, currentView: string | null): string {
   if (pathname.startsWith("/admin/people")) return "系統設定／人員管理";
   if (pathname.startsWith("/admin/teams")) return "系統設定／團隊管理";
   if (pathname.startsWith("/settings/approval-governance")) return "系統設定／權責設定";
-  if (pathname.startsWith("/issues/")) return "工作管理中心／事項詳情";
+  if (pathname.startsWith("/issues/")) return "工作管理／事項詳情";
   return "DMS WorkHub";
 }
