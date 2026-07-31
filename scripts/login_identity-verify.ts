@@ -83,6 +83,8 @@ async function loginAndVerify(name: string): Promise<LoginResult> {
   const loginPage = await fetch(`${BASE_URL}/login`, { cache: "no-store" });
   assert.equal(loginPage.status, 200);
   const loginHtml = await loginPage.text();
+  const expectedDepartment = expected.teamMemberships.map((membership) => membership.team.name).join("、") || "—";
+  assert.ok(loginHtml.includes(`${expected.email} · ${expectedDepartment} ·`), `${name} 登入選項的部門必須使用 Team 名稱`);
   const actionId = actionIdForUser(loginHtml, expected.id);
   const response = await postLoginAction(actionId, expected.id);
   assert.equal(response.status, 303, `${name} progressive login 應 redirect`);
@@ -125,8 +127,7 @@ async function loginAndVerify(name: string): Promise<LoginResult> {
     assert.equal(creationScope.fixedApplicant, null, "Admin 不得殘留前一帳號的固定申請人");
   }
 
-  const department = expected.teamMemberships.map((membership) => membership.team.name).join("、") || "—";
-  return { cookieValue, actorId: expected.id, html, role: renderedRole, department };
+  return { cookieValue, actorId: expected.id, html, role: renderedRole, department: expectedDepartment };
 }
 
 async function invalidateAndVerify(cookieValue: string, name: string) {

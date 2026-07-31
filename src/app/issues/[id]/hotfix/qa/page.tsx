@@ -8,10 +8,8 @@ import { saveHotfixExecutionFieldsAction, submitHotfixExecutionAction } from "..
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import ClaimTeamPanel from "@/components/hotfix-nine-stage/ClaimTeamPanel";
-import AssignExecutorPanel from "@/components/hotfix-nine-stage/AssignExecutorPanel";
 import ExecutionFieldsForm, { ExecutionFieldsReadOnly } from "@/components/hotfix-nine-stage/ExecutionFieldsForm";
 import ExecutorAssignmentSummary from "@/components/hotfix-nine-stage/ExecutorAssignmentSummary";
-import ReassignExecutorDialog from "@/components/hotfix-nine-stage/ReassignExecutorDialog";
 
 const ALLOWED = ["pendingQaTriage", "pendingQaClaim", "qaInProgress"];
 
@@ -44,8 +42,8 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
   if (stageKey === "pendingQaClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="QA 驗證" headerActions={<AssignExecutorPanel issueId={params.id} preview={preview} />} {...shellProps}>
-        <ExecutorAssignmentSummary preview={preview} />
+      <HotfixStageShell title="QA 驗證" {...shellProps}>
+        <ExecutorAssignmentSummary issueId={params.id} preview={preview} />
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       </HotfixStageShell>
     );
@@ -62,10 +60,9 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
     <HotfixStageShell
       title="QA 驗證"
       subtitle="完成驗證後送出，將轉交 QA 主管簽核"
-      headerActions={<ReassignExecutorDialog issueId={params.id} preview={reassignPreview} />}
       {...shellProps}
     >
-      <ExecutorAssignmentSummary preview={reassignPreview} />
+      <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
       {isResponsible ? (
         <ExecutionFieldsForm
           issueId={params.id}

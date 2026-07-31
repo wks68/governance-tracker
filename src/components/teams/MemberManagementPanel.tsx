@@ -53,7 +53,7 @@ export interface ManagedMemberRow {
 interface PanelContext {
   teamId: string;
   teamName: string;
-  /** 團隊主管操作時為 true：所屬團隊固定唯讀、直屬主管固定為自己、不得選 Admin 角色 */
+  /** 團隊主管操作時為 true：部門固定唯讀、直屬主管固定為自己、不得選 Admin 角色 */
   leadScoped: boolean;
   actorId: string;
   actorName: string;
@@ -127,11 +127,6 @@ export function CreateMemberDrawer({ ctx }: { ctx: PanelContext }) {
           </div>
           <div>
             <label className={labelClass}>部門</label>
-            <input name="department" disabled={form.isPending} className={inputClass} />
-          </div>
-
-          <div>
-            <label className={labelClass}>所屬團隊</label>
             {/* 團隊主管操作時固定為自己的團隊且唯讀（實際 teamId 由上方 hidden 欄位送出）。 */}
             <input value={ctx.teamName} readOnly disabled className={inputClass} />
           </div>
@@ -223,7 +218,7 @@ function EditProfileButton({ ctx, member }: { ctx: PanelContext; member: Managed
           </div>
           <div>
             <label className={labelClass}>部門</label>
-            <input name="department" defaultValue={member.department} disabled={form.isPending} className={inputClass} />
+            <input value={ctx.teamName} readOnly disabled className={inputClass} />
           </div>
           <ReasonCodeField disabled={form.isPending} />
           <button type="submit" disabled={form.isPending} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50">

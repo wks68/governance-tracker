@@ -16,7 +16,6 @@ export default function PersonSummary({
   person: {
     name: string;
     email: string;
-    department: string;
     loginIdentifier: string | null;
     role: string;
     isActive: boolean;
@@ -51,7 +50,9 @@ export default function PersonSummary({
         </div>
         <div className="flex gap-2">
           <dt className="w-24 shrink-0 text-gray-500">部門</dt>
-          <dd className="text-gray-800">{person.department || "—"}</dd>
+          <dd className="text-gray-800">
+            {teamBadges.length === 0 ? "—" : teamBadges.map((team) => team.teamName).join("、")}
+          </dd>
         </div>
         <div className="flex gap-2">
           <dt className="w-24 shrink-0 text-gray-500">loginIdentifier</dt>
@@ -63,27 +64,6 @@ export default function PersonSummary({
         </div>
       </dl>
 
-      <div className="mt-3">
-        <p className="mb-1 text-xs font-medium text-gray-500">團隊</p>
-        {teamBadges.length === 0 ? (
-          <p className="text-xs text-gray-400">無所屬團隊</p>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {teamBadges.map((t) => (
-              <span
-                key={t.teamId}
-                className={
-                  t.membershipRole === "LEAD"
-                    ? "rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary"
-                    : "rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600"
-                }
-              >
-                {t.teamName}（{t.membershipRole === "LEAD" ? "LEAD" : "成員"}）
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

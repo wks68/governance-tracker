@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { requireCurrentUser } from "@/lib/auth";
 import {
-  createPerson,
+  createTeamMember,
   updatePersonProfile,
   assignSystemRole,
   updatePrimaryRole,
@@ -36,7 +36,7 @@ export async function createPersonAction(formData: FormData): Promise<ActionResu
   const actor = await requireCurrentUser();
   const name = String(formData.get("name") || "").trim();
   const email = String(formData.get("email") || "").trim();
-  const department = String(formData.get("department") || "").trim();
+  const teamId = String(formData.get("teamId") || "");
   const loginIdentifier = String(formData.get("loginIdentifier") || "").trim();
   const initialRole = String(formData.get("initialRole") || "");
   const reasonCode = String(formData.get("reasonCode") || "");
@@ -46,12 +46,15 @@ export async function createPersonAction(formData: FormData): Promise<ActionResu
   }
 
   try {
-    const created = await createPerson({
+    const created = await createTeamMember({
+      teamId,
       name,
       email,
-      department,
+      department: "",
       loginIdentifier: loginIdentifier || null,
-      initialRole,
+      role: initialRole,
+      supervisorUserId: null,
+      isActive: true,
       actorId: actor.id,
       reasonCode,
     });
@@ -66,7 +69,6 @@ export async function updatePersonProfileAction(formData: FormData): Promise<Act
   const actor = await requireCurrentUser();
   const userId = String(formData.get("userId") || "");
   const name = readOptionalText(formData, "name");
-  const department = readOptionalText(formData, "department");
   const loginIdentifier = readOptionalText(formData, "loginIdentifier");
   const reasonCode = String(formData.get("reasonCode") || "");
 
@@ -74,7 +76,6 @@ export async function updatePersonProfileAction(formData: FormData): Promise<Act
     await updatePersonProfile({
       userId,
       name: name !== undefined ? name.trim() : undefined,
-      department: department !== undefined ? department.trim() : undefined,
       loginIdentifier: loginIdentifier !== undefined ? loginIdentifier.trim() : undefined,
       actorId: actor.id,
       reasonCode,

@@ -7,7 +7,10 @@ export const dynamic = "force-dynamic";
 export default async function LoginPage({ searchParams }: { searchParams: Record<string, string | undefined> }) {
   const users = await prisma.user.findMany({
     where: { isActive: true },
-    include: { userRoles: { where: { isActive: true }, orderBy: { createdAt: "asc" } } },
+    include: {
+      userRoles: { where: { isActive: true }, orderBy: { createdAt: "asc" } },
+      teamMemberships: { where: { isActive: true }, include: { team: true } },
+    },
     orderBy: { name: "asc" },
   });
 
@@ -36,7 +39,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Record
             key={u.id}
             userId={u.id}
             name={u.name}
-            detail={`${u.email} · ${u.department || "—"} · ${u.userRoles.map((role) => roleLabel(role.role)).join("、") || "未指派角色"}`}
+            detail={`${u.email} · ${u.teamMemberships.map((membership) => membership.team.name).join("、") || "—"} · ${u.userRoles.map((role) => roleLabel(role.role)).join("、") || "未指派角色"}`}
           />
         ))}
         {users.length === 0 && <p className="p-4 text-sm text-gray-400">目前沒有已啟用的使用者，請聯繫系統管理員。</p>}

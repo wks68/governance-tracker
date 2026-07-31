@@ -13,12 +13,10 @@ import { saveHotfixExecutionFieldsAction, submitHotfixExecutionAction } from "..
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import ClaimTeamPanel from "@/components/hotfix-nine-stage/ClaimTeamPanel";
-import AssignExecutorPanel from "@/components/hotfix-nine-stage/AssignExecutorPanel";
 import { ExecutionFieldsReadOnly } from "@/components/hotfix-nine-stage/ExecutionFieldsForm";
 import { OpPreDeploymentForm, OpDeploymentResultForm } from "@/components/hotfix-nine-stage/OpDeploymentForms";
 import ApprovalReviewPanel from "@/components/hotfix-nine-stage/ApprovalReviewPanel";
 import ExecutorAssignmentSummary from "@/components/hotfix-nine-stage/ExecutorAssignmentSummary";
-import ReassignExecutorDialog from "@/components/hotfix-nine-stage/ReassignExecutorDialog";
 
 const ALLOWED = ["pendingOpTriage", "pendingOpClaim", "opPreparing", "opDeploying", "opCompleted"];
 
@@ -73,8 +71,8 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
   if (stageKey === "pendingOpClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="OP 上版" headerActions={<AssignExecutorPanel issueId={params.id} preview={preview} />} {...shellProps}>
-        <ExecutorAssignmentSummary preview={preview} />
+      <HotfixStageShell title="OP 上版" {...shellProps}>
+        <ExecutorAssignmentSummary issueId={params.id} preview={preview} />
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
       </HotfixStageShell>
     );
@@ -91,10 +89,9 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
       <HotfixStageShell
         title="OP 上版"
         subtitle="填寫上版計畫後送出，將轉交 OP 主管簽核"
-        headerActions={<ReassignExecutorDialog issueId={params.id} preview={reassignPreview} />}
         {...shellProps}
       >
-        <ExecutorAssignmentSummary preview={reassignPreview} />
+        <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
         <OpSubsteps stageKey={stageKey} />
         {isResponsible ? (
           <OpPreDeploymentForm
@@ -120,7 +117,7 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
 
   return (
     <HotfixStageShell title={stageKey === "opCompleted" ? "OP 主管上版後確認" : "OP 上版"} subtitle="OP 主管已核准，執行上版並記錄結果" {...shellProps}>
-      <ExecutorAssignmentSummary preview={reassignPreview} />
+      <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
       <OpSubsteps stageKey={stageKey} />
       <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={planValues} title="OP 上版前確認（已核准）" />
 

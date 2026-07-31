@@ -8,7 +8,6 @@ export interface PersonRow {
   id: string;
   name: string;
   email: string;
-  department: string;
   primaryRole: string;
   activeRoles: string[];
   isActive: boolean;
@@ -32,7 +31,6 @@ export default function PeopleTable({ people }: { people: PersonRow[] }) {
             <th className="px-3 py-2">主要角色</th>
             <th className="px-3 py-2">Active Roles</th>
             <th className="px-3 py-2">狀態</th>
-            <th className="px-3 py-2">團隊</th>
             <th className="px-3 py-2">最後更新</th>
           </tr>
         </thead>
@@ -45,7 +43,7 @@ export default function PeopleTable({ people }: { people: PersonRow[] }) {
                 </Link>
               </td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{p.email}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{p.department || "—"}</td>
+              <td className="px-3 py-2 text-gray-600">{p.teamNames.length > 0 ? p.teamNames.join("、") : "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{roleLabel(p.primaryRole)}</td>
               <td className="px-3 py-2 text-gray-600">
                 {p.activeRoles.length > 0 ? p.activeRoles.map((r) => roleLabel(r)).join("、") : "—"}
@@ -61,7 +59,6 @@ export default function PeopleTable({ people }: { people: PersonRow[] }) {
                   {p.isActive ? "啟用" : "停用"}
                 </span>
               </td>
-              <td className="px-3 py-2 text-gray-600">{p.teamNames.length > 0 ? p.teamNames.join("、") : "—"}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-500">{formatDateTime(p.updatedAt)}</td>
             </tr>
           ))}

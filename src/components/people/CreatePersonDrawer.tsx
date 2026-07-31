@@ -15,7 +15,7 @@ const inputClass =
   "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:bg-gray-100";
 const labelClass = "mb-1 block text-xs font-medium text-gray-700";
 
-export default function CreatePersonDrawer() {
+export default function CreatePersonDrawer({ teamOptions }: { teamOptions: Array<{ id: string; name: string }> }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +65,12 @@ export default function CreatePersonDrawer() {
           </div>
           <div>
             <label className={labelClass}>部門</label>
-            <input type="text" name="department" disabled={isPending} className={inputClass} />
+            <select name="teamId" required disabled={isPending} defaultValue="" className={inputClass}>
+              <option value="" disabled>請選擇</option>
+              {teamOptions.map((team) => (
+                <option key={team.id} value={team.id}>{team.name}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className={labelClass}>loginIdentifier（選填）</label>

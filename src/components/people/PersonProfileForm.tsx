@@ -6,7 +6,7 @@ import { ActionErrorText, ActionSuccessText } from "@/components/ActionResultBan
 import ReasonCodeField from "./ReasonCodeField";
 import { updatePersonProfileAction } from "@/app/admin/people/actions";
 
-// M1.5-C1-C 新增：Profile 編輯表單。只允許 name／department／loginIdentifier；
+// M1.5-C1-C 新增：Profile 編輯表單。只允許 name／loginIdentifier；部門顯示既有 Team 關係。
 // User.role／isActive／isBreakGlassAdmin／disabledAt 等一律不在此表單出現，
 // 對應規則（no-op 不寫 AuditLog）完全由 updatePersonProfile 服務層決定，本表單不猜測。
 const inputClass =
@@ -16,12 +16,12 @@ const labelClass = "mb-1 block text-xs font-medium text-gray-700";
 export default function PersonProfileForm({
   userId,
   initialName,
-  initialDepartment,
+  departmentNames,
   initialLoginIdentifier,
 }: {
   userId: string;
   initialName: string;
-  initialDepartment: string;
+  departmentNames: string[];
   initialLoginIdentifier: string | null;
 }) {
   const router = useRouter();
@@ -58,7 +58,7 @@ export default function PersonProfileForm({
         </div>
         <div>
           <label className={labelClass}>部門</label>
-          <input type="text" name="department" defaultValue={initialDepartment} disabled={isPending} className={inputClass} />
+          <input type="text" value={departmentNames.join("、") || "—"} readOnly disabled className={inputClass} />
         </div>
         <div>
           <label className={labelClass}>loginIdentifier</label>

@@ -31,6 +31,7 @@ import {
   reassignIssueExecutor,
   listClaimableTeamsForStage,
   listAssignableMembers,
+  listActionableTasksForActor,
   evaluateCurrentActorTask,
   WorkflowExecutionAccessDeniedError,
   WorkflowExecutionStateError,
@@ -312,8 +313,25 @@ async function main() {
   });
 
   await checkAsync("[15] assigned executor 看到「待我處理」（action=ENTER_WORK）", async () => {
-    const task = await evaluateCurrentActorTask(issue1.id, iadMemberA.id);
-    return task?.action === "ENTER_WORK";
+    const [task, memberTasks, leadTasks, preview, audit] = await Promise.all([
+      evaluateCurrentActorTask(issue1.id, iadMemberA.id),
+      listActionableTasksForActor(iadMemberA.id),
+      listActionableTasksForActor(iadLead.id),
+      listAssignableMembers(issue1.id, iadLead.id),
+      prisma.auditLog.findFirst({
+        where: { entityType: "Issue", entityId: issue1.id, actionType: "IssueExecutorAssigned" },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+    return (
+      task?.action === "ENTER_WORK" &&
+      memberTasks.some((item) => item.issueId === issue1.id) &&
+      !leadTasks.some((item) => item.issueId === issue1.id) &&
+      preview.currentExecutorUserId === iadMemberA.id &&
+      preview.currentExecutorAssignedAt !== null &&
+      audit?.actorUserId === iadLead.id &&
+      audit.toValue === iadMemberA.id
+    );
   });
 
   await checkAsync("[16] 非 executor（IAD Lead 本人）唯讀，寫入被拒絕", async () => {
@@ -374,6 +392,7 @@ async function main() {
       history.exitedAt?.getTime() === history.executedAt.getTime() &&
       audit?.fromValue === iadMemberA.id &&
       audit.toValue === iadMemberB.id &&
+      audit.actorUserId === iadLead.id &&
       audit.summary.includes(iadMemberA.name) &&
       audit.summary.includes(iadMemberB.name)
     );
@@ -646,18 +665,19 @@ async function main() {
     ),
   );
 
-  await checkAsync("[29] 重新指派表單已移出正文，右上角操作區使用 Dialog 並處理同人提示", () => {
-    const shell = fs.readFileSync("src/components/hotfix-nine-stage/HotfixStageShell.tsx", "utf8");
+  await checkAsync("[29] 重新指派位於目前執行資訊右上角，使用 Dialog 並處理同人提示", () => {
+    const summary = fs.readFileSync("src/components/hotfix-nine-stage/ExecutorAssignmentSummary.tsx", "utf8");
     const dialog = fs.readFileSync("src/components/hotfix-nine-stage/ReassignExecutorDialog.tsx", "utf8");
     const pages = ["rd", "qa", "op"].map((domain) => fs.readFileSync(`src/app/issues/[id]/hotfix/${domain}/page.tsx`, "utf8"));
     const executionPageHasInlinePanel = pages.some((source) => /<AssignExecutorPanel issueId=\{params\.id\} preview=\{reassignPreview\}/.test(source));
     return Promise.resolve(
       !executionPageHasInlinePanel &&
-        shell.includes("headerActions") &&
+        summary.includes("items-start justify-between") &&
+        summary.includes("<ReassignExecutorDialog issueId={issueId} preview={preview} />") &&
         dialog.includes('role="dialog"') &&
         dialog.includes("已是目前執行人") &&
         dialog.includes("disabled={!canSubmit}") &&
-        pages.every((source) => source.includes("<ExecutorAssignmentSummary preview={reassignPreview} />")),
+        pages.every((source) => source.includes("<ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />")),
     );
   });
 

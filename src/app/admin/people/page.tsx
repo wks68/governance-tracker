@@ -1,5 +1,5 @@
 import { requireCurrentUser } from "@/lib/auth";
-import { listPeopleForActor, hasPeopleCapability } from "@/lib/peopleService";
+import { listPeopleForActor, hasPeopleCapability, resolveMemberManagementScope } from "@/lib/peopleService";
 import { prisma } from "@/lib/prisma";
 import PeopleFilters from "@/components/people/PeopleFilters";
 import PeopleTable, { type PersonRow } from "@/components/people/PeopleTable";
@@ -23,11 +23,12 @@ export default async function PeoplePage({
   const people = await listPeopleForActor(actor.id);
   const ids = people.map((p) => p.id);
 
-  const [activeRoleRows, membershipRows, teamRows, canCreate] = await Promise.all([
+  const [activeRoleRows, membershipRows, teamRows, canCreate, managementScope] = await Promise.all([
     ids.length > 0 ? prisma.userRole.findMany({ where: { userId: { in: ids }, isActive: true } }) : Promise.resolve([]),
     ids.length > 0 ? prisma.teamMember.findMany({ where: { userId: { in: ids }, isActive: true } }) : Promise.resolve([]),
     prisma.team.findMany({ orderBy: { name: "asc" } }),
     hasPeopleCapability(actor.id, "user.create"),
+    resolveMemberManagementScope(actor.id),
   ]);
 
   const teamNameById = new Map(teamRows.map((t) => [t.id, t.name] as const));
@@ -48,7 +49,6 @@ export default async function PeoplePage({
     id: p.id,
     name: p.name,
     email: p.email,
-    department: p.department,
     primaryRole: p.role,
     activeRoles: activeRolesByUser.get(p.id) ?? [],
     isActive: p.isActive,
@@ -65,6 +65,11 @@ export default async function PeoplePage({
     const teamName = teamNameById.get(searchParams.team);
     rows = rows.filter((r) => (teamName ? r.teamNames.includes(teamName) : false));
   }
+  const visibleTeamIds = new Set(membershipRows.map((membership) => membership.teamId));
+  const filterTeams = teamRows.filter((team) => visibleTeamIds.has(team.id));
+  const creatableTeams = teamRows.filter(
+    (team) => team.isActive && (managementScope.canManageAllTeams || managementScope.ledTeamIds.includes(team.id)),
+  );
 
   return (
     <div className="space-y-4">
@@ -75,10 +80,10 @@ export default async function PeoplePage({
             共 {rows.length} 筆（可見範圍 {people.length} 筆）。所有角色與帳號狀態異動皆會寫入 Audit Log。
           </p>
         </div>
-        {canCreate && <CreatePersonDrawer />}
+        {canCreate && creatableTeams.length > 0 && <CreatePersonDrawer teamOptions={creatableTeams.map((team) => ({ id: team.id, name: team.name }))} />}
       </div>
 
-      <PeopleFilters teamOptions={teamRows.map((t) => ({ id: t.id, name: t.name }))} />
+      <PeopleFilters teamOptions={filterTeams.map((team) => ({ id: team.id, name: team.name }))} />
 
       <PeopleTable people={rows} />
     </div>

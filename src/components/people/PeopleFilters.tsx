@@ -52,7 +52,7 @@ export default function PeopleFilters({ teamOptions }: { teamOptions: TeamFilter
 
       {teamOptions.length > 0 && (
         <select className={sel} defaultValue={searchParams.get("team") ?? ""} onChange={(e) => update("team", e.target.value)}>
-          <option value="">團隊：全部</option>
+          <option value="">部門：全部</option>
           {teamOptions.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}

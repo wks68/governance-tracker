@@ -34,7 +34,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
 
   if (!preview.assignable || preview.isReassignment || !preview.actorIsLead || !preview.domain) return null;
 
-  const actionLabel = `指派 ${preview.domain} 成員`;
+  const dialogTitle = `指派 ${preview.domain} 成員`;
 
   function closeDialog() {
     if (isPending) return;
@@ -72,7 +72,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
         }}
         className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
       >
-        {actionLabel}
+        指派成員
       </button>
 
       {open && (
@@ -85,7 +85,7 @@ export default function AssignExecutorPanel({ issueId, preview }: AssignExecutor
             onClick={(event) => event.stopPropagation()}
           >
             <h2 id="assign-executor-title" className="text-base font-semibold text-gray-900">
-              {actionLabel}
+              {dialogTitle}
             </h2>
             <p className="mt-1 text-xs text-gray-500">承接團隊：{preview.teamName}</p>
 

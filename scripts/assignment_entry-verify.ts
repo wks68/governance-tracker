@@ -116,17 +116,23 @@ async function main() {
   check("Wallace 候選人恰為 Min／Howard", JSON.stringify(opNames) === JSON.stringify(expectedOpNames), opNames.join("、"));
 
   const dialogSource = fs.readFileSync("src/components/hotfix-nine-stage/AssignExecutorPanel.tsx", "utf8");
+  const summarySource = fs.readFileSync("src/components/hotfix-nine-stage/ExecutorAssignmentSummary.tsx", "utf8");
   const pageSources = ["rd", "qa", "op"].map((domain) =>
     fs.readFileSync(`src/app/issues/[id]/hotfix/${domain}/page.tsx`, "utf8"),
   );
   check(
-    "RD／QA／OP 共用右上角指派 Dialog，正文只保留指派摘要",
+    "RD／QA／OP 共用指派 Dialog，操作位於目前執行資訊卡片右上角",
     dialogSource.includes('role="dialog"') &&
       dialogSource.includes("`指派 ${preview.domain} 成員`") &&
+      dialogSource.includes("指派成員") &&
+      summarySource.includes("目前執行資訊") &&
+      summarySource.includes("<AssignExecutorPanel issueId={issueId} preview={preview} />") &&
+      summarySource.includes("<ReassignExecutorDialog issueId={issueId} preview={preview} />") &&
       pageSources.every(
         (source) =>
-          source.includes("headerActions={<AssignExecutorPanel issueId={params.id} preview={preview} />}") &&
-          source.includes("<ExecutorAssignmentSummary preview={preview} />"),
+          !source.includes("headerActions={<AssignExecutorPanel") &&
+          !source.includes("headerActions={<ReassignExecutorDialog") &&
+          source.includes("<ExecutorAssignmentSummary issueId={params.id}"),
       ),
   );
 

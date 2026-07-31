@@ -71,7 +71,6 @@ export default async function PersonDetailPage({ params }: { params: { userId: s
         person={{
           name: person.name,
           email: person.email,
-          department: person.department,
           loginIdentifier: person.loginIdentifier,
           role: person.role,
           isActive: person.isActive,
@@ -86,7 +85,7 @@ export default async function PersonDetailPage({ params }: { params: { userId: s
           <PersonProfileForm
             userId={person.id}
             initialName={person.name}
-            initialDepartment={person.department}
+            departmentNames={teamBadges.map((team) => team.teamName)}
             initialLoginIdentifier={person.loginIdentifier}
           />
         )}

@@ -154,7 +154,7 @@ export async function createTeamMemberAction(formData: FormData): Promise<Action
       name: String(formData.get("name") || ""),
       email: String(formData.get("email") || ""),
       loginIdentifier: loginIdentifier || null,
-      department: String(formData.get("department") || ""),
+      department: "",
       role: parseRole(formData),
       supervisorUserId: supervisorUserId || null,
       isActive: String(formData.get("isActive") || "true") === "true",
@@ -176,7 +176,6 @@ export async function updateTeamMemberProfileAction(formData: FormData): Promise
     await updatePersonProfile({
       userId: String(formData.get("userId") || ""),
       name: String(formData.get("name") || ""),
-      department: String(formData.get("department") || ""),
       loginIdentifier: loginIdentifier || null,
       actorId: actor.id,
       reasonCode: String(formData.get("reasonCode") || ""),
