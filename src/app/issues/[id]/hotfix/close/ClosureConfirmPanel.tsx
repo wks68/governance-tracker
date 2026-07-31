@@ -9,6 +9,7 @@ const MAX_REASON_LENGTH = 500;
 
 function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void; onConfirm: (reason: string) => void; isPending: boolean }) {
   const [reason, setReason] = useState("");
+  const [validationError, setValidationError] = useState<string | null>(null);
   const blank = reason.trim().length === 0;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
@@ -17,7 +18,10 @@ function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void;
         <p className="mt-1 text-xs text-gray-500">請說明退回原因，將完整記錄於工單歷程。</p>
         <textarea
           value={reason}
-          onChange={(e) => setReason(e.target.value.slice(0, MAX_REASON_LENGTH))}
+          onChange={(e) => {
+            setReason(e.target.value.slice(0, MAX_REASON_LENGTH));
+            setValidationError(null);
+          }}
           rows={4}
           maxLength={MAX_REASON_LENGTH}
           disabled={isPending}
@@ -27,14 +31,21 @@ function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void;
         <p className="mt-1 text-right text-xs text-gray-400">
           {reason.length}/{MAX_REASON_LENGTH}
         </p>
+        {validationError && <p className="mt-1 text-sm text-danger-text">{validationError}</p>}
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" disabled={isPending} onClick={onCancel} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
             取消
           </button>
           <button
             type="button"
-            disabled={isPending || blank}
-            onClick={() => onConfirm(reason.trim())}
+            disabled={isPending}
+            onClick={() => {
+              if (blank) {
+                setValidationError("請填寫退回原因。");
+                return;
+              }
+              onConfirm(reason.trim());
+            }}
             className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
             {isPending ? "處理中…" : "確認退回"}

@@ -574,8 +574,10 @@ async function main() {
     await executeIssueTransition({ issueId: issue1.id, transitionId: t.id, actorId: opTeam1MemberA.id, reasonCode: "VERIFY" });
   }
   {
+    const approval = await findActiveApproval(issue1.id, "DEPLOYMENT_APPROVAL", "opCompleted");
+    await decideApprovalRecord({ approvalRecordId: approval.id, actorUserId: opTeam1Lead.id, decision: "APPROVED" });
     const t = await findTransition(hotfix.version.id, hotfix.stageIds.opCompleted, "reporterConfirmOpen");
-    await executeIssueTransition({ issueId: issue1.id, transitionId: t.id, actorId: opTeam1MemberA.id, reasonCode: "VERIFY" });
+    await executeIssueTransition({ issueId: issue1.id, transitionId: t.id, actorId: opTeam1Lead.id, reasonCode: "VERIFY" });
   }
 
   await checkAsync("[24] OP 主管核准並完成部署後進待申請人結案", async () => {

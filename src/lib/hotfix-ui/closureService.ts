@@ -42,15 +42,6 @@ export async function saveClosureSummary(input: { issueId: string; actorId: stri
       });
     }
   });
-  // reporterClose 的既有 REQUIRE_COMMENT（targetKey=ANY）需求：結案摘要本身即是最自然的
-  // 留言內容，若尚無任何留言則自動補一筆，避免使用者被要求「多打一次一樣的話」。
-  const commentCount = await prisma.comment.count({ where: { issueId: input.issueId } });
-  if (commentCount === 0 && input.summary.trim()) {
-    const actor = await prisma.user.findUnique({ where: { id: input.actorId } });
-    await prisma.comment.create({
-      data: { issueId: input.issueId, authorRole: actor?.role ?? "", authorName: actor?.name ?? "", body: input.summary.trim() },
-    });
-  }
   await writeAuditLog({
     entityType: "Issue",
     entityId: input.issueId,

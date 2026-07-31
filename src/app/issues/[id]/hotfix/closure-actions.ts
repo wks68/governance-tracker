@@ -10,6 +10,17 @@ import { requireClosureOwnership } from "@/lib/hotfix-ui/closureService";
 import { getIssueWorkflowRuntime, getAvailableIssueTransitions, executeIssueTransition, completeIssueWorkflow, returnIssueToStage } from "@/lib/workflowExecutionService";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
+function closureActionError(err: unknown, fallback: string): ActionResult {
+  const result = toActionResult(err, fallback);
+  if (
+    !result.ok &&
+    /Transition|stageKey|Prisma|尚無任何留言|comment required|WorkflowExecution|資料表|stack/i.test(result.message)
+  ) {
+    return { ok: false, code: "CLOSURE_ACTION_FAILED", message: fallback };
+  }
+  return result;
+}
+
 // pendingReporterConfirmation 階段尚未「認領」，reporterClaim（FORWARD，不需原因）本身不是
 // 使用者要操作的動作語意，只是既有 Workflow 定義裡結案前必經的一個技術性關卡，這裡在
 // 「確認結案」／「退回處理」送出時於伺服端自動先執行，使用者只看得到一個按鈕。
@@ -41,7 +52,7 @@ export async function confirmHotfixClosureAction(formData: FormData): Promise<Ac
     revalidatePath(`/issues/${issueId}`, "layout");
     return actionOk("已確認結案");
   } catch (err) {
-    return toActionResult(err);
+    return closureActionError(err, "目前無法確認結案，請重新整理後再試。");
   }
 }
 
@@ -50,7 +61,7 @@ export async function rejectHotfixClosureAction(formData: FormData): Promise<Act
   const issueId = String(formData.get("issueId") ?? "");
   const reason = String(formData.get("reason") ?? "").trim();
   if (!reason) {
-    return toActionResult(new Error("退回處理必須填寫原因"));
+    return { ok: false, code: "RETURN_REASON_REQUIRED", message: "請填寫退回原因。" };
   }
   if (reason.length > 500) {
     return toActionResult(new Error("原因說明不得超過 500 字"));
@@ -70,6 +81,6 @@ export async function rejectHotfixClosureAction(formData: FormData): Promise<Act
     revalidatePath(`/issues/${issueId}`, "layout");
     return actionOk("已退回處理");
   } catch (err) {
-    return toActionResult(err);
+    return closureActionError(err, "目前無法退回處理，請重新整理後再試。");
   }
 }

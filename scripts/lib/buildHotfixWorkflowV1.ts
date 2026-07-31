@@ -136,7 +136,6 @@ const CANCEL_EDGES: Array<{ from: keyof HotfixWorkflowV1StageKeys; actionKey: st
 const REQUIREMENT_SPECS: Array<{ stage: keyof HotfixWorkflowV1StageKeys; requirementType: string; targetKey: string }> = [
   { stage: "rdInProgress", requirementType: "REQUIRE_FIELD", targetKey: "rdFixVersion" },
   { stage: "qaInProgress", requirementType: "REQUIRE_FIELD", targetKey: "qaTestResult" },
-  { stage: "reporterConfirming", requirementType: "REQUIRE_COMMENT", targetKey: "ANY" },
 ];
 
 export async function buildHotfixWorkflowV1(input: BuildHotfixWorkflowV1Input) {

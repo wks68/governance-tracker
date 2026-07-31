@@ -69,9 +69,17 @@ export async function evaluateWorkflowStageRequirements(client: Client, issueId:
         ? `已有${isAny ? "" : `「${req.targetKey}」類型的`}佐證資料`
         : `尚缺${isAny ? "" : `「${req.targetKey}」類型的`}佐證資料`;
     } else if (req.requirementType === "REQUIRE_COMMENT") {
-      const count = await client.comment.count({ where: { issueId } });
-      satisfied = count > 0;
-      message = satisfied ? "已有留言" : "尚無任何留言";
+      // 原申請人「確認結案」是明確的按鈕決策，History 與 AuditLog 已保存操作者、
+      // 時間與動作，不得再要求額外留言。已發布的舊 Hotfix workflow 仍可能保留
+      // reporterConfirming 的 legacy REQUIRE_COMMENT，因此執行期需明確忽略。
+      if (stage.stageKey === "reporterConfirming") {
+        satisfied = true;
+        message = "確認結案不需要留言";
+      } else {
+        const count = await client.comment.count({ where: { issueId } });
+        satisfied = count > 0;
+        message = satisfied ? "已有留言" : "尚無任何留言";
+      }
     } else {
       // deny-by-default：不在白名單內的 requirementType 視為永遠不滿足（發布前驗證應已擋下，
       // 這裡是執行期防禦性重查）。

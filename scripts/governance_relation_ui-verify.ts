@@ -450,11 +450,17 @@ async function main(): Promise<void> {
     project.id,
   ]);
   const listPageSource = fs.readFileSync("src/app/issues/page.tsx", "utf8");
+  const navSource = fs.readFileSync("src/components/Nav.tsx", "utf8");
   check(
     "[15] 四類清單維持獨立且精簡摘要件數正確",
-    ["Hotfix", "季度專案", "事件通報", "RCA"].every((label) =>
-      listPageSource.includes(`label: "${label}"`),
-    ) &&
+    listPageSource.includes("Hotfix") &&
+      listPageSource.includes("季度專案") &&
+      !listPageSource.includes('label: "事件通報"') &&
+      !listPageSource.includes('label: "RCA"') &&
+      fs.existsSync("src/app/incidents/page.tsx") &&
+      fs.existsSync("src/app/rca/page.tsx") &&
+      navSource.includes('href: "/incidents"') &&
+      navSource.includes('href: "/rca"') &&
       summaries.get(created.id)?.incidentCount === 1 &&
       summaries.get(created.id)?.rcaCount === 1 &&
       summaries.get(created.id)?.projectIssueKey === project.issueKey &&

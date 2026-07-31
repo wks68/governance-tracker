@@ -44,6 +44,14 @@ export {
 } from "./claimService";
 export { getClaimDomainForStageKey, getExecutorDomainForStageKey } from "./hotfixDomainMap";
 export { evaluateCurrentActorTask, type ActorTaskSummary, type IssueActionKind } from "./responsibilityService";
+export {
+  listActionableTasksForActor,
+  resolveActionableTasksForActor,
+  resolveIssueTasksForActor,
+  type ActionableIssueTask,
+  type ActionableIssueSource,
+  type ResolvedIssueTask,
+} from "./actionabilityService";
 export { getIssueWorkflowHistory } from "./historyService";
 export { getIssueWorkflowRuntime, recordStageRequirementResult, type IssueWorkflowRuntime } from "./queries";
 export { evaluateWorkflowStageRequirements, submitStageFieldValue, submitStageRiskCheckAnswer } from "./requirementService";

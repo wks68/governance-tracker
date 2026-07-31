@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
-import { getUserHasCapability } from "@/lib/permissions";
 import { roleLabel } from "@/lib/constants";
+import { listActionableTasksForActor } from "@/lib/workflowExecutionService";
 import LogoutButton from "./LogoutButton";
+import ActionableNotificationBell from "./ActionableNotificationBell";
 
 const NAV_ITEMS = [
   // 治理儀表板收斂：/governance 為唯一正式治理儀表板入口，舊 /dashboard 已改為
@@ -10,6 +11,8 @@ const NAV_ITEMS = [
   { href: "/governance", label: "治理儀表板" },
   { href: "/issues", label: "工單清單" },
   { href: "/issues/new", label: "建立工單" },
+  { href: "/incidents", label: "事件通報" },
+  { href: "/rca", label: "RCA" },
   { href: "/settings/approval-governance", label: "核准治理設定" },
   // M1.5-C1-C 新增：人員／Team 清單。可見範圍一律由 listPeopleForActor／
   // listTeamsForActor 於服務層依 actorId 現場解析（Admin／資安推動小組看全部，
@@ -36,20 +39,26 @@ export default async function Nav() {
     );
   }
 
-  // C1-B2：管理入口改用 admin.full Capability（與 requireAdmin 同一授權來源），
-  // 不再用 user.role === "Admin" 判斷；primary role 顯示（下方 roleLabel）仍讀 User.role。
-  const isAdmin = await getUserHasCapability(user, "admin.full");
-  const navItems = isAdmin ? [...NAV_ITEMS, { href: "/admin", label: "管理中心" }] : NAV_ITEMS;
+  const actionableTasks = await listActionableTasksForActor(user.id);
+  const notificationTasks = actionableTasks.map((task) => ({
+    issueId: task.issueId,
+    issueKey: task.issueKey,
+    title: task.title,
+    actionLabel: task.actionLabel,
+    actionHref: task.actionHref,
+    currentStageLabel: task.currentStageLabel,
+    enteredAt: task.enteredAt?.toISOString() ?? null,
+  }));
 
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
-        <div className="flex items-center gap-6">
+        <div className="flex min-w-0 items-center gap-5">
           <Link href="/governance" className="text-base font-bold text-gray-900">
             DMS Governance Tracker
           </Link>
-          <nav className="hidden gap-4 md:flex">
-            {navItems.map((item) => (
+          <nav className="hidden gap-3 xl:flex">
+            {NAV_ITEMS.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
@@ -61,6 +70,7 @@ export default async function Nav() {
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm">
+          <ActionableNotificationBell tasks={notificationTasks} />
           <span className="hidden text-gray-700 sm:inline">
             {user.name}
             <span className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600">
@@ -70,8 +80,8 @@ export default async function Nav() {
           <LogoutButton />
         </div>
       </div>
-      <nav className="flex gap-4 overflow-x-auto border-t border-gray-100 px-4 py-2 md:hidden">
-        {navItems.map((item) => (
+      <nav className="flex gap-4 overflow-x-auto border-t border-gray-100 px-4 py-2 xl:hidden">
+        {NAV_ITEMS.map((item) => (
           <Link key={item.href} href={item.href} className="whitespace-nowrap text-sm font-medium text-gray-600">
             {item.label}
           </Link>

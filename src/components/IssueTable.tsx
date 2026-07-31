@@ -1,19 +1,9 @@
 import Link from "next/link";
-import StatusBadge from "./StatusBadge";
 import { issueTypeShortLabel } from "@/lib/constants";
 import { formatDate } from "@/lib/datetime";
 import { resolveHotfixPriority } from "@/lib/hotfix-ui/priority";
 import { hotfixTitleForDisplay } from "@/lib/hotfix-ui/title";
 import type { GovernanceRelationListSummary } from "@/lib/issue-relations/viewService";
-
-// RD/QA/OP 接單流程新增：操作按鈕文案集中對照，避免各處各自硬編碼中文字串。
-const ACTION_BUTTON_LABEL: Record<string, string> = {
-  CLAIM: "接單",
-  ASSIGN_MEMBER: "指派成員",
-  ENTER_WORK: "進入處理",
-  APPROVE: "審核",
-  CONFIRM_CLOSE: "確認結案",
-};
 
 export interface IssueRow {
   id: string;
@@ -21,43 +11,19 @@ export interface IssueRow {
   issueType: string;
   changeSubType?: string | null;
   systemName: string;
-  environment: string;
   title: string;
   workflowStatus: string;
   statusLight: string;
-  blockReason: string;
   waitingRole: string;
-  ownerName: string;
   reporterName: string;
   priority: string;
   hotfixPriority?: string | null;
   dueDate: string | null;
-  needRca: boolean;
-  needRiskException: boolean;
-  evidenceStatus: string;
-  nextStep: string;
-  alertLevel: string;
-  firstResponseAt: string | null;
-  // RD/QA/OP 接單流程新增（皆為 optional，僅新流程 Hotfix 工單會有值，其餘工單類型／舊流程
-  // 一律 undefined，畫面顯示「—」，不影響既有欄位與既有工單類型的顯示行為）。
   assignedTeamName?: string;
   executorName?: string;
-  stageEnteredAt?: string | null;
   actionKind?: string;
   actionHref?: string;
   relationSummary?: GovernanceRelationListSummary;
-}
-
-function overdueDays(dueDate: string | null): number {
-  if (!dueDate) return 0;
-  const diff = Date.now() - new Date(dueDate).getTime();
-  return diff > 0 ? Math.floor(diff / (1000 * 60 * 60 * 24)) : 0;
-}
-
-function dwellDays(stageEnteredAt: string | null | undefined): number | null {
-  if (!stageEnteredAt) return null;
-  const diff = Date.now() - new Date(stageEnteredAt).getTime();
-  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
 }
 
 function HotfixUrgencyBadge({ value, legacyPriority }: { value?: string | null; legacyPriority: string }) {
@@ -75,58 +41,36 @@ function HotfixUrgencyBadge({ value, legacyPriority }: { value?: string | null; 
 }
 
 function ActionCell({ issue }: { issue: IssueRow }) {
-  return issue.actionHref && issue.actionKind ? (
-    <Link href={issue.actionHref} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-hover">
-      {ACTION_BUTTON_LABEL[issue.actionKind] ?? issue.actionKind}
-    </Link>
-  ) : (
-    <span className="text-xs text-gray-300">—</span>
-  );
-}
-
-function RelationSummaryCell({ issue }: { issue: IssueRow }) {
-  const summary = issue.relationSummary;
-  if (!summary) return <span className="text-xs text-gray-300">—</span>;
-
-  const labels: string[] = [];
-  if (issue.issueType === "Hotfix") {
-    if (summary.incidentCount > 0) labels.push(`事件 ${summary.incidentCount}`);
-    if (summary.rcaCount > 0) labels.push(`RCA ${summary.rcaCount}`);
-    if (summary.projectIssueKey) labels.push(summary.projectIssueKey);
-  } else if (issue.issueType === "Incident") {
-    if (summary.rcaCount > 0) labels.push(`RCA ${summary.rcaCount}`);
-    if (summary.hotfixCount > 0) labels.push(`Hotfix ${summary.hotfixCount}`);
-  } else if (issue.issueType === "RCA") {
-    if (summary.incidentCount > 0) labels.push(`事件 ${summary.incidentCount}`);
-    if (summary.hotfixCount > 0) labels.push(`Hotfix ${summary.hotfixCount}`);
-  } else if (
-    issue.issueType === "ChangeRelease" &&
-    issue.changeSubType === "QUARTERLY_RELEASE" &&
-    summary.hotfixCount > 0
-  ) {
-    labels.push(`Hotfix ${summary.hotfixCount}`);
-  }
-
-  return labels.length > 0 ? (
-    <div className="flex max-w-[180px] flex-wrap gap-1">
-      {labels.map((label) => (
-        <span
-          key={label}
-          className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
-        >
-          {label}
-        </span>
-      ))}
+  return (
+    <div className="flex items-center gap-2">
+      <Link href={`/issues/${issue.id}`} className="text-xs font-medium text-primary hover:underline">
+        查看
+      </Link>
+      {issue.actionHref && issue.actionKind && (
+        <Link href={issue.actionHref} className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white hover:bg-primary-hover">
+          前往處理
+        </Link>
+      )}
     </div>
-  ) : (
-    <span className="text-xs text-gray-400">尚未關聯</span>
   );
 }
 
-export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[]; mode?: "all" | "hotfix" }) {
+function QuarterlyRelations({ summary }: { summary?: GovernanceRelationListSummary }) {
+  if (!summary || summary.hotfixCount === 0) {
+    return <span className="text-xs text-gray-400">尚未關聯</span>;
+  }
+  return (
+    <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-600">
+      Hotfix {summary.hotfixCount}
+    </span>
+  );
+}
+
+export default function IssueTable({ issues, mode }: { issues: IssueRow[]; mode: "hotfix" | "quarterly" }) {
   if (issues.length === 0) {
     return <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">目前沒有符合條件的工單。</div>;
   }
+
   if (mode === "hotfix") {
     return (
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
@@ -144,7 +88,6 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
               <th className="px-3 py-2">承接團隊</th>
               <th className="px-3 py-2">執行人</th>
               <th className="px-3 py-2">等待角色</th>
-              <th className="px-3 py-2">關聯</th>
               <th className="px-3 py-2">操作</th>
             </tr>
           </thead>
@@ -164,7 +107,6 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.assignedTeamName ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.executorName ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.waitingRole || "—"}</td>
-                  <td className="px-3 py-2"><RelationSummaryCell issue={issue} /></td>
                   <td className="whitespace-nowrap px-3 py-2"><ActionCell issue={issue} /></td>
                 </tr>
               );
@@ -174,73 +116,37 @@ export default function IssueTable({ issues, mode = "all" }: { issues: IssueRow[
       </div>
     );
   }
+
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
       <table className="min-w-full divide-y divide-gray-200 text-sm">
         <thead className="bg-gray-50">
           <tr className="text-left text-xs font-medium text-gray-500">
-            <th className="px-3 py-2">狀態燈號</th>
             <th className="px-3 py-2">工單編號</th>
             <th className="px-3 py-2">工單類型</th>
             <th className="px-3 py-2">系統名稱</th>
-            <th className="px-3 py-2">環境</th>
             <th className="px-3 py-2">標題</th>
-            <th className="px-3 py-2">目前階段</th>
-            <th className="px-3 py-2">承接團隊</th>
-            <th className="px-3 py-2">執行人</th>
-            <th className="px-3 py-2">卡關原因</th>
-            <th className="px-3 py-2">等待角色</th>
-            <th className="px-3 py-2">負責人</th>
+            <th className="px-3 py-2">申請人</th>
             <th className="px-3 py-2">到期日</th>
-            <th className="px-3 py-2">逾期天數</th>
-            <th className="px-3 py-2">停留天數</th>
-            <th className="px-3 py-2">需 RCA</th>
-            <th className="px-3 py-2">需風險例外</th>
-            <th className="px-3 py-2">佐證狀態</th>
-            <th className="px-3 py-2">下一步建議</th>
+            <th className="px-3 py-2">目前階段</th>
             <th className="px-3 py-2">關聯</th>
             <th className="px-3 py-2">操作</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {issues.map((it) => {
-            const od = overdueDays(it.dueDate);
-            const dwell = dwellDays(it.stageEnteredAt);
-            const pulse = it.statusLight === "Red" && it.alertLevel === "Critical" && !it.firstResponseAt;
-            return (
-              <tr key={it.id} className="hover:bg-gray-50">
-                <td className="whitespace-nowrap px-3 py-2">
-                  <StatusBadge light={it.statusLight} pulse={pulse} size="sm" />
-                </td>
-                <td className="whitespace-nowrap px-3 py-2">
-                  <Link href={`/issues/${it.id}`} className="font-medium text-primary hover:underline">
-                    {it.issueKey}
-                  </Link>
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issueTypeShortLabel(it.issueType)}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.systemName || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.environment || "—"}</td>
-                <td className="max-w-[220px] truncate px-3 py-2 text-gray-800">{it.title}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.workflowStatus}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.assignedTeamName ?? "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.executorName ?? "—"}</td>
-                <td className="max-w-[180px] truncate px-3 py-2 text-warning-text">{it.blockReason || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.waitingRole || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.ownerName || "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDate(it.dueDate)}</td>
-                <td className={`whitespace-nowrap px-3 py-2 ${od > 0 ? "font-semibold text-gov-red" : "text-gray-400"}`}>{od > 0 ? `${od} 天` : "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-500">{dwell !== null ? `${dwell} 天` : "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.needRca ? "是" : "否"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.needRiskException ? "是" : "否"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-gray-600">{it.evidenceStatus}</td>
-                <td className="max-w-[220px] truncate px-3 py-2 text-gray-600">{it.nextStep || "—"}</td>
-                <td className="px-3 py-2"><RelationSummaryCell issue={it} /></td>
-                <td className="whitespace-nowrap px-3 py-2">
-                  <ActionCell issue={it} />
-                </td>
-              </tr>
-            );
-          })}
+          {issues.map((issue) => (
+            <tr key={issue.id} className="hover:bg-gray-50">
+              <td className="whitespace-nowrap px-3 py-2"><Link href={`/issues/${issue.id}`} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">季度專案</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.systemName || "—"}</td>
+              <td className="max-w-[300px] truncate px-3 py-2 text-gray-800" title={issue.title}>{issue.title}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.reporterName || "—"}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDate(issue.dueDate)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowStatus}</td>
+              <td className="px-3 py-2"><QuarterlyRelations summary={issue.relationSummary} /></td>
+              <td className="whitespace-nowrap px-3 py-2"><ActionCell issue={issue} /></td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

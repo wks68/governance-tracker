@@ -2,6 +2,7 @@
 // 企業風格：白／淺灰背景、白卡片、細灰框、微圓角，無大面積彩色警示卡、無 AI 輔助區塊。
 
 import NineStageProgressBar from "./NineStageProgressBar";
+import Link from "next/link";
 import { hotfixStageSubtitle } from "@/lib/hotfix-ui/nineStage";
 import TicketBasicInfo, { type TicketBasicInfoData } from "./TicketBasicInfo";
 import HotfixHeaderActions from "./HotfixHeaderActions";
@@ -36,6 +37,7 @@ export default async function HotfixStageShell({
   // 副標題一律以「目前 Workflow 關卡」為準（見 nineStage.hotfixStageSubtitle）；
   // 頁面傳入的 subtitle 只在該關卡沒有對應說明時作為 fallback，不得覆蓋流程狀態。
   const resolvedSubtitle = (ctx ? hotfixStageSubtitle(ctx.runtime.currentStage.stageKey) : null) ?? subtitle;
+  const listHref = backHref.startsWith("/issues?") ? backHref : "/issues";
   const relationView = ctx
     ? await loadGovernanceRelationViewForActor(ctx.actor.id, ctx.issue.id)
     : null;
@@ -44,9 +46,9 @@ export default async function HotfixStageShell({
     <div className="mx-auto max-w-4xl space-y-6 pb-16">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <a href={backHref} className="text-xs text-gray-400 hover:text-primary hover:underline">
-            ← 回工單詳情
-          </a>
+          <Link href={listHref} className="text-xs text-gray-500 hover:text-primary hover:underline">
+            ← 工單清單
+          </Link>
           <h1 className="mt-1 text-xl font-bold text-gray-900">{title}</h1>
           {resolvedSubtitle && <p className="mt-0.5 text-sm text-gray-500">{resolvedSubtitle}</p>}
         </div>
