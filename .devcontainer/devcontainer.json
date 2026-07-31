@@ -1,0 +1,11 @@
+{
+  "forwardPorts": [
+    3100
+  ],
+  "portsAttributes": {
+    "3100": {
+      "label": "DMS Governance Test",
+      "protocol": "http"
+    }
+  }
+}
