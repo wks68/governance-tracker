@@ -3,16 +3,18 @@ import "./globals.css";
 import Nav from "@/components/Nav";
 
 export const metadata: Metadata = {
-  title: "DMS Governance Tracker",
-  description: "DMS 資安治理流程管理平台",
+  title: {
+    default: "DMS 工作管理平台",
+    template: "%s｜DMS WorkHub",
+  },
+  description: "DMS WorkHub 工作管理與治理協作平台",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-Hant">
-      <body className="min-h-screen bg-slate-50 text-gray-900">
-        <Nav />
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+      <body className="min-h-screen bg-background text-text-primary antialiased">
+        <Nav>{children}</Nav>
       </body>
     </html>
   );

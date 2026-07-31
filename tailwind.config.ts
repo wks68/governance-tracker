@@ -5,21 +5,60 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // 台達電藍：品牌主色，用於按鈕、連結、focus 等互動元件
+        // 沿用專案既有主藍，集中為暫定產品 primary；不得宣稱為正式品牌標準色。
         primary: {
-          DEFAULT: "#005BAC",
-          hover: "#004B8D",
-          50: "#e6f0f9",
+          DEFAULT: "rgb(var(--primary) / <alpha-value>)",
+          hover: "rgb(var(--primary-hover) / <alpha-value>)",
+          foreground: "rgb(var(--primary-foreground) / <alpha-value>)",
+          muted: "rgb(var(--primary-muted) / <alpha-value>)",
+          50: "rgb(var(--primary-muted) / <alpha-value>)",
           100: "#cce0f2",
           200: "#99c2e6",
           300: "#66a3d9",
           400: "#3385cc",
         },
-        // 語意色（參考 Bootstrap）：用於狀態燈號、警示區塊等
-        danger: { DEFAULT: "#DC3545", bg: "#f8d7da", border: "#f1aeb5", text: "#842029" },
-        warning: { DEFAULT: "#FFC107", bg: "#fff3cd", border: "#ffe69c", text: "#664d03" },
-        info: { DEFAULT: "#0D6EFD", bg: "#cfe2ff", border: "#9ec5fe", text: "#052c65" },
-        success: { DEFAULT: "#198754", bg: "#d1e7dd", border: "#a3cfbb", text: "#0a3622" },
+        background: "rgb(var(--background) / <alpha-value>)",
+        surface: {
+          DEFAULT: "rgb(var(--surface) / <alpha-value>)",
+          muted: "rgb(var(--surface-muted) / <alpha-value>)",
+        },
+        border: "rgb(var(--border) / <alpha-value>)",
+        input: "rgb(var(--input) / <alpha-value>)",
+        text: {
+          primary: "rgb(var(--text-primary) / <alpha-value>)",
+          secondary: "rgb(var(--text-secondary) / <alpha-value>)",
+          muted: "rgb(var(--text-muted) / <alpha-value>)",
+        },
+        disabled: "rgb(var(--disabled) / <alpha-value>)",
+        "focus-ring": "rgb(var(--focus-ring) / <alpha-value>)",
+        danger: {
+          DEFAULT: "rgb(var(--danger) / <alpha-value>)",
+          muted: "rgb(var(--danger-muted) / <alpha-value>)",
+          bg: "rgb(var(--danger-muted) / <alpha-value>)",
+          border: "#f1aeb5",
+          text: "#842029",
+        },
+        warning: {
+          DEFAULT: "rgb(var(--warning) / <alpha-value>)",
+          muted: "rgb(var(--warning-muted) / <alpha-value>)",
+          bg: "rgb(var(--warning-muted) / <alpha-value>)",
+          border: "#ffe69c",
+          text: "#664d03",
+        },
+        info: {
+          DEFAULT: "rgb(var(--info) / <alpha-value>)",
+          muted: "rgb(var(--info-muted) / <alpha-value>)",
+          bg: "rgb(var(--info-muted) / <alpha-value>)",
+          border: "#9ec5fe",
+          text: "#052c65",
+        },
+        success: {
+          DEFAULT: "rgb(var(--success) / <alpha-value>)",
+          muted: "rgb(var(--success-muted) / <alpha-value>)",
+          bg: "rgb(var(--success-muted) / <alpha-value>)",
+          border: "#a3cfbb",
+          text: "#0a3622",
+        },
         secondary: { DEFAULT: "#6C757D", bg: "#e2e3e5", border: "#c4c8cb", text: "#41464b" },
         gov: {
           red: "#DC3545",
@@ -57,6 +96,13 @@ const config: Config = {
         "pulse-red": "pulse-red 1.6s ease-in-out infinite",
         "stage-halo": "stage-halo 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite",
         "stage-core": "stage-core 2.2s ease-in-out infinite",
+      },
+      borderRadius: {
+        card: "0.75rem",
+      },
+      boxShadow: {
+        card: "var(--shadow-card)",
+        overlay: "var(--shadow-overlay)",
       },
     },
   },

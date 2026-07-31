@@ -2,9 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --primary: 0 91 172;
+  --primary-hover: 0 75 141;
+  --primary-foreground: 255 255 255;
+  --primary-muted: 230 240 249;
+  --background: 244 247 251;
+  --surface: 255 255 255;
+  --surface-muted: 248 250 252;
+  --border: 221 227 235;
+  --input: 203 213 225;
+  --text-primary: 30 41 59;
+  --text-secondary: 71 85 105;
+  --text-muted: 100 116 139;
+  --success: 25 135 84;
+  --success-muted: 226 244 234;
+  --warning: 180 112 0;
+  --warning-muted: 255 246 214;
+  --danger: 196 45 62;
+  --danger-muted: 253 232 235;
+  --info: 13 110 253;
+  --info-muted: 231 240 255;
+  --disabled: 226 232 240;
+  --focus-ring: 0 91 172;
+  --shadow-card: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --shadow-overlay: 0 18px 50px rgba(15, 23, 42, 0.18);
+}
+
 html,
 body {
-  background-color: #f8fafc;
+  min-height: 100%;
+  background-color: rgb(var(--background));
+  color: rgb(var(--text-primary));
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+::selection {
+  background: rgb(var(--primary-muted));
+  color: rgb(var(--primary-hover));
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--focus-ring));
+  outline-offset: 2px;
 }
 
 @keyframes notification-bell-wiggle {
@@ -28,6 +71,24 @@ body {
 
 .animate-notification-bell {
   animation: notification-bell-wiggle 600ms ease-in-out 1;
+}
+
+@layer components {
+  .ui-card {
+    @apply rounded-xl border border-border bg-surface shadow-card;
+  }
+
+  .ui-input {
+    @apply w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-focus-ring/20 disabled:cursor-not-allowed disabled:bg-disabled/60 disabled:text-text-muted;
+  }
+
+  .ui-button-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-focus-ring/30 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .ui-button-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-text-secondary transition hover:border-primary/40 hover:bg-primary-muted hover:text-primary focus-visible:ring-2 focus-visible:ring-focus-ring/20 disabled:cursor-not-allowed disabled:opacity-50;
+  }
 }
 
 /* 九階段進度列「目前節點」呼吸提示：尊重使用者的減少動態偏好設定。
