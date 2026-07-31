@@ -31,5 +31,13 @@ export default async function RcaPage() {
       relationLabels,
     };
   });
-  return <GovernanceRecordList title="RCA" description="根因分析與改善追蹤獨立清單" records={records} />;
+  return (
+    <GovernanceRecordList
+      title="RCA 根因分析"
+      description="針對事件分析真正原因，並追蹤後續改善措施"
+      records={records}
+      createLabel="建立 RCA"
+      createHref="/issues/new?type=rca"
+    />
+  );
 }

@@ -70,7 +70,7 @@ export default async function PeoplePage({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">人員</h1>
+          <h1 className="text-xl font-bold text-gray-900">人員管理</h1>
           <p className="mt-0.5 text-sm text-gray-500">
             共 {rows.length} 筆（可見範圍 {people.length} 筆）。所有角色與帳號狀態異動皆會寫入 Audit Log。
           </p>

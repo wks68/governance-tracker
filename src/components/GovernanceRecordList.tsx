@@ -1,5 +1,9 @@
 import Link from "next/link";
 import { formatDate } from "@/lib/datetime";
+import PageHeader from "@/components/ui/PageHeader";
+import DataTableFrame from "@/components/ui/DataTableFrame";
+import { EmptyState } from "@/components/ui/FeedbackState";
+import { FilePlus2 } from "lucide-react";
 
 export interface GovernanceRecordRow {
   id: string;
@@ -15,26 +19,31 @@ export default function GovernanceRecordList({
   title,
   description,
   records,
+  createLabel,
+  createHref,
 }: {
   title: string;
   description: string;
   records: GovernanceRecordRow[];
+  createLabel: string;
+  createHref: string;
 }) {
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">{title}</h1>
-          <p className="mt-0.5 text-sm text-gray-500">{description}・共 {records.length} 筆</p>
-        </div>
-        <Link href="/issues/new" className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover">
-          建立治理紀錄
-        </Link>
-      </div>
+      <PageHeader
+        title={title}
+        description={`${description}・共 ${records.length} 筆`}
+        actions={
+          <Link href={createHref} className="ui-button-primary">
+            <FilePlus2 className="h-4 w-4" aria-hidden />
+            {createLabel}
+          </Link>
+        }
+      />
       {records.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">目前沒有資料。</div>
+        <EmptyState title="目前沒有資料" description={`建立後的${title}會顯示在這裡。`} />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <DataTableFrame label={`${title}資料表`}>
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr className="text-left text-xs font-medium text-gray-500">
@@ -75,7 +84,7 @@ export default function GovernanceRecordList({
               ))}
             </tbody>
           </table>
-        </div>
+        </DataTableFrame>
       )}
     </div>
   );

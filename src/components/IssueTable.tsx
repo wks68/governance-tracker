@@ -4,6 +4,8 @@ import { formatDate } from "@/lib/datetime";
 import { resolveHotfixPriority } from "@/lib/hotfix-ui/priority";
 import { hotfixTitleForDisplay } from "@/lib/hotfix-ui/title";
 import type { GovernanceRelationListSummary } from "@/lib/issue-relations/viewService";
+import DataTableFrame from "@/components/ui/DataTableFrame";
+import { EmptyState } from "@/components/ui/FeedbackState";
 
 export interface IssueRow {
   id: string;
@@ -68,12 +70,12 @@ function QuarterlyRelations({ summary }: { summary?: GovernanceRelationListSumma
 
 export default function IssueTable({ issues, mode }: { issues: IssueRow[]; mode: "hotfix" | "quarterly" }) {
   if (issues.length === 0) {
-    return <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">目前沒有符合條件的工單。</div>;
+    return <EmptyState title="目前沒有符合條件的事項" description="可調整搜尋或篩選條件後再試一次。" />;
   }
 
   if (mode === "hotfix") {
     return (
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+      <DataTableFrame label="Hotfix 清單資料表">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-xs font-medium text-gray-500">
@@ -113,12 +115,12 @@ export default function IssueTable({ issues, mode }: { issues: IssueRow[]; mode:
             })}
           </tbody>
         </table>
-      </div>
+      </DataTableFrame>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+    <DataTableFrame label="季度專案清單資料表">
       <table className="min-w-full divide-y divide-gray-200 text-sm">
         <thead className="bg-gray-50">
           <tr className="text-left text-xs font-medium text-gray-500">
@@ -149,6 +151,6 @@ export default function IssueTable({ issues, mode }: { issues: IssueRow[]; mode:
           ))}
         </tbody>
       </table>
-    </div>
+    </DataTableFrame>
   );
 }

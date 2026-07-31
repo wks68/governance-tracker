@@ -10,6 +10,8 @@ import {
   loadGovernanceRelationListSummariesForActor,
   type GovernanceRelationListSummary,
 } from "@/lib/issue-relations/viewService";
+import PageHeader from "@/components/ui/PageHeader";
+import { FilePlus2 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -142,17 +144,16 @@ export default async function IssuesPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">工單清單</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            {mode === "hotfix" ? "Hotfix" : "季度專案"}共 {rows.length} 筆（總計 {selectedIssues.length} 筆）
-          </p>
-        </div>
-        <Link href="/issues/new" className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover">
-          建立工單
-        </Link>
-      </div>
+      <PageHeader
+        title={mode === "hotfix" ? "Hotfix 清單" : "季度專案清單"}
+        description={`目前顯示 ${rows.length} 筆（此類型共 ${selectedIssues.length} 筆）`}
+        actions={
+          <Link href="/issues/new" className="ui-button-primary">
+            <FilePlus2 className="h-4 w-4" aria-hidden />
+            新增事項
+          </Link>
+        }
+      />
 
       <div role="tablist" aria-label="工單類型" className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
         <Link

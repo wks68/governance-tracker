@@ -31,5 +31,13 @@ export default async function IncidentsPage() {
       relationLabels,
     };
   });
-  return <GovernanceRecordList title="事件通報" description="事件通報獨立清單" records={records} />;
+  return (
+    <GovernanceRecordList
+      title="事件通報"
+      description="記錄系統異常、服務中斷、資料錯誤或其他事件"
+      records={records}
+      createLabel="建立事件通報"
+      createHref="/issues/new?type=incident"
+    />
+  );
 }

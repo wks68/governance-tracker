@@ -14,6 +14,8 @@ import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope
 import HotfixUrgencyHelp from "@/components/hotfix-nine-stage/HotfixUrgencyHelp";
 import HotfixGovernanceRelationFields from "@/components/issue-relations/HotfixGovernanceRelationFields";
 import type { GovernanceRelationCandidates } from "@/lib/issue-relations/viewService";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -22,14 +24,18 @@ export default function NewIssueForm({
   scope,
   initialApplicants,
   relationCandidates,
+  initialIssueType,
+  initialChangeSubType,
 }: {
   scope: IssueCreationScope;
   initialApplicants?: ApplicantOption[];
   relationCandidates: GovernanceRelationCandidates;
+  initialIssueType: string;
+  initialChangeSubType: string | null;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
-  const [issueType, setIssueType] = useState<string>(ISSUE_TYPES[0].key);
+  const [issueType, setIssueType] = useState<string>(initialIssueType);
   const [teamId, setTeamId] = useState(scope.fixedTeamId ?? "");
   const [applicantId, setApplicantId] = useState(scope.fixedApplicant?.id ?? "");
   const [hotfixPriority, setHotfixPriority] = useState("");
@@ -64,13 +70,22 @@ export default function NewIssueForm({
   }
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">建立工單</h1>
-        <p className="mt-0.5 text-sm text-gray-500">請選擇工單類型與團隊，並填寫相關欄位</p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary-muted px-4 py-3">
+        <div>
+          <p className="text-xs font-medium text-text-muted">目前辦理類型</p>
+          <p className="mt-0.5 text-sm font-semibold text-primary">{creationTypeLabel(issueType)}</p>
+        </div>
+        <Link href="/issues/new" className="ui-button-secondary px-3 py-1.5">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          重新選擇
+        </Link>
       </div>
 
       <form ref={formRef} onSubmit={(e) => e.preventDefault()} className="space-y-6">
+        {issueType === "ChangeRelease" && (
+          <input type="hidden" name="changeSubType" value={initialChangeSubType ?? "QUARTERLY_RELEASE"} />
+        )}
         <ActionErrorText message={error} />
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -85,9 +100,9 @@ export default function NewIssueForm({
                 onChange={(e) => setIssueType(e.target.value)}
                 className={inputCls}
               >
-                {ISSUE_TYPES.map((t) => (
+                {ISSUE_TYPES.filter((type) => ["Hotfix", "ChangeRelease", "Incident", "RCA"].includes(type.key)).map((t) => (
                   <option key={t.key} value={t.key}>
-                    {t.label}
+                    {creationTypeLabel(t.key)}
                   </option>
                 ))}
               </select>
@@ -269,4 +284,12 @@ export default function NewIssueForm({
       </form>
     </div>
   );
+}
+
+function creationTypeLabel(issueType: string): string {
+  if (issueType === "Hotfix") return "Hotfix 緊急修正";
+  if (issueType === "ChangeRelease") return "季度專案";
+  if (issueType === "Incident") return "事件通報";
+  if (issueType === "RCA") return "RCA 根因分析";
+  return issueType;
 }

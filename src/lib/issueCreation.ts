@@ -26,7 +26,7 @@ import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./hotfix-ui/priori
 import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx, executeIssueTransitionInTx } from "./workflowExecutionService";
 import { missingDraftFields } from "./hotfix-ui/draftService";
 import { allocateNextIssueKey, isTransientTransactionConflict } from "./issue-key-sequence";
-import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./constants";
+import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isChangeSubType, isValidSystemName } from "./constants";
 import { Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
 import { normalizeHotfixTitleForStorage } from "./hotfix-ui/title";
@@ -225,6 +225,11 @@ export async function createIssueForActor(
   await requireCapability(actor, "issue.edit");
 
   const issueType = String(formData.get("issueType") || "");
+  const submittedChangeSubType = String(formData.get("changeSubType") || "");
+  const changeSubType = issueType === "ChangeRelease" ? submittedChangeSubType : null;
+  if (issueType === "ChangeRelease" && !isChangeSubType(submittedChangeSubType)) {
+    throw new IssueCreationValidationError("請從新增事項選擇有效的季度專案類型。");
+  }
   const workflow = getWorkflow(issueType);
   if (workflow.length === 0) {
     throw new IssueCreationValidationError("無效的工單類型");
@@ -346,6 +351,7 @@ export async function createIssueForActor(
         data: {
           issueKey,
           issueType,
+          changeSubType,
           title: title || `未命名${issueType}工單`,
           description,
           systemName,
