@@ -71,23 +71,15 @@
 DMS 工作管理平台
 ├─ 治理儀表板                         /governance
 ├─ 工作管理                           /work-management
-│  ├─ 專案流程與緊急修正
-│  │  ├─ 季度專案                     /issues?view=quarterly
-│  │  └─ Hotfix 緊急修正              /issues?view=hotfix
-│  ├─ 事件通報與改善
-│  │  ├─ 事件通報                     /incidents
-│  │  └─ RCA 根因分析                 /rca
-│  ├─ 申請與紀錄
-│  │  └─ OP 帳號與權限申請（預留）    不建立 route
 │  ├─ 工作列表
 │  │  ├─ Hotfix 清單                  /issues?view=hotfix
 │  │  ├─ 季度專案清單                 /issues?view=quarterly
 │  │  ├─ 事件通報清單                 /incidents
 │  │  └─ RCA 清單                     /rca
-│  └─ 我的待辦                       /issues?view=hotfix&quick=mine
+│  ├─ 我的待辦                       /issues?view=hotfix&quick=mine
+│  └─ 申請與紀錄
+│     └─ OP 帳號與權限申請（預留）    不建立 route
 ├─ 新增事項                           /issues/new
-├─ 事件通報                           /incidents
-├─ RCA 根因分析                       /rca
 └─ 系統設定
    ├─ 人員管理                        /admin/people
    ├─ 團隊管理                        /admin/teams
@@ -96,7 +88,7 @@ DMS 工作管理平台
 
 - 「工作管理」父項目可點擊 `/work-management`，獨立箭頭只控制展開；頁面主標題維持「DMS 工作管理中心」。
 - 「我的待辦」沿用 `/issues` 的既有 `quick=mine`、actionability resolver 與通知鈴鐺同一份待辦資料，不另建頁或判斷邏輯。
-- 事件通報與 RCA 仍使用現有 route、Issue model 與 IssueRelation。
+- 事件通報與 RCA 清單仍使用現有 route、Issue model 與 IssueRelation，Sidebar 不另設重複入口。
 - Sidebar 之外，Topbar 提供搜尋入口、通知鈴鐺、使用者資訊與登出。
 
 ## 4. 工作管理中心

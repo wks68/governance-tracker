@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  BellRing,
   BriefcaseBusiness,
   CalendarRange,
   ChevronDown,
@@ -12,7 +11,6 @@ import {
   FilePlus2,
   FileSearch,
   Flame,
-  FolderKanban,
   LayoutDashboard,
   ListTodo,
   Menu,
@@ -57,32 +55,9 @@ interface NavLink {
 const TOP_LINKS: NavLink[] = [
   { href: "/governance", label: "治理儀表板", icon: LayoutDashboard },
   { href: "/issues/new", label: "新增事項", icon: FilePlus2 },
-  { href: "/incidents", label: "事件通報", icon: Siren },
-  { href: "/rca", label: "RCA 根因分析", icon: FileSearch },
 ];
 
 const WORK_GROUPS = [
-  {
-    label: "專案流程與緊急修正",
-    icon: FolderKanban,
-    items: [
-      { href: "/issues?view=quarterly", label: "季度專案", icon: CalendarRange },
-      { href: "/issues?view=hotfix", label: "Hotfix 緊急修正", icon: Flame },
-    ],
-  },
-  {
-    label: "事件通報與改善",
-    icon: BellRing,
-    items: [
-      { href: "/incidents", label: "事件通報", icon: Siren },
-      { href: "/rca", label: "RCA 根因分析", icon: FileSearch },
-    ],
-  },
-  {
-    label: "申請與紀錄",
-    icon: ClipboardList,
-    items: [],
-  },
   {
     label: "工作列表",
     icon: BriefcaseBusiness,
@@ -92,6 +67,11 @@ const WORK_GROUPS = [
       { href: "/incidents", label: "事件通報清單", icon: Siren },
       { href: "/rca", label: "RCA 清單", icon: FileSearch },
     ],
+  },
+  {
+    label: "申請與紀錄",
+    icon: ClipboardList,
+    items: [],
   },
 ] as const;
 
@@ -332,7 +312,7 @@ function SidebarContent({
     };
   }, [settingsOpen, onToggleSettings]);
 
-  const [dashboard, create, incidents, rca] = TOP_LINKS;
+  const [dashboard, create] = TOP_LINKS;
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <Link href="/governance" className={clsx("flex h-20 items-center border-b border-border px-4", collapsed ? "justify-center" : "gap-3")}>
@@ -372,15 +352,12 @@ function SidebarContent({
 
             {!collapsed && workOpen && (
               <div className="ml-4 mt-1 space-y-3 border-l border-border pl-3">
-                {WORK_GROUPS.map((group) => (
-                  <WorkGroupSection
-                    key={group.label}
-                    group={group}
-                    pathname={pathname}
-                    currentView={currentView}
-                    currentQuick={currentQuick}
-                  />
-                ))}
+                <WorkGroupSection
+                  group={WORK_GROUPS[0]}
+                  pathname={pathname}
+                  currentView={currentView}
+                  currentQuick={currentQuick}
+                />
                 <NavItem
                   item={{ href: "/issues?view=hotfix&quick=mine", label: "我的待辦", icon: ListTodo }}
                   active={isHrefActive("/issues?view=hotfix&quick=mine", pathname, currentView, currentQuick)}
@@ -388,13 +365,19 @@ function SidebarContent({
                   nested
                   badge={taskCount}
                 />
+                <WorkGroupSection
+                  group={WORK_GROUPS[1]}
+                  pathname={pathname}
+                  currentView={currentView}
+                  currentQuick={currentQuick}
+                />
               </div>
             )}
           </div>
         )}
 
         <div className="mt-1 space-y-1">
-          {[create, incidents, rca].map((item) => (
+          {[create].map((item) => (
             <NavItem key={item.href} item={item} active={pathname === item.href} collapsed={collapsed} />
           ))}
         </div>

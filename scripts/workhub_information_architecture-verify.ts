@@ -39,12 +39,12 @@ async function main() {
   check("[1] Sidebar 顯示工作管理而非工作管理中心", shell.includes('item={{ href: "/work-management", label: "工作管理"') && !shell.includes('item={{ href: "/work-management", label: "工作管理中心"'));
   check("[2] /work-management 頁面主標題維持 DMS 工作管理中心", workCenter.includes('title="DMS 工作管理中心"'));
   check("[3] 工作管理父連結與展開按鈕分離", shell.includes('href: "/work-management"') && shell.includes('aria-expanded={workOpen}') && shell.includes("onToggleWork"));
-  check("[4] 顯示專案流程與緊急修正", shell.includes('label: "專案流程與緊急修正"'));
-  check("[5] 顯示事件通報與改善", shell.includes('label: "事件通報與改善"'));
-  check("[6] 顯示申請與紀錄及單一 OP 即將提供預留", shell.includes('label: "申請與紀錄"') && shell.includes("OP 帳號與權限申請") && shell.includes("即將提供") && !chooser.includes("申請表 1"));
-  check("[7] 顯示工作列表", shell.includes('label: "工作列表"'));
-  check("[8] 顯示我的待辦", shell.includes('label: "我的待辦"'));
-  check("[9] Sidebar 不顯示全部事項", !shell.includes("全部事項"));
+  check("[4] Sidebar 移除流程分類與重複事項入口", !shell.includes('label: "專案流程與緊急修正"') && !shell.includes('label: "事件通報與改善"') && !shell.includes('label: "Hotfix 緊急修正"') && !shell.includes('label: "季度專案"') && !shell.includes('label: "事件通報"') && !shell.includes('label: "RCA 根因分析"'));
+  check("[5] 顯示申請與紀錄及單一 OP 即將提供預留", shell.includes('label: "申請與紀錄"') && shell.includes("OP 帳號與權限申請") && shell.includes("即將提供") && !chooser.includes("申請表 1"));
+  check("[6] 顯示工作列表", shell.includes('label: "工作列表"'));
+  check("[7] 顯示我的待辦", shell.includes('label: "我的待辦"'));
+  check("[8] Sidebar 不顯示全部事項", !shell.includes("全部事項"));
+  check("[9] 新增事項與工作首頁仍保留正式事項類型名稱", ["季度專案", "Hotfix 緊急修正", "事件通報", "RCA 根因分析"].every((label) => chooser.includes(label) && workCenter.includes(label)) && chooser.includes("專案流程與緊急修正") && chooser.includes("事件通報與改善"));
   check("[10] 工作列表包含四個清單入口", ["Hotfix 清單", "季度專案清單", "事件通報清單", "RCA 清單"].every((label) => shell.includes(label)));
   check("[11] 四個清單沿用既有 route", shell.includes('{ href: "/issues?view=hotfix", label: "Hotfix 清單"') && shell.includes('{ href: "/issues?view=quarterly", label: "季度專案清單"') && shell.includes('{ href: "/incidents", label: "事件通報清單"') && shell.includes('{ href: "/rca", label: "RCA 清單"'));
   check("[12] 我的待辦與通知鈴鐺共用同一 resolver 結果與 Badge 數量", navServer.includes("listActionableTasksForActor(user.id)") && navServer.includes("tasks={notificationTasks}") && shell.includes("<ActionableNotificationBell tasks={tasks}") && shell.includes("taskCount={tasks.length}") && shell.includes('/issues?view=hotfix&quick=mine') && notificationBell.includes("tasks.length"));
