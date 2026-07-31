@@ -450,7 +450,7 @@ async function main(): Promise<void> {
     project.id,
   ]);
   const listPageSource = fs.readFileSync("src/app/issues/page.tsx", "utf8");
-  const navSource = fs.readFileSync("src/components/Nav.tsx", "utf8");
+  const navSource = fs.readFileSync("src/components/app-shell/AppShell.tsx", "utf8");
   check(
     "[15] 四類清單維持獨立且精簡摘要件數正確",
     listPageSource.includes("Hotfix") &&
