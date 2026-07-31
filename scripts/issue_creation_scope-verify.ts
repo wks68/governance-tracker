@@ -8,6 +8,7 @@ import { prisma } from "../src/lib/prisma";
 import { SYSTEM_NAME_OPTIONS } from "../src/lib/constants";
 import {
   resolveIssueCreationScope,
+  resolveCreationTeamAndApplicant,
   assertCreationTeamAndApplicant,
   listSelectableApplicants,
 } from "../src/lib/team-applicant/issueCreationScope";
@@ -109,6 +110,17 @@ async function main() {
     JSON.stringify(SYSTEM_NAME_OPTIONS) === JSON.stringify(["MyDMS", "Jarvis AI", "Community", "APP Center"]),
   );
 
+  const ken = await prisma.user.findFirst({ where: { name: "Ken", isActive: true } });
+  const kenScope = ken ? await resolveIssueCreationScope(ken.id) : null;
+  check(
+    "[2a] Preview 的 Ken 建立時固定為品管團隊與 Ken 本人",
+    !!ken &&
+      kenScope?.kind === "MEMBER" &&
+      kenScope.fixedApplicant?.name === "Ken" &&
+      kenScope.teams.length === 1 &&
+      kenScope.teams[0].name === "品管",
+  );
+
   const memberScope = await resolveIssueCreationScope(member.id);
   check(
     "[2] 一般成員固定自己的唯一 active 團隊與本人",
@@ -117,27 +129,32 @@ async function main() {
       memberScope.fixedApplicant?.id === member.id &&
       !memberScope.canChooseApplicant,
   );
+  const serverResolvedMember = await resolveCreationTeamAndApplicant(member.id, "", "");
+  check(
+    "[3] 一般成員未提交 hidden 欄位時，Server 仍直接解析本人與唯一 active 團隊",
+    serverResolvedMember.teamId === teamA.id && serverResolvedMember.applicant.id === member.id,
+  );
   await expectError(
-    "[3] 一般成員偽造 applicantId 代表同團隊其他成員時被拒絕",
+    "[4] 一般成員偽造 applicantId 代表同團隊其他成員時被拒絕",
     () => assertCreationTeamAndApplicant(member.id, teamA.id, otherMember.id),
     (err) => err instanceof TeamApplicantAccessDeniedError,
   );
   await expectError(
-    "[4] 一般成員偽造其他 teamId 時被拒絕",
+    "[5] 一般成員偽造其他 teamId 時被拒絕",
     () => assertCreationTeamAndApplicant(member.id, teamB.id, member.id),
     (err) => err instanceof TeamApplicantAccessDeniedError,
   );
 
   const multiScope = await resolveIssueCreationScope(multiMember.id);
   check(
-    "[5] 多個 active 團隊且無正式主要團隊時，以指定友善訊息 fail closed",
+    "[6] 多個 active 團隊且無正式主要團隊時，以指定友善訊息 fail closed",
     multiScope.blockedReason === "目前帳號同時隸屬多個團隊，尚未設定主要申請團隊，請聯絡系統管理員確認。",
     multiScope.blockedReason ?? undefined,
   );
 
   const leadScope = await resolveIssueCreationScope(lead.id);
   check(
-    "[6] 單一團隊主管固定自己的 LEAD 團隊，但可代表該團隊 active 成員",
+    "[7] 單一團隊主管固定自己的 LEAD 團隊，但可代表該團隊 active 成員",
     leadScope.kind === "TEAM_LEAD" &&
       leadScope.fixedTeamId === teamA.id &&
       leadScope.fixedApplicant === null &&
@@ -145,45 +162,45 @@ async function main() {
   );
   const leadApplicants = await listSelectableApplicants(lead.id, teamA.id);
   check(
-    "[7] 主管申請人清單只含自己主管團隊的 active 成員",
+    "[8] 主管申請人清單只含自己主管團隊的 active 成員",
     leadApplicants.some((a) => a.id === member.id) && leadApplicants.some((a) => a.id === lead.id),
   );
   await expectError(
-    "[8] 主管不得跨到非 LEAD 團隊",
+    "[9] 主管不得跨到非 LEAD 團隊",
     () => assertCreationTeamAndApplicant(lead.id, teamB.id, multiMember.id),
     (err) => err instanceof TeamApplicantAccessDeniedError,
   );
 
   const adminScope = await resolveIssueCreationScope(admin.id);
   check(
-    "[9] Admin 可選所有 active 團隊並代表所選團隊 active 成員",
+    "[10] Admin 可選所有 active 團隊並代表所選團隊 active 成員",
     adminScope.kind === "ADMIN" &&
       [teamA.id, teamB.id, teamC.id].every((id) => adminScope.teams.some((team) => team.id === id)) &&
       adminScope.canChooseApplicant,
   );
   await assertCreationTeamAndApplicant(admin.id, teamA.id, member.id);
   await expectError(
-    "[10] Admin 仍不得選擇不屬於所選團隊的 applicantId",
+    "[11] Admin 仍不得選擇不屬於所選團隊的 applicantId",
     () => assertCreationTeamAndApplicant(admin.id, teamB.id, member.id),
     (err) => err instanceof TeamApplicantValidationError,
   );
 
   const fakeAdminScope = await resolveIssueCreationScope(fakeAdmin.id);
   check(
-    "[11] User.role=Admin 不授權；active UserRole=PM 的使用者仍是一般成員",
+    "[12] User.role=Admin 不授權；active UserRole=PM 的使用者仍是一般成員",
     fakeAdminScope.kind === "MEMBER" && fakeAdminScope.fixedApplicant?.id === fakeAdmin.id,
   );
 
   const beforeIllegalDrafts = await prisma.issue.count();
   await expectError(
-    "[12] 暫存也拒絕偽造 teamId/applicantId，不能先建立非法草稿",
+    "[13] 暫存也拒絕偽造 teamId/applicantId，不能先建立非法草稿",
     () => createIssueForActor(member, validForm(teamA.id, otherMember.id), { submitForApproval: false }),
     (err) => err instanceof TeamApplicantAccessDeniedError,
   );
-  check("[13] 非法暫存沒有留下 Issue", (await prisma.issue.count()) === beforeIllegalDrafts);
+  check("[14] 非法暫存沒有留下 Issue", (await prisma.issue.count()) === beforeIllegalDrafts);
 
   await expectError(
-    "[14] 暫存拒絕固定四項以外的偽造 systemName",
+    "[15] 暫存拒絕固定四項以外的偽造 systemName",
     () =>
       createIssueForActor(member, validForm(teamA.id, member.id, { systemName: "GitLab" }), {
         submitForApproval: false,
@@ -191,7 +208,7 @@ async function main() {
     (err) => err instanceof IssueCreationValidationError,
   );
   await expectError(
-    "[15] 正式建立拒絕固定四項以外的偽造 systemName",
+    "[16] 正式建立拒絕固定四項以外的偽造 systemName",
     () =>
       createIssueForActor(member, validForm(teamA.id, member.id, { systemName: "其他" }), {
         submitForApproval: true,
@@ -199,7 +216,7 @@ async function main() {
     (err) => err instanceof IssueCreationValidationError,
   );
   await expectError(
-    "[16] 正式建立缺少必填問題現象時於寫入前拒絕",
+    "[17] 正式建立缺少必填問題現象時於寫入前拒絕",
     () =>
       createIssueForActor(member, validForm(teamA.id, member.id, { description: "" }), {
         submitForApproval: true,
@@ -216,22 +233,27 @@ async function main() {
     where: { entityType: "Issue", entityId: adminDraft.id, actionType: "IssueCreated" },
   });
   check(
-    "[17] Admin 代建時 actor 與 applicant 分開保存",
+    "[18] Admin 代建時 actor 與 applicant 分開保存",
     adminDraft.reporterUserId === member.id && creationAudit?.actorUserId === admin.id,
   );
 
   const newForm = fs.readFileSync("src/components/NewIssueForm.tsx", "utf8");
   const editForm = fs.readFileSync("src/app/issues/[id]/hotfix/create/HotfixDraftForm.tsx", "utf8");
   check(
-    "[18] 新建與草稿編輯表單都引用共用 SYSTEM_NAME_OPTIONS",
+    "[19] 新建與草稿編輯表單都引用共用 SYSTEM_NAME_OPTIONS",
     newForm.includes("SYSTEM_NAME_OPTIONS") && editForm.includes("SYSTEM_NAME_OPTIONS"),
   );
   check(
-    "[19] 新建表單只有附件明確標示選填，所有指定必填標籤都有紅星",
+    "[20] 新建表單只有附件明確標示選填，所有指定必填標籤都有紅星",
     newForm.includes("附件（選填）") &&
       ["工單類型", "標題", "問題現象", "系統名稱", "環境", "風險等級", "緊急程度", "預計完成日"].every(
         (label) => newForm.includes(label),
       ),
+  );
+  const selector = fs.readFileSync("src/components/team-applicant/TeamApplicantSelector.tsx", "utf8");
+  check(
+    "[21] 固定團隊與申請人使用 ReadOnlyField，不使用 disabled select 假裝唯讀",
+    selector.includes("<ReadOnlyField") && selector.includes("teamReadOnly ?") && selector.includes("applicantReadOnly ?"),
   );
 
   console.log(`=== 結果：PASS ${passCount} / FAIL ${failCount} ===`);

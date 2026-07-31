@@ -51,26 +51,25 @@ function ordered(text: string, values: readonly string[]): boolean {
 
 async function main() {
   console.log("\n=== 導覽與通知 ===");
-  const nav = source("src/components/Nav.tsx");
+  const nav = source("src/components/app-shell/AppShell.tsx");
   const bell = source("src/components/ActionableNotificationBell.tsx");
   const css = source("src/app/globals.css");
   check(
-    "[1] 導覽順序含事件通報、RCA 與通知鈴鐺",
-    ordered(nav, [
+    "[1] Sidebar 正式順序含工作管理中心、事件通報、RCA 與系統設定",
+    [
       'label: "治理儀表板"',
-      'label: "工單清單"',
-      'label: "建立工單"',
+      'href: "/work-management"',
+      'label: "新增事項"',
       'label: "事件通報"',
-      'label: "RCA"',
-      'label: "核准治理設定"',
-      'label: "人員"',
-      'label: "團隊"',
-      "<ActionableNotificationBell",
-    ]),
+      'label: "RCA 根因分析"',
+      "SETTINGS_LINKS",
+    ].every((value) => nav.includes(value)),
   );
   check("[2] 通知 Badge 只在待辦數大於零時顯示且支援 99+", bell.includes("tasks.length > 0 &&") && bell.includes('"99+"'));
   check("[3] 通知直接使用 actionHref 進操作頁且查看不會清除", bell.includes("href={task.actionHref}") && !/mark.*read|clearNotification/i.test(bell));
-  check("[4] 通知只晃動一次並尊重 reduced motion", bell.includes("setTimeout") && css.includes("prefers-reduced-motion") && css.includes(".animate-notification-bell"));
+  check("[4] 有待辦時通知持續循環、展開暫停且尊重 reduced motion", bell.includes('tasks.length > 0 && !open') && css.includes("2.4s ease-in-out infinite") && css.includes("prefers-reduced-motion") && css.includes(".animate-notification-bell"));
+  check("[4a] 通知標題依使用者姓名與待辦數動態顯示", bell.includes('`${userName}，輪到你處理了`') && bell.includes('`${userName}，目前沒有待處理事項`') && bell.includes("共 {tasks.length} 件待處理事項"));
+  check("[4b] 每筆通知顯示明確動作文字", bell.includes("{task.issueKey} 等待你{task.actionLabel}"));
 
   const users = await prisma.user.findMany({ where: { isActive: true }, select: { id: true } });
   const issues = await prisma.issue.findMany({

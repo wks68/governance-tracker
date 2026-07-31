@@ -8,8 +8,9 @@
 import { useEffect, useState, useTransition } from "react";
 import { listApplicantsForTeamAction } from "@/app/team-applicant-actions";
 import type { TeamOption, ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
+import { ReadOnlyField } from "@/components/ui/FormPrimitives";
 
-const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:bg-gray-100";
+const inputCls = "ui-input";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
 
 export default function TeamApplicantSelector({
@@ -83,7 +84,8 @@ export default function TeamApplicantSelector({
   const teamReadOnly = fixedTeamId !== null;
   const applicantReadOnly = fixedApplicant !== null || !canChooseApplicant;
   const allDisabled = disabled || blockedReason !== null;
-  const applicantSelectDisabled = allDisabled || applicantReadOnly || !teamChosen || isPending;
+  const applicantSelectDisabled = allDisabled || !teamChosen || isPending;
+  const fixedTeamName = teams.find((team) => team.id === fixedTeamId)?.name ?? "尚未設定";
 
   return (
     <div className="space-y-2">
@@ -94,51 +96,71 @@ export default function TeamApplicantSelector({
       ) : null}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label className={labelCls}>
-            團隊名稱<span className="ml-1 text-danger">*</span>
-          </label>
-          <select
-            name={teamFieldName}
-            required
-            disabled={allDisabled || teamReadOnly}
-            value={teamId}
-            onChange={(e) => handleTeamChange(e.target.value)}
-            className={inputCls}
-          >
-            <option value="">請選擇</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-          {teamReadOnly && <input type="hidden" name={teamFieldName} value={teamId} />}
+          {teamReadOnly ? (
+            <>
+              <ReadOnlyField label="團隊名稱" value={fixedTeamName} description="已依目前有效團隊成員關係自動帶入" />
+              <input type="hidden" name={teamFieldName} value={teamId} />
+            </>
+          ) : (
+            <>
+              <label className={labelCls}>
+                團隊名稱<span className="ml-1 text-danger">*</span>
+              </label>
+              <select
+                name={teamFieldName}
+                required
+                disabled={allDisabled}
+                value={teamId}
+                onChange={(e) => handleTeamChange(e.target.value)}
+                className={inputCls}
+              >
+                <option value="">請選擇</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           {!blockedReason && teams.length === 0 && (
             <p className="mt-1 text-xs text-danger">目前沒有可建立工單的團隊，請聯絡系統管理員。</p>
           )}
         </div>
         <div>
-          <label className={labelCls}>
-            申請人<span className="ml-1 text-danger">*</span>
-          </label>
-          <select
-            name={applicantFieldName}
-            required
-            disabled={applicantSelectDisabled}
-            value={applicantId}
-            onChange={(e) => onApplicantIdChange(e.target.value)}
-            className={inputCls}
-          >
-            <option value="">
-              {!teamChosen ? "請先選擇團隊" : isPending ? "載入中…" : applicants.length === 0 ? "此團隊目前沒有可選擇的申請人" : "請選擇"}
-            </option>
-            {applicants.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}（{a.roleLabel}）
-              </option>
-            ))}
-          </select>
-          {applicantReadOnly && <input type="hidden" name={applicantFieldName} value={applicantId} />}
+          {applicantReadOnly ? (
+            <>
+              <ReadOnlyField
+                label="申請人"
+                value={fixedApplicant?.name ?? "尚未設定"}
+                description={fixedApplicant ? `${fixedApplicant.roleLabel}・已依目前登入者自動帶入` : undefined}
+              />
+              <input type="hidden" name={applicantFieldName} value={applicantId} />
+            </>
+          ) : (
+            <>
+              <label className={labelCls}>
+                申請人<span className="ml-1 text-danger">*</span>
+              </label>
+              <select
+                name={applicantFieldName}
+                required
+                disabled={applicantSelectDisabled}
+                value={applicantId}
+                onChange={(e) => onApplicantIdChange(e.target.value)}
+                className={inputCls}
+              >
+                <option value="">
+                  {!teamChosen ? "請先選擇團隊" : isPending ? "載入中…" : applicants.length === 0 ? "此團隊目前沒有可選擇的申請人" : "請選擇"}
+                </option>
+                {applicants.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}（{a.roleLabel}）
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           {error && <p className="mt-1 text-xs text-danger">{error}</p>}
         </div>
       </div>

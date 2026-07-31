@@ -267,7 +267,7 @@ export default function AppShell({
             >
               <Search className="h-5 w-5" aria-hidden />
             </Link>
-            <ActionableNotificationBell tasks={tasks} />
+            <ActionableNotificationBell tasks={tasks} userName={user.name} />
             <UserMenu user={user} />
           </div>
         </header>

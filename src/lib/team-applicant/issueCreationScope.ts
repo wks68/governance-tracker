@@ -131,47 +131,69 @@ export async function resolveIssueCreationScope(
 
 // 寫入時的信任邊界：建立／暫存／草稿編輯一律呼叫本函式，不接受前端傳入的任何身分宣稱。
 // 回傳通過驗證的申請人 User，供呼叫端寫入 reporterUserId／reporter。
+export async function resolveCreationTeamAndApplicant(
+  actorId: string,
+  teamId: string,
+  applicantId: string,
+  client: DbClient = prisma,
+): Promise<{ teamId: string; applicant: Awaited<ReturnType<DbClient["user"]["findUniqueOrThrow"]>> }> {
+  const scope = await resolveIssueCreationScope(actorId, client);
+  if (scope.blockedReason) throw new TeamApplicantAccessDeniedError(scope.blockedReason);
+
+  let effectiveTeamId = teamId;
+  let effectiveApplicantId = applicantId;
+
+  if (scope.kind === "MEMBER") {
+    // 一般成員的正式值直接來自 server 現場解析的 scope。前端 hidden 欄位可以完全缺少；
+    // 若有傳值則只作防偽造比對，不作為寫入來源。
+    if (applicantId && applicantId !== actorId) {
+      throw new TeamApplicantAccessDeniedError("您只能以自己的名義建立工單，無法代表其他人員送出。");
+    }
+    if (teamId && teamId !== scope.fixedTeamId) {
+      throw new TeamApplicantAccessDeniedError("您只能以自己所屬的團隊建立工單，無法使用其他團隊。");
+    }
+    if (!scope.fixedTeamId || !scope.fixedApplicant) {
+      throw new TeamApplicantAccessDeniedError(NO_TEAM_BLOCKED_MESSAGE);
+    }
+    effectiveTeamId = scope.fixedTeamId;
+    effectiveApplicantId = scope.fixedApplicant.id;
+  } else if (scope.kind === "TEAM_LEAD") {
+    if (!teamId) throw new TeamApplicantValidationError("請選擇團隊名稱");
+    if (!applicantId) throw new TeamApplicantValidationError("請選擇申請人");
+    if (!scope.teams.some((t) => t.id === teamId)) {
+      throw new TeamApplicantAccessDeniedError("您只能以自己擔任主管的團隊建立工單，無法使用其他團隊。");
+    }
+  } else if (scope.kind === "ADMIN") {
+    if (!teamId) throw new TeamApplicantValidationError("請選擇團隊名稱");
+    if (!applicantId) throw new TeamApplicantValidationError("請選擇申請人");
+  } else {
+    throw new TeamApplicantAccessDeniedError(NO_TEAM_BLOCKED_MESSAGE);
+  }
+
+  // 團隊必須存在且仍啟用（Admin 可跨團隊，但不得使用已停用團隊）。
+  const team = await client.team.findUnique({ where: { id: effectiveTeamId } });
+  if (!team) throw new TeamApplicantValidationError("所選團隊不存在");
+  if (!team.isActive) throw new TeamApplicantValidationError("所選團隊已停用，無法以此團隊建立工單");
+
+  // 申請人必須是該團隊目前的 active 成員（active TeamMember + active User）。
+  const membership = await client.teamMember.findFirst({
+    where: { teamId: effectiveTeamId, userId: effectiveApplicantId, isActive: true, user: { isActive: true } },
+    include: { user: true },
+  });
+  if (!membership) {
+    throw new TeamApplicantValidationError("所選申請人不是所選團隊目前的有效成員，請重新選擇");
+  }
+  return { teamId: effectiveTeamId, applicant: membership.user };
+}
+
 export async function assertCreationTeamAndApplicant(
   actorId: string,
   teamId: string,
   applicantId: string,
   client: DbClient = prisma,
 ) {
-  if (!teamId) throw new TeamApplicantValidationError("請選擇團隊名稱");
-  if (!applicantId) throw new TeamApplicantValidationError("請選擇申請人");
-
-  const scope = await resolveIssueCreationScope(actorId, client);
-  if (scope.blockedReason) throw new TeamApplicantAccessDeniedError(scope.blockedReason);
-
-  if (scope.kind === "MEMBER") {
-    if (applicantId !== actorId) {
-      throw new TeamApplicantAccessDeniedError("您只能以自己的名義建立工單，無法代表其他人員送出。");
-    }
-    if (teamId !== scope.fixedTeamId) {
-      throw new TeamApplicantAccessDeniedError("您只能以自己所屬的團隊建立工單，無法使用其他團隊。");
-    }
-  } else if (scope.kind === "TEAM_LEAD") {
-    if (!scope.teams.some((t) => t.id === teamId)) {
-      throw new TeamApplicantAccessDeniedError("您只能以自己擔任主管的團隊建立工單，無法使用其他團隊。");
-    }
-  } else if (scope.kind !== "ADMIN") {
-    throw new TeamApplicantAccessDeniedError(NO_TEAM_BLOCKED_MESSAGE);
-  }
-
-  // 團隊必須存在且仍啟用（Admin 可跨團隊，但不得使用已停用團隊）。
-  const team = await client.team.findUnique({ where: { id: teamId } });
-  if (!team) throw new TeamApplicantValidationError("所選團隊不存在");
-  if (!team.isActive) throw new TeamApplicantValidationError("所選團隊已停用，無法以此團隊建立工單");
-
-  // 申請人必須是該團隊目前的 active 成員（active TeamMember + active User）。
-  const membership = await client.teamMember.findFirst({
-    where: { teamId, userId: applicantId, isActive: true, user: { isActive: true } },
-    include: { user: true },
-  });
-  if (!membership) {
-    throw new TeamApplicantValidationError("所選申請人不是所選團隊目前的有效成員，請重新選擇");
-  }
-  return membership.user;
+  const resolved = await resolveCreationTeamAndApplicant(actorId, teamId, applicantId, client);
+  return resolved.applicant;
 }
 
 // 申請人下拉選單資料來源。一般成員不得透過此入口探測任何團隊的成員名單——他們的申請人

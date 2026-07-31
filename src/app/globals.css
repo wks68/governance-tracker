@@ -52,25 +52,30 @@ body {
 
 @keyframes notification-bell-wiggle {
   0%,
+  25%,
   100% {
     transform: rotate(0deg);
   }
-  20% {
+  4% {
     transform: rotate(-12deg);
   }
-  40% {
+  8% {
     transform: rotate(10deg);
   }
-  60% {
+  12% {
     transform: rotate(-7deg);
   }
-  80% {
+  16% {
     transform: rotate(4deg);
+  }
+  20% {
+    transform: rotate(0deg);
   }
 }
 
 .animate-notification-bell {
-  animation: notification-bell-wiggle 600ms ease-in-out 1;
+  animation: notification-bell-wiggle 2.4s ease-in-out infinite;
+  will-change: transform;
 }
 
 @layer components {

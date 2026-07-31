@@ -21,7 +21,7 @@ import { calculateStatusLight, suggestWaitingRole } from "./statusLight";
 import { evaluateGateRules } from "./gateRules";
 import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, isClosed, statusLabel } from "./workflow";
 import { requireCapability } from "./permissions";
-import { assertCreationTeamAndApplicant } from "./team-applicant/issueCreationScope";
+import { resolveCreationTeamAndApplicant } from "./team-applicant/issueCreationScope";
 import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./hotfix-ui/priority";
 import { resolveUniqueAutoStartVersionForIssueType, startWorkflowForIssueSystemTx, executeIssueTransitionInTx } from "./workflowExecutionService";
 import { missingDraftFields } from "./hotfix-ui/draftService";
@@ -271,11 +271,11 @@ export async function createIssueForActor(
   // 團隊名稱／申請人一律伺服器端重新推導身分後驗證，不信任前端下拉選單結果、hidden input
   // 或任何 isAdmin／isLead／role 宣稱：一般成員只能 applicant=自己＋自己的正式團隊；團隊
   // 主管只能使用自己擔任 active LEAD 的團隊並選該團隊 active 成員；只有 Admin 可跨團隊代建。
-  const teamId = String(formData.get("teamId") || "");
-  const applicantId = String(formData.get("applicantId") || "");
-  if (!teamId) throw new IssueCreationValidationError("請選擇團隊名稱");
-  if (!applicantId) throw new IssueCreationValidationError("請選擇申請人");
-  await assertCreationTeamAndApplicant(actor.id, teamId, applicantId);
+  const submittedTeamId = String(formData.get("teamId") || "");
+  const submittedApplicantId = String(formData.get("applicantId") || "");
+  const resolvedSelection = await resolveCreationTeamAndApplicant(actor.id, submittedTeamId, submittedApplicantId);
+  const teamId = resolvedSelection.teamId;
+  const applicantId = resolvedSelection.applicant.id;
 
   const initialStatus = workflow[0].key;
   const waitingRole = suggestWaitingRole(issueType, initialStatus);
@@ -344,7 +344,8 @@ export async function createIssueForActor(
       // 寫入 transaction 內再次解析 scope，避免權限檢查與實際建立之間的團隊／成員狀態
       // 變更造成 TOCTOU。actor 與 applicant 分開保存：reporterUserId 是申請人，
       // AuditLog.actorUserId 是實際建立者。
-      const applicant = await assertCreationTeamAndApplicant(actor.id, teamId, applicantId, tx);
+      const selection = await resolveCreationTeamAndApplicant(actor.id, teamId, applicantId, tx);
+      const applicant = selection.applicant;
       const team = await tx.team.findUniqueOrThrow({ where: { id: teamId } });
       const issueKey = await allocateNextIssueKey(tx, issueType);
       const created = await tx.issue.create({

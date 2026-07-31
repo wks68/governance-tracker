@@ -92,8 +92,8 @@ function readSrc(relPath: string): string {
 function runStaticChecks() {
   console.log("=== Section A：原始碼層級靜態檢查 ===");
 
-  const nav = readSrc("src/components/Nav.tsx");
-  check("[A1] 導覽列顯示「團隊」", nav.includes('label: "團隊"'));
+  const nav = readSrc("src/components/app-shell/AppShell.tsx");
+  check("[A1] 系統設定顯示「團隊管理」", nav.includes('label: "團隊管理"'));
   check("[A2] 導覽列不再顯示裸字「Team」作為連結文字", !/label:\s*"Team"/.test(nav));
 
   const newIssueForm = readSrc("src/components/NewIssueForm.tsx");
@@ -117,6 +117,7 @@ function runStaticChecks() {
   const selector = readSrc("src/components/team-applicant/TeamApplicantSelector.tsx");
   check("[A12] TeamApplicantSelector 顯示「請先選擇團隊」", selector.includes("請先選擇團隊"));
   check("[A13] TeamApplicantSelector 顯示「此團隊目前沒有可選擇的申請人」", selector.includes("此團隊目前沒有可選擇的申請人"));
+  check("[A13b] 一般成員固定值使用 ReadOnlyField，不 render 空白 disabled select", selector.includes("teamReadOnly ?") && selector.includes("applicantReadOnly ?") && selector.includes("<ReadOnlyField"));
   check("[A14] TeamApplicantSelector 不 import Prisma", !selector.includes("@/lib/prisma") && !selector.includes("@prisma/client"));
   check("[A15] TeamApplicantSelector 切換團隊時清空申請人（onApplicantIdChange(\"\")）", selector.includes('onApplicantIdChange("")'));
 
