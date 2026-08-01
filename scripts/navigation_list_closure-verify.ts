@@ -122,11 +122,35 @@ async function main() {
   check("[15] 事件通報與 RCA 使用獨立路由", fs.existsSync(path.join(ROOT, "src/app/incidents/page.tsx")) && fs.existsSync(path.join(ROOT, "src/app/rca/page.tsx")) && nav.includes('href: "/incidents"') && nav.includes('href: "/rca"'));
 
   console.log("\n=== 無留言結案 ===");
-  const hotfix = await prisma.issue.findUnique({
-    where: { issueKey: "HOTFIX-0012" },
+  const closureTemplate = await prisma.issue.findFirstOrThrow({
+    where: {
+      issueType: "Hotfix",
+      workflowVersionId: { not: null },
+      reporterUserId: { not: null },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  const pendingReporterStage = await prisma.workflowStage.findFirstOrThrow({
+    where: {
+      workflowVersionId: closureTemplate.workflowVersionId!,
+      stageKey: "pendingReporterConfirmation",
+    },
+  });
+  const hotfix = await prisma.issue.create({
+    data: {
+      issueKey: `NAV-CLOSE-${Date.now()}`,
+      issueType: "Hotfix",
+      title: "無留言結案隔離驗證",
+      reporter: closureTemplate.reporter,
+      reporterUser: { connect: { id: closureTemplate.reporterUserId! } },
+      workflowVersion: { connect: { id: closureTemplate.workflowVersionId! } },
+      currentWorkflowStage: { connect: { id: pendingReporterStage.id } },
+      workflowStatus: pendingReporterStage.stageKey,
+      stageEnteredAt: new Date(),
+    },
     include: { currentWorkflowStage: true },
   });
-  check("[16] HOTFIX-0012 可作為隔離結案驗證資料", !!hotfix?.currentWorkflowStageId);
+  check("[16] 以正式 WorkflowVersion 建立隔離的待結案驗證資料", !!hotfix.currentWorkflowStageId);
   if (hotfix?.currentWorkflowStageId && hotfix.reporterUserId) {
     let stage = hotfix.currentWorkflowStage;
     if (stage?.stageKey === "pendingReporterConfirmation") {
@@ -172,7 +196,13 @@ async function main() {
   }
   const closureActions = source("src/app/issues/[id]/hotfix/closure-actions.ts");
   const closurePanel = source("src/app/issues/[id]/hotfix/close/ClosureConfirmPanel.tsx");
-  check("[20] 退回原因使用獨立 validation path", closureActions.includes('"請填寫退回原因。"') && closurePanel.includes('setValidationError("請填寫退回原因。")'));
+  check(
+    "[20] 退回原因同時有 Server validation 與 Dialog 必填防護",
+    closureActions.includes('message: "請填寫退回原因。"') &&
+      closurePanel.includes("const blank = reason.trim().length === 0") &&
+      closurePanel.includes("disabled={isPending || blank}") &&
+      closurePanel.includes("onConfirm(reason.trim())"),
+  );
   check("[21] 結案錯誤會遮蔽技術字樣", closureActions.includes("/Transition|stageKey|Prisma|尚無任何留言|comment required|WorkflowExecution|資料表|stack/i"));
 
   console.log("\n=== 既有功能與受保護 DB ===");

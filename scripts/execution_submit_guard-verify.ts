@@ -27,7 +27,8 @@ import {
   claimIssueForTeam,
   assignIssueExecutor,
 } from "../src/lib/workflowExecutionService";
-import { decideApprovalRecord, NoEligibleApproverError } from "../src/lib/approvalService";
+import { decideApprovalRecord, ApprovalAuthorityMismatchError, NoEligibleApproverError } from "../src/lib/approvalService";
+import { SelfApprovalError } from "../src/lib/permissions";
 import { saveExecutionFieldValues, RD_FIX_FIELDS, QA_VERIFY_FIELDS, OP_DEPLOY_FIELDS } from "../src/lib/hotfix-ui/executionFields";
 import { setTeamDomain } from "../src/lib/team-applicant/teamManagementService";
 import { getRiskCheckTemplate } from "../src/lib/riskCheckTemplates";
@@ -155,9 +156,16 @@ const QA_VALUES: Record<string, string> = {
 const OP_VALUES: Record<string, string> = {
   opDeployEnvironment: "Production",
   opDeployPlannedAt: "2026-08-01T22:00",
+  opImpactDurationMode: "無",
+  opAnnouncementRequired: "否",
+  opServiceOperationRequired: "否",
+  opExpectedImpacts: '["無明顯影響"]',
   opDeploySteps: "停止排程 → 資料庫備份 → 部署新版本 → 驗證匯出功能",
+  opRollbackTrigger: "部署驗證失敗或錯誤率超過門檻",
   opRollbackPlan: "以備份還原資料庫並回退至前一版本 tag",
-  opMonitoringChecklist: "匯出 API 錯誤率、排程執行狀態、應用程式 log",
+  opRollbackUnavailableMode: "不適用",
+  opMonitoringMethod: "不適用",
+  opMonitoringNotApplicableReason: "targeted test 使用隔離環境，無外部監控端點",
 };
 
 // 讓某位執行人接下 RD 關卡並填完必填欄位，回傳送核用的 Transition id。
@@ -248,19 +256,26 @@ async function runApproverResolutionChecks(ctx: Ctx, prev: Awaited<ReturnType<ty
   );
   check("[4c] 核准責任目標為本階段承接團隊，非申請人主管", record?.approverTeamId === prev.team.id);
 
-  // [5][8] 執行人同時是團隊唯一主管、且無代理人 → fail closed。
+  // [5][8] 正式指派模型要求 executor 是 MEMBER、指派者是 LEAD，兩種 membership
+  // 不能硬塞給同一列。以「指派後唯一 LEAD 失效」重現沒有合法核准人的實際狀態。
   const soloLead = await createUser("rd-solo-lead", "RD");
+  const soloMember = await createUser("rd-solo-member", "RD");
   const soloTeam = await createTeam("rd-solo", "RD", ctx.admin.id);
   await addMember(soloTeam.id, soloLead.id, "LEAD");
+  await addMember(soloTeam.id, soloMember.id, "MEMBER");
 
   const soloIssue = await createIssueAtRdTriage(ctx, "solo-1");
-  const soloSubmit = await prepareRdExecution(ctx, soloIssue.id, soloTeam.id, soloLead.id, soloLead.id);
+  const soloSubmit = await prepareRdExecution(ctx, soloIssue.id, soloTeam.id, soloLead.id, soloMember.id);
+  await prisma.teamMember.updateMany({
+    where: { teamId: soloTeam.id, userId: soloLead.id },
+    data: { isActive: false },
+  });
 
   const beforeIssue = await prisma.issue.findUniqueOrThrow({ where: { id: soloIssue.id } });
   const beforeApprovalCount = await prisma.approvalRecord.count({ where: { issueId: soloIssue.id } });
 
-  const soloErr = await captureError("[5] RD 執行人同時是該團隊唯一主管時，不得自我核准（送簽被擋下）", () =>
-    executeIssueTransition({ issueId: soloIssue.id, transitionId: soloSubmit.id, actorId: soloLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" }),
+  const soloErr = await captureError("[5] 指派後承接團隊沒有 active RD 主管或代理人時，送簽被擋下", () =>
+    executeIssueTransition({ issueId: soloIssue.id, transitionId: soloSubmit.id, actorId: soloMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" }),
   );
 
   check("[8] 沒有其他主管或代理人時 fail closed，且為專用的 NoEligibleApproverError", soloErr instanceof NoEligibleApproverError);
@@ -295,23 +310,34 @@ async function runApproverResolutionChecks(ctx: Ctx, prev: Awaited<ReturnType<ty
   const orphanRisk = await prisma.stageRiskCheck.count({ where: { issueId: soloIssue.id, stageKey: "pendingRdLeadApproval" } });
   check("[16b] 送簽失敗後不留下半成品風險檢核紀錄（與 ApprovalRecord 同一 transaction 一起 rollback）", orphanRisk === 0, `實際 ${orphanRisk} 筆`);
 
-  // [6] 團隊補上第二位主管後：expectedApprover 應為「另一位主管」，不是執行人自己。
-  const secondLead = await createUser("rd-second-lead", "RD");
-  await addMember(soloTeam.id, secondLead.id, "LEAD");
-  await executeIssueTransition({ issueId: soloIssue.id, transitionId: soloSubmit.id, actorId: soloLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
+  // [6] 重新啟用正式主管後可送簽；executor 本人仍不是核准人。
+  await prisma.teamMember.updateMany({
+    where: { teamId: soloTeam.id, userId: soloLead.id },
+    data: { isActive: true },
+  });
+  await executeIssueTransition({ issueId: soloIssue.id, transitionId: soloSubmit.id, actorId: soloMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
   const soloRecord = await findActiveApproval(soloIssue.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
   check(
-    "[6] 有另一位合法主管時，expectedApprover 為另一位主管，且絕不是執行人自己",
-    soloRecord?.expectedApproverUserId === secondLead.id && soloRecord?.expectedApproverUserId !== soloLead.id,
+    "[6] active RD 主管恢復後，expectedApprover 為該主管且絕不是 MEMBER 執行人",
+    soloRecord?.expectedApproverUserId === soloLead.id && soloRecord?.expectedApproverUserId !== soloMember.id,
     `實際 ${soloRecord?.expectedApproverUserId}`,
+  );
+  const selfApprovalErr = await captureError("[6b] 送核 MEMBER 本人不得核准自己的 RD 送簽", () =>
+    decideApprovalRecord({ approvalRecordId: soloRecord!.id, actorUserId: soloMember.id, decision: "APPROVED" }),
+  );
+  check(
+    "[6c] 自我核准由 Service 層拒絕，不依賴 UI 隱藏按鈕",
+    selfApprovalErr instanceof SelfApprovalError || selfApprovalErr instanceof ApprovalAuthorityMismatchError,
   );
   check("[17] 送簽成功後恰好一筆 active pending ApprovalRecord", (await activePendingRecords(soloIssue.id)).length === 1);
 
-  // [7] 正式 ApprovalDelegation 代理人可核准（執行人本人仍被排除）。
+  // [7] 正式 ApprovalDelegation 代理人可核准；executor 仍維持正式 MEMBER 身分。
   const delegLead = await createUser("rd-deleg-lead", "RD");
+  const delegMember = await createUser("rd-deleg-member", "RD");
   const delegate = await createUser("rd-delegate", "RD");
   const delegTeam = await createTeam("rd-deleg", "RD", ctx.admin.id);
   await addMember(delegTeam.id, delegLead.id, "LEAD");
+  await addMember(delegTeam.id, delegMember.id, "MEMBER");
   await prisma.approvalDelegation.create({
     data: {
       delegatorUserId: delegLead.id,
@@ -326,13 +352,13 @@ async function runApproverResolutionChecks(ctx: Ctx, prev: Awaited<ReturnType<ty
   });
 
   const delegIssue = await createIssueAtRdTriage(ctx, "deleg-1");
-  const delegSubmit = await prepareRdExecution(ctx, delegIssue.id, delegTeam.id, delegLead.id, delegLead.id);
-  await executeIssueTransition({ issueId: delegIssue.id, transitionId: delegSubmit.id, actorId: delegLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
+  const delegSubmit = await prepareRdExecution(ctx, delegIssue.id, delegTeam.id, delegLead.id, delegMember.id);
+  await executeIssueTransition({ issueId: delegIssue.id, transitionId: delegSubmit.id, actorId: delegMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
 
   const delegRecord = await findActiveApproval(delegIssue.id, "RD_LEAD_APPROVAL", "pendingRdLeadApproval");
   check(
-    "[7a] 執行人＝唯一主管但有正式核准代理人時，可送簽，且 expectedApprover 為代理人",
-    delegRecord?.expectedApproverUserId === delegate.id,
+    "[7a] 正式主管與代理人皆合法時不任選其一（expectedApproverUserId 留白）",
+    delegRecord?.expectedApproverUserId === null,
     `實際 ${delegRecord?.expectedApproverUserId}`,
   );
   const decided = await decideApprovalRecord({ approvalRecordId: delegRecord!.id, actorUserId: delegate.id, decision: "APPROVED" });
@@ -345,7 +371,7 @@ async function runApproverResolutionChecks(ctx: Ctx, prev: Awaited<ReturnType<ty
 // C. QA／OP 共用同一套規則
 // ---------------------------------------------------------------------------
 
-// QA／OP 關卡的「執行人同時是唯一主管」情境：必須與 RD 完全相同地 fail closed，
+// QA／OP 關卡的「指派後沒有 active 主管」情境：必須與 RD 完全相同地 fail closed，
 // 訊息只在「RD／QA／OP 主管」這個字樣上不同，其餘規則不得各自實作一套。
 async function runQaOpChecks(ctx: Ctx) {
   console.log("\n=== C. QA／OP 共用相同防自我核准規則 [12]-[13] ===");
@@ -360,12 +386,16 @@ async function runQaOpChecks(ctx: Ctx) {
   await addMember(rdTeam.id, rdMember.id, "MEMBER");
 
   const qaSoloLead = await createUser("c-qa-lead", "QA");
+  const qaMember = await createUser("c-qa-member", "QA");
   const qaTeam = await createTeam("c-qa", "QA", ctx.admin.id);
   await addMember(qaTeam.id, qaSoloLead.id, "LEAD");
+  await addMember(qaTeam.id, qaMember.id, "MEMBER");
 
   const opSoloLead = await createUser("c-op-lead", "OP");
+  const opMember = await createUser("c-op-member", "OP");
   const opTeam = await createTeam("c-op", "OP", ctx.admin.id);
   await addMember(opTeam.id, opSoloLead.id, "LEAD");
+  await addMember(opTeam.id, opMember.id, "MEMBER");
 
   const issue = await createIssueAtRdTriage(ctx, "qaop-1");
   const rdSubmit = await prepareRdExecution(ctx, issue.id, rdTeam.id, rdLead.id, rdMember.id);
@@ -375,14 +405,15 @@ async function runQaOpChecks(ctx: Ctx) {
   const rdApproveT = await findTransition(ctx.hotfix.version.id, ctx.hotfix.stageIds.pendingRdLeadApproval, "rdLeadApprove");
   await executeIssueTransition({ issueId: issue.id, transitionId: rdApproveT.id, actorId: rdLead.id, reasonCode: "VERIFY" });
 
-  // QA：執行人＝QA 團隊唯一主管
+  // QA：由主管完成指派後，唯一主管失效。
   await claimIssueForTeam({ issueId: issue.id, teamId: qaTeam.id, actorId: qaSoloLead.id, reasonCode: "VERIFY" });
-  await assignIssueExecutor({ issueId: issue.id, executorUserId: qaSoloLead.id, actorId: qaSoloLead.id, reasonCode: "VERIFY" });
-  await saveExecutionFieldValues({ issueId: issue.id, actorId: qaSoloLead.id, values: QA_VALUES });
+  await assignIssueExecutor({ issueId: issue.id, executorUserId: qaMember.id, actorId: qaSoloLead.id, reasonCode: "VERIFY" });
+  await saveExecutionFieldValues({ issueId: issue.id, actorId: qaMember.id, values: QA_VALUES });
+  await prisma.teamMember.updateMany({ where: { teamId: qaTeam.id, userId: qaSoloLead.id }, data: { isActive: false } });
   const qaSubmit = await findTransition(ctx.hotfix.version.id, ctx.hotfix.stageIds.qaInProgress, "qaSubmit");
 
-  const qaErr = await captureError("[12] QA 執行人同時是該團隊唯一主管時，同樣不得自我核准", () =>
-    executeIssueTransition({ issueId: issue.id, transitionId: qaSubmit.id, actorId: qaSoloLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" }),
+  const qaErr = await captureError("[12] QA 團隊沒有 active 主管或代理人時，同樣 fail closed", () =>
+    executeIssueTransition({ issueId: issue.id, transitionId: qaSubmit.id, actorId: qaMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" }),
   );
   const qaMsg = qaErr?.message ?? "";
   check("[12b] QA 關卡顯示 QA 專屬的友善訊息，且不含 stageKey", qaMsg.includes("QA 主管") && qaMsg.includes("核准治理設定") && !qaMsg.includes("stageKey"), qaMsg);
@@ -391,24 +422,25 @@ async function runQaOpChecks(ctx: Ctx) {
   // 補上第二位 QA 主管後即可通過，繼續推進到 OP 關卡
   const qaLead2 = await createUser("c-qa-lead2", "QA");
   await addMember(qaTeam.id, qaLead2.id, "LEAD");
-  await executeIssueTransition({ issueId: issue.id, transitionId: qaSubmit.id, actorId: qaSoloLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
+  await executeIssueTransition({ issueId: issue.id, transitionId: qaSubmit.id, actorId: qaMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
   const qaRecord = await findActiveApproval(issue.id, "QA_LEAD_APPROVAL", "pendingQaLeadApproval");
-  check("[12d] 有另一位 QA 主管時，expectedApprover 為另一位主管而非執行人本人", qaRecord?.expectedApproverUserId === qaLead2.id);
+  check("[12d] 補上 active QA 主管後，expectedApprover 為主管而非 MEMBER 執行人", qaRecord?.expectedApproverUserId === qaLead2.id && qaRecord?.expectedApproverUserId !== qaMember.id);
   await decideApprovalRecord({ approvalRecordId: qaRecord!.id, actorUserId: qaLead2.id, decision: "APPROVED" });
   const qaApproveT = await findTransition(ctx.hotfix.version.id, ctx.hotfix.stageIds.pendingQaLeadApproval, "qaLeadApprove");
   await executeIssueTransition({ issueId: issue.id, transitionId: qaApproveT.id, actorId: qaLead2.id, reasonCode: "VERIFY" });
 
-  // OP：執行人＝OP 團隊唯一主管
+  // OP：由主管完成指派後，唯一主管失效。
   await claimIssueForTeam({ issueId: issue.id, teamId: opTeam.id, actorId: opSoloLead.id, reasonCode: "VERIFY" });
-  await assignIssueExecutor({ issueId: issue.id, executorUserId: opSoloLead.id, actorId: opSoloLead.id, reasonCode: "VERIFY" });
-  await saveExecutionFieldValues({ issueId: issue.id, actorId: opSoloLead.id, values: OP_VALUES });
+  await assignIssueExecutor({ issueId: issue.id, executorUserId: opMember.id, actorId: opSoloLead.id, reasonCode: "VERIFY" });
+  await saveExecutionFieldValues({ issueId: issue.id, actorId: opMember.id, values: OP_VALUES });
+  await prisma.teamMember.updateMany({ where: { teamId: opTeam.id, userId: opSoloLead.id }, data: { isActive: false } });
   // opPreparing 另有既有的 REQUIRE_EVIDENCE 關卡需求（見 buildHotfixWorkflowV1），與本輪修正
   // 無關；先滿足它，才能確定後續攔截確實來自核准人解析而非佐證資料不足。
   await prisma.evidence.create({ data: { issueId: issue.id, type: "文件", title: `${RUN_TAG}-op-evidence`, url: "https://example.invalid/op-plan" } });
   const opSubmit = await findTransition(ctx.hotfix.version.id, ctx.hotfix.stageIds.opPreparing, "opSubmit");
 
-  const opErr = await captureError("[13] OP 執行人同時是該團隊唯一主管時，同樣不得自我核准", () =>
-    executeIssueTransition({ issueId: issue.id, transitionId: opSubmit.id, actorId: opSoloLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" }),
+  const opErr = await captureError("[13] OP 團隊沒有 active 主管或代理人時，同樣 fail closed", () =>
+    executeIssueTransition({ issueId: issue.id, transitionId: opSubmit.id, actorId: opMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" }),
   );
   const opMsg = opErr?.message ?? "";
   check("[13b] OP 關卡顯示 OP 專屬的友善訊息，且不含 stageKey", opMsg.includes("OP 主管") && opMsg.includes("核准治理設定") && !opMsg.includes("stageKey"), opMsg);
@@ -418,9 +450,9 @@ async function runQaOpChecks(ctx: Ctx) {
 
   const opLead2 = await createUser("c-op-lead2", "OP");
   await addMember(opTeam.id, opLead2.id, "LEAD");
-  await executeIssueTransition({ issueId: issue.id, transitionId: opSubmit.id, actorId: opSoloLead.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
+  await executeIssueTransition({ issueId: issue.id, transitionId: opSubmit.id, actorId: opMember.id, reasonCode: "SUBMIT_FOR_APPROVAL" });
   const opRecord = await findActiveApproval(issue.id, "DEPLOYMENT_APPROVAL", "pendingDeploymentApproval");
-  check("[13d] 有另一位 OP 主管時可正常送簽，expectedApprover 為另一位主管", opRecord?.expectedApproverUserId === opLead2.id);
+  check("[13d] 補上 active OP 主管後可正常送簽，expectedApprover 為主管而非 MEMBER 執行人", opRecord?.expectedApproverUserId === opLead2.id && opRecord?.expectedApproverUserId !== opMember.id);
   check("[17b] OP 送簽成功後同樣恰好一筆 active pending ApprovalRecord", (await activePendingRecords(issue.id)).length === 1);
 }
 

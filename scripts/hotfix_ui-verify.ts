@@ -36,9 +36,11 @@ import {
 import { decideApprovalRecord, ApprovalAuthorityMismatchError } from "../src/lib/approvalService";
 import { SelfApprovalError } from "../src/lib/permissions";
 import { NINE_STAGES, nineStageIndexOfStageKey, routeForStageKey } from "../src/lib/hotfix-ui/nineStage";
+import { loadCancelledFromNineStageIndex } from "../src/lib/hotfix-ui/pageContext";
 import { uploadHotfixAttachment, deleteHotfixAttachment, AttachmentAuthorizationError } from "../src/lib/hotfix-ui/attachmentService";
 import { saveExecutionFieldValues } from "../src/lib/hotfix-ui/executionFields";
 import { setTeamDomain } from "../src/lib/team-applicant/teamManagementService";
+import { getNineStageVisualStates } from "../src/components/hotfix-nine-stage/NineStageProgressBar";
 
 let passCount = 0;
 let failCount = 0;
@@ -120,9 +122,9 @@ function runStaticSourceChecks() {
     "RD主管簽核",
     "QA驗證",
     "QA主管簽核",
-    "OP上版",
-    "OP主管簽核",
-    "結案",
+    "OP上版作業",
+    "OP主管上版後確認",
+    "原申請人確認結案",
   ];
   check(
     "[2] nineStage.ts 定義的 9 階段名稱與順序完全正確",
@@ -168,17 +170,19 @@ function runStaticSourceChecks() {
   const attachmentSectionSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/AttachmentSection.tsx"), "utf8");
   check("[5] AttachmentSection 顯示「附件（選填）」", attachmentSectionSrc.includes("附件（選填）"));
 
-  // [6] 新版 UI 元件（.tsx，client 端）不得直接 import Prisma
+  // [6] 只有 Client Component 禁止直接 import Prisma；async Server Component 可在伺服器端
+  // 組裝唯讀 ViewModel。舊測試把所有 .tsx 一律當成 client，誤判 CumulativeWorkflowContext。
   let prismaImportViolation: string | null = null;
   for (const file of allNewHotfixFiles) {
     if (!file.endsWith(".tsx")) continue;
     const src = fs.readFileSync(file, "utf8");
-    if (/@prisma\/client/.test(src) || /from\s*["']@\/lib\/prisma["']/.test(src)) {
+    const isClientComponent = /^\s*["']use client["'];/m.test(src);
+    if (isClientComponent && (/@prisma\/client/.test(src) || /from\s*["']@\/lib\/prisma["']/.test(src))) {
       prismaImportViolation = path.relative(REPO_ROOT, file);
       break;
     }
   }
-  check("[6] 新版 Hotfix .tsx 元件沒有任何檔案直接 import Prisma", prismaImportViolation === null, prismaImportViolation ?? undefined);
+  check("[6] 新版 Hotfix Client Component 沒有直接 import Prisma", prismaImportViolation === null, prismaImportViolation ?? undefined);
 
   // [7] 進度條無水平捲動（flex + justify-between 等分排列，不使用 overflow-x-auto／flex-nowrap）
   const progressBarSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/NineStageProgressBar.tsx"), "utf8");
@@ -187,19 +191,27 @@ function runStaticSourceChecks() {
     /justify-between/.test(progressBarSrc) && !/overflow-x-auto/.test(progressBarSrc) && !/flex-nowrap/.test(progressBarSrc),
   );
 
-  // [8] 主管簽核駁回 Modal／結案退回處理 Modal 皆要求必填原因（空白時按鈕 disabled）
+  // [8] 驗證可觀察的 Dialog 與鍵盤行為，不依賴按鈕 JSX 必須排列成某個單一 regex。
   const approvalPanelSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/ApprovalReviewPanel.tsx"), "utf8");
   const closurePanelSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/issues/[id]/hotfix/close/ClosureConfirmPanel.tsx"), "utf8");
   check(
-    "[8] 主管簽核駁回與結案退回處理 Modal 皆在原因空白時 disabled 確認按鈕",
-    /disabled=\{isPending \|\| blank\}/.test(approvalPanelSrc) && /disabled=\{isPending \|\| blank\}/.test(closurePanelSrc),
+    "[8] 駁回 Dialog 具語意、初始焦點、Escape、焦點返回及必填原因",
+    [approvalPanelSrc, closurePanelSrc].every((src) =>
+      src.includes('role="dialog"') &&
+      src.includes('aria-modal="true"') &&
+      src.includes("inputRef.current?.focus()") &&
+      src.includes('event.key === "Escape"') &&
+      src.includes("rejectTriggerRef.current?.focus()") &&
+      /<button[\s\S]{0,300}ref=\{rejectTriggerRef\}[\s\S]{0,300}onClick=\{\(\) => setRejectOpen\(true\)\}/.test(src) &&
+      src.includes("disabled={isPending || blank}"),
+    ),
   );
 
   // [9] 舊版 Hotfix 元件目錄已完全刪除（不得保留兩套可切換的 Hotfix UI）
   check("[9] 舊版 src/components/hotfix-execution 目錄已刪除", !fs.existsSync(path.join(REPO_ROOT, "src/components/hotfix-execution")));
   check("[9b] 舊版 hotfix-ui/runtimeView.ts／stageProgress.ts 已刪除", !fs.existsSync(path.join(REPO_ROOT, "src/lib/hotfix-ui/runtimeView.ts")) && !fs.existsSync(path.join(REPO_ROOT, "src/lib/hotfix-ui/stageProgress.ts")));
 
-  // [10] routeForStageKey 涵蓋 Hotfix v1 全部 19 個正式關卡（cancelled 除外，回傳 null）
+  // [10] routeForStageKey 涵蓋 Hotfix v1 全部正式關卡；cancelled 使用 close 唯讀終態頁。
   const allMainStageKeys = [
     "draft", "pendingBusinessApproval", "pendingRdTriage", "pendingRdClaim", "rdInProgress",
     "pendingRdLeadApproval", "pendingQaTriage", "pendingQaClaim", "qaInProgress", "pendingQaLeadApproval",
@@ -207,14 +219,84 @@ function runStaticSourceChecks() {
     "opCompleted", "pendingReporterConfirmation", "reporterConfirming", "closed",
   ];
   check(
-    "[10] routeForStageKey 對全部 19 個正式關卡皆回傳非 null 路徑，cancelled 回傳 null",
-    allMainStageKeys.every((k) => routeForStageKey("x", k) !== null) && routeForStageKey("x", "cancelled") === null,
+    "[10] routeForStageKey 對全部 19 個正式關卡皆回傳非 null 路徑，cancelled 導向 close 唯讀頁",
+    allMainStageKeys.every((k) => routeForStageKey("x", k) !== null) && routeForStageKey("x", "cancelled") === "/issues/x/hotfix/close",
   );
 
-  // [11] nineStageIndexOfStageKey 單調遞增覆蓋（無回退）：opDeploying／opCompleted 併入第 8 階段
+  // [11] 第 7 關包含上版前確認、上版前核准、正式部署；部署送出後才進第 8 關。
   check(
-    "[11] nineStageIndexOfStageKey：opDeploying／opCompleted 併入第 8 階段（核准後索引不回退）",
-    nineStageIndexOfStageKey("opDeploying") === 8 && nineStageIndexOfStageKey("opCompleted") === 8 && nineStageIndexOfStageKey("pendingDeploymentApproval") === 8,
+    "[11] nineStageIndexOfStageKey：OP 三個上版子步驟均為第 7 關，opCompleted 才是第 8 關",
+    nineStageIndexOfStageKey("opPreparing") === 7 &&
+      nineStageIndexOfStageKey("pendingDeploymentApproval") === 7 &&
+      nineStageIndexOfStageKey("opDeploying") === 7 &&
+      nineStageIndexOfStageKey("opCompleted") === 8,
+  );
+
+  const globalsSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/globals.css"), "utf8");
+  const tailwindSrc = fs.readFileSync(path.join(REPO_ROOT, "tailwind.config.ts"), "utf8");
+  const zLayoutSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/workflow-execution/WorkflowZLayout.tsx"), "utf8");
+  const shellSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/HotfixStageShell.tsx"), "utf8");
+  check(
+    "[11b] Workflow 完成色集中於正式 semantic tokens",
+    [
+      "--workflow-complete: #1f9d68",
+      "--workflow-complete-deep: #167a52",
+      "--workflow-complete-muted: #e8f6ef",
+      "--workflow-complete-line: #57b98f",
+      "--workflow-complete-foreground: #ffffff",
+    ].every((token) => globalsSrc.includes(token)) && tailwindSrc.includes('"workflow-complete"'),
+  );
+  check(
+    "[11c] Z 型布局使用桌面 7／5 欄並保留手機單欄閱讀順序",
+    zLayoutSrc.includes("grid-cols-1") && zLayoutSrc.includes("lg:grid-cols-12") &&
+      zLayoutSrc.includes("lg:col-span-7") && zLayoutSrc.includes("lg:col-span-5") &&
+      shellSrc.includes("CurrentResponsibilityCard") && shellSrc.includes("CurrentStageGuidanceCard"),
+  );
+
+  const activeStates = getNineStageVisualStates({ currentIndex: 5, cancelled: false, cancelledAtIndex: null, terminalComplete: false });
+  const closedStates = getNineStageVisualStates({ currentIndex: 9, cancelled: false, cancelledAtIndex: null, terminalComplete: true });
+  const cancelledStates = getNineStageVisualStates({ currentIndex: null, cancelled: true, cancelledAtIndex: 5, terminalComplete: false });
+  check(
+    "[11d] 進行中流程只有一個 current，completed／future 分區正確",
+    activeStates.filter((state) => state === "current").length === 1 &&
+      activeStates.slice(0, 4).every((state) => state === "completed") &&
+      activeStates.slice(5).every((state) => state === "future"),
+  );
+  check(
+    "[11e] closed 全部完成且沒有 current；cancelled 只保留取消前完成節點",
+    closedStates.every((state) => state === "completed") &&
+      cancelledStates.slice(0, 4).every((state) => state === "completed") &&
+      cancelledStates.slice(4).every((state) => state === "future") &&
+      cancelledStates.every((state) => state !== "current"),
+  );
+  check(
+    "[11f] completed 使用綠色 token／白色 Lucide Check，只有 current 可渲染 Halo 與 Core",
+    progressBarSrc.includes("border-workflow-complete bg-workflow-complete") &&
+      progressBarSrc.includes("text-workflow-complete-foreground") &&
+      progressBarSrc.includes("bg-workflow-complete-line") &&
+      progressBarSrc.includes("<Check") &&
+      progressBarSrc.includes("{isCurrent && (") &&
+      !progressBarSrc.includes("isCompleted && <span className=\"animate-stage-halo"),
+  );
+  check(
+    "[11g] Workflow 轉場動畫完整保留，且 prefers-reduced-motion 可停用所有 Workflow 動畫",
+    [
+      "animate-stage-halo",
+      "animate-stage-core",
+      "animate-stage-complete-enter",
+      "animate-stage-check-in",
+      "animate-stage-line-fill",
+      "animate-stage-current-enter",
+    ].every((className) => progressBarSrc.includes(className)) &&
+      globalsSrc.includes("@media (prefers-reduced-motion: reduce)") &&
+      [
+        ".animate-stage-halo",
+        ".animate-stage-core",
+        ".animate-stage-complete-enter",
+        ".animate-stage-check-in",
+        ".animate-stage-line-fill",
+        ".animate-stage-current-enter",
+      ].every((className) => globalsSrc.includes(className)),
   );
 }
 
@@ -430,7 +512,7 @@ async function runDbIntegrationChecks() {
     const opSubmitT = await findTransition(hotfix.version.id, s.opPreparing, "opSubmit");
     await executeIssueTransition({ issueId: main.id, transitionId: opSubmitT.id, actorId: opMember.id, reasonCode: "V" });
   }
-  check("[24] OP 送主管簽核後落在第 8 階段（OP主管簽核）", (await stageIndexOf(main.id)) === 8);
+  check("[24] OP 送主管簽核仍在第 7 階段的上版前核准子步驟", (await stageIndexOf(main.id)) === 7);
 
   const opLeadApproval = await findActiveApproval(main.id, "DEPLOYMENT_APPROVAL", "pendingDeploymentApproval");
   await checkAsync("[25] OP 執行人在 OP 主管簽核關卡不具核准資格", async () => {
@@ -447,14 +529,17 @@ async function runDbIntegrationChecks() {
     const opApproveT = await findTransition(hotfix.version.id, s.pendingDeploymentApproval, "opLeadApprove");
     await executeIssueTransition({ issueId: main.id, transitionId: opApproveT.id, actorId: opLead.id, reasonCode: "V" });
   }
-  check("[26] OP 主管同意後仍歸類在第 8 階段（opDeploying，不新增第 10 個節點）", (await stageIndexOf(main.id)) === 8);
+  check("[26] OP 上版前核准後進入正式部署，仍歸類第 7 階段", (await stageIndexOf(main.id)) === 7);
 
   await saveExecutionFieldValues({ issueId: main.id, actorId: opMember.id, values: { opDeployResult: "成功", opProdConfirmResult: "確認無誤" } });
   {
     const deployCompleteT = await findTransition(hotfix.version.id, s.opDeploying, "opDeployComplete");
     await executeIssueTransition({ issueId: main.id, transitionId: deployCompleteT.id, actorId: opMember.id, reasonCode: "V" });
+    check("[26b] 正式部署紀錄送出後進入第 8 階段（OP 主管上版後確認）", (await stageIndexOf(main.id)) === 8);
+    const postDeploymentApproval = await findActiveApproval(main.id, "DEPLOYMENT_APPROVAL", "opCompleted");
+    await decideApprovalRecord({ approvalRecordId: postDeploymentApproval.id, actorUserId: opLead.id, decision: "APPROVED" });
     const confirmOpenT = await findTransition(hotfix.version.id, s.opCompleted, "reporterConfirmOpen");
-    await executeIssueTransition({ issueId: main.id, transitionId: confirmOpenT.id, actorId: pm.id, reasonCode: "V" });
+    await executeIssueTransition({ issueId: main.id, transitionId: confirmOpenT.id, actorId: opLead.id, reasonCode: "V" });
   }
   check("[27] 上版執行完成、開放結案確認後落在第 9 階段（結案）", (await stageIndexOf(main.id)) === 9);
 
@@ -484,11 +569,31 @@ async function runDbIntegrationChecks() {
     closedRuntime.onVersionedWorkflow && closedRuntime.availableTransitions.filter((t) => t.transition.transitionType !== "CANCEL").length === 0,
   );
 
-  // [31] 已取消 Issue 不屬於 9 階段任何一個（routeForStageKey 回傳 null）
+  // [31] 已取消 Issue 不屬於 9 個節點，但 canonical route 仍為 Hotfix close 唯讀終態頁。
   const cancelledCase = await createIssue("CANCELLED", pm.id);
   const cancelDraftT = await findTransition(hotfix.version.id, s.draft, "cancelDraft");
   await cancelIssueWorkflow({ issueId: cancelledCase.id, transitionId: cancelDraftT.id, actorId: admin.id, reasonCode: "V" });
   check("[31] 已取消 Issue 的 nineStageIndexOfStageKey 回傳 null（不屬於 9 階段任何一個）", (await stageIndexOf(cancelledCase.id)) === null);
+
+  const cancelledAfterCreateCase = await createIssue("CANCELLED-AFTER-CREATE", pm.id);
+  const submitBeforeCancelT = await findTransition(hotfix.version.id, s.draft, "submit");
+  await executeIssueTransition({ issueId: cancelledAfterCreateCase.id, transitionId: submitBeforeCancelT.id, actorId: pm.id, reasonCode: "V" });
+  const cancelPendingApprovalT = await findTransition(hotfix.version.id, s.pendingBusinessApproval, "cancelPendingBusinessApproval");
+  await cancelIssueWorkflow({ issueId: cancelledAfterCreateCase.id, transitionId: cancelPendingApprovalT.id, actorId: admin.id, reasonCode: "V" });
+  const cancelledFromIndex = await loadCancelledFromNineStageIndex(cancelledAfterCreateCase.id);
+  const cancelledVisualStates = getNineStageVisualStates({
+    currentIndex: null,
+    cancelled: true,
+    cancelledAtIndex: cancelledFromIndex,
+    terminalComplete: false,
+  });
+  check(
+    "[31b] 第 2 階段取消只保留第 1 階段為綠色完成，沒有 current 動畫且不會全綠",
+    cancelledFromIndex === 2 &&
+      cancelledVisualStates[0] === "completed" &&
+      cancelledVisualStates.slice(1).every((state) => state === "future") &&
+      cancelledVisualStates.every((state) => state !== "current"),
+  );
 
   // [32] 無 issue.view 能力者查詢 Workflow Runtime 一律拒絕
   const inactiveUser = await prisma.user.create({ data: { name: `${RUN_TAG}-Inactive`, email: `${RUN_TAG}-inactive@example.invalid`, role: "PM", isActive: false } });

@@ -94,6 +94,13 @@ async function activeApprovalRecords(issueId: string) {
 async function runCreateFlowChecks() {
   console.log("\n=== A. 雙重提交流程修正 [1]-[9] ===");
   const org = await seedFormalOrganization(prisma);
+  // 此 targeted test 會從既有 Preview DB 的隔離副本執行。先在副本內封存既有 Hotfix
+  // published versions，確保本測試建立的版本是唯一 auto-start 候選；不依賴空白 DB，
+  // 也不會因 Preview fixture 已有正式版本而默默退回 legacy `opened` 流程。
+  await prisma.workflowVersion.updateMany({
+    where: { status: "PUBLISHED", workflowDefinition: { issueType: "Hotfix" } },
+    data: { status: "ARCHIVED" },
+  });
   await buildHotfixWorkflowV1({ actorId: org.admin.id, reasonCode: "VERIFY", keySuffix: "create-flow" });
 
   const qaTeamId = org.teamIdByName.get("品管")!;
@@ -191,7 +198,9 @@ function runProgressBarChecks() {
     pendingOpTriage: 7,
     pendingOpClaim: 7,
     opPreparing: 7,
-    pendingDeploymentApproval: 8,
+    pendingDeploymentApproval: 7,
+    opDeploying: 7,
+    opCompleted: 8,
     pendingReporterConfirmation: 9,
     reporterConfirming: 9,
     closed: 9,
@@ -213,6 +222,7 @@ function runProgressBarChecks() {
     ["opPreparing", "hotfix/op"],
     ["pendingDeploymentApproval", "hotfix/approval/op"],
     ["reporterConfirming", "hotfix/close"],
+    ["cancelled", "hotfix/close"],
   ];
   const routeMismatch = routeExpectations.filter(([key, suffix]) => routeForStageKey("X", key) !== `/issues/X/${suffix}`);
   check("[13] 九個關卡各自導向正確的頁面路由", routeMismatch.length === 0, routeMismatch.map(([k]) => k).join("、"));

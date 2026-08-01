@@ -145,6 +145,21 @@ async function main(): Promise<void> {
   const formalBefore = hash(FORMAL_DEV_DB);
   const previewBefore = hash(ORIGINAL_PREVIEW_DB);
 
+  // Governance Preview 目前刻意保留兩個 published Hotfix versions 作展示；正式建立服務
+  // 在候選不唯一時會安全地不 auto-start。此測試要驗證「建立 + Workflow + 關聯」原子性，
+  // 因此只在隔離副本封存較舊候選，建立唯一且可預期的 auto-start 前置條件。
+  const publishedHotfixVersions = await prisma.workflowVersion.findMany({
+    where: { status: "PUBLISHED", workflowDefinition: { issueType: "Hotfix" } },
+    orderBy: [{ publishedAt: "desc" }, { versionNo: "desc" }],
+    select: { id: true },
+  });
+  if (publishedHotfixVersions.length > 1) {
+    await prisma.workflowVersion.updateMany({
+      where: { id: { in: publishedHotfixVersions.slice(1).map((version) => version.id) } },
+      data: { status: "ARCHIVED" },
+    });
+  }
+
   const admin = await prisma.user.findFirstOrThrow({
     where: { email: "admin@formal-org.example.invalid", isActive: true },
   });
