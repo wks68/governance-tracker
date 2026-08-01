@@ -55,13 +55,13 @@ async function main() {
   const bell = source("src/components/ActionableNotificationBell.tsx");
   const css = source("src/app/globals.css");
   check(
-    "[1] Sidebar 正式順序含工作管理、事件通報、RCA 與系統設定",
+    "[1] Sidebar 含工作管理、新版清單名稱與系統設定",
     [
       'label: "治理儀表板"',
       'href: "/work-management"',
       'label: "新增事項"',
-      'label: "事件通報"',
-      'label: "RCA 根因分析"',
+      'label: "事件通報清單"',
+      'label: "RCA 清單"',
       "SETTINGS_LINKS",
     ].every((value) => nav.includes(value)),
   );

@@ -65,12 +65,37 @@ async function main() {
   check("[7] 首次與重新指派按鈕使用正式名稱", assignDialog.includes("指派成員") && reassignDialog.includes("重新指派"));
   check("[8] RD／QA／OP 不再把指派入口放在頁首其他位置", pageSources.every((page) => !page.includes("headerActions={<AssignExecutorPanel") && !page.includes("headerActions={<ReassignExecutorDialog") && page.includes("<ExecutorAssignmentSummary issueId={params.id}")));
 
-  const issue = await prisma.issue.findUniqueOrThrow({ where: { issueKey: "HOTFIX-0006" }, include: { currentWorkflowStage: true } });
   const [aaron, ken, admin] = await Promise.all([
     uniqueActiveUser("Aaron"),
     uniqueActiveUser("Ken"),
     uniqueActiveUser("最高權限管理員"),
   ]);
+  const [issueSeed, aaronQaLead] = await Promise.all([
+    prisma.issue.findUniqueOrThrow({ where: { issueKey: "HOTFIX-0006" } }),
+    prisma.teamMember.findFirstOrThrow({
+      where: {
+        userId: aaron.id,
+        isActive: true,
+        membershipRole: "LEAD",
+        team: { domain: "QA" },
+      },
+    }),
+  ]);
+  assert.ok(issueSeed.workflowVersionId, "HOTFIX-0006 必須已有 workflow version");
+  const qaInProgress = await prisma.workflowStage.findFirstOrThrow({
+    where: {
+      workflowVersionId: issueSeed.workflowVersionId,
+      stageKey: "qaInProgress",
+    },
+  });
+  const issue = await prisma.issue.update({
+    where: { id: issueSeed.id },
+    data: {
+      currentWorkflowStageId: qaInProgress.id,
+      assignedTeamId: aaronQaLead.teamId,
+    },
+    include: { currentWorkflowStage: true },
+  });
   const [leadPreview, memberPreview, adminPreview] = await Promise.all([
     listAssignableMembers(issue.id, aaron.id),
     listAssignableMembers(issue.id, ken.id),

@@ -36,10 +36,6 @@ async function main() {
   const officialDevDb = "/workspaces/governance-tracker/prisma/dev.db";
   const beforeHash = fs.existsSync(officialDevDb) ? crypto.createHash("sha256").update(fs.readFileSync(officialDevDb)).digest("hex") : null;
 
-  const issue = await prisma.issue.findUniqueOrThrow({
-    where: { issueKey: "HOTFIX-0012" },
-    include: { currentWorkflowStage: true, assignedTeam: true },
-  });
   const [nick, aaron, ken, admin, wallace] = await Promise.all([
     requireUser("Nick.Lu"),
     requireUser("Aaron"),
@@ -47,6 +43,25 @@ async function main() {
     requireUser("最高權限管理員"),
     requireUser("Wallace"),
   ]);
+  const [issueSeed, qaTeam] = await Promise.all([
+    prisma.issue.findUniqueOrThrow({ where: { issueKey: "HOTFIX-0012" } }),
+    prisma.team.findFirstOrThrow({ where: { name: "品管", isActive: true } }),
+  ]);
+  const qaStage = await prisma.workflowStage.findFirstOrThrow({
+    where: {
+      workflowVersionId: issueSeed.workflowVersionId!,
+      stageKey: "pendingQaClaim",
+    },
+  });
+  const issue = await prisma.issue.update({
+    where: { id: issueSeed.id },
+    data: {
+      assignedTeamId: qaTeam.id,
+      currentWorkflowStageId: qaStage.id,
+      workflowStatus: "pendingQaClaim",
+    },
+    include: { currentWorkflowStage: true, assignedTeam: true },
+  });
 
   check(
     "HOTFIX-0012 位於品管 pendingQaClaim",
