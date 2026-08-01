@@ -5,7 +5,8 @@
 import { prisma } from "../prisma";
 import { getIssueWorkflowRuntime, evaluateActorEligibilityForStage, getCurrentExecutorUserId, type IssueWorkflowRuntime } from "../workflowExecutionService";
 import { getUserHasCapability } from "../permissions";
-import { nineStageIndexOfStageKey, routeForStageKey, isCancelledStageKey } from "./nineStage";
+import { nineStageIndexOfStageKey, isCancelledStageKey } from "./nineStage";
+import { resolveIssueDetailHref } from "../issue-detail-href";
 import { HOTFIX_PRIORITY_FIELD_KEY, resolveHotfixPriority } from "./priority";
 import type { TicketBasicInfoData } from "@/components/hotfix-nine-stage/TicketBasicInfo";
 import type { Issue, User } from "@prisma/client";
@@ -35,7 +36,7 @@ async function loadHotfixPriority(issueId: string): Promise<string | null> {
 }
 
 // allowedStageKeys：呼叫頁面宣告「自己負責哪些 stageKey」，目前關卡不在此清單內時，
-// redirectTo 會指向正確的頁面（由 routeForStageKey 唯一判斷），呼叫端應立即 redirect()。
+// redirectTo 會指向正確的 canonical 頁面（其 stage mapping 仍唯一委派 nineStage），呼叫端應立即 redirect()。
 export async function loadHotfixPageContext(issueId: string, actor: User, allowedStageKeys: readonly string[]): Promise<HotfixPageContext> {
   const issue = await prisma.issue.findUnique({ where: { id: issueId } });
   if (!issue) throw new HotfixPageNotApplicableError("找不到此工單");
@@ -52,7 +53,7 @@ export async function loadHotfixPageContext(issueId: string, actor: User, allowe
 
   let redirectTo: string | null = null;
   if (!allowedStageKeys.includes(stageKey)) {
-    redirectTo = routeForStageKey(issueId, stageKey);
+    redirectTo = resolveIssueDetailHref({ id: issueId, issueType: issue.issueType, currentStageKey: stageKey, workflowStatus: issue.workflowStatus });
   }
 
   const [hotfixPriority, team, createdAudit] = await Promise.all([

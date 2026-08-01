@@ -12,6 +12,7 @@ import {
 } from "@/lib/issue-relations/viewService";
 import PageHeader from "@/components/ui/PageHeader";
 import { FilePlus2 } from "lucide-react";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,12 @@ function toRow(
     executorName: summary?.executorName ?? undefined,
     actionKind: task?.action,
     actionHref: task?.actionHref,
+    detailHref: resolveIssueDetailHref({
+      id: issue.id,
+      issueType: issue.issueType,
+      currentStageKey: issue.currentWorkflowStage?.stageKey ?? null,
+      workflowStatus: issue.workflowStatus,
+    }),
     relationSummary,
   };
 }
@@ -74,6 +81,7 @@ export default async function IssuesPage({
     orderBy: { createdAt: "desc" },
     include: {
       assignedTeam: { select: { name: true } },
+      currentWorkflowStage: { select: { stageKey: true } },
       fieldValues: {
         where: { fieldKey: HOTFIX_PRIORITY_FIELD_KEY },
         select: { fieldKey: true, fieldValue: true },

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Drawer from "@/components/Drawer";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { cancelHotfixAction } from "@/app/issues/[id]/hotfix/cancel-actions";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
 
 const MAX_REASON_LENGTH = 500;
 
@@ -27,7 +28,9 @@ export default function CancelHotfixButton({ issueId, issueKey }: { issueId: str
         return;
       }
       setOpen(false);
-      router.refresh();
+      router.replace(
+        resolveIssueDetailHref({ id: issueId, issueType: "Hotfix", currentStageKey: "cancelled" }),
+      );
     });
   }
 

@@ -8,6 +8,7 @@ import KpiCard from "@/components/KpiCard";
 import ContentCard from "@/components/ui/ContentCard";
 import PageHeader from "@/components/ui/PageHeader";
 import { formatDateTime } from "@/lib/datetime";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
 
 export const dynamic = "force-dynamic";
 
@@ -126,7 +127,12 @@ export default async function WorkManagementPage() {
           <ul className="divide-y divide-border">
             {recent.map((row) => (
               <li key={row.id}>
-                <Link href={`/issues/${row.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 transition hover:bg-surface-muted sm:px-5">
+                <Link href={resolveIssueDetailHref({
+                  id: row.id,
+                  issueType: row.issueType,
+                  currentStageKey: row.currentStage?.stageKey ?? null,
+                  workflowStatus: row.lifecycleStatus === "COMPLETED" ? "closed" : row.lifecycleStatus === "CANCELLED" ? "cancelled" : null,
+                })} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 transition hover:bg-surface-muted sm:px-5">
                   <span className="min-w-0">
                     <span className="text-xs font-semibold text-primary">{row.issueKey}</span>
                     <span className="ml-2 text-xs text-text-muted">{workTypeLabel(row.issueType, factsById.get(row.id)?.changeSubType)}</span>

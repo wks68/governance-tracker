@@ -4,7 +4,8 @@ import { updateIssueAction } from "@/lib/actions";
 import { requireCurrentUser } from "@/lib/auth";
 import { issueTypeLabel, ENVIRONMENTS, RISK_LEVELS, PRIORITIES, SYSTEM_NAME_OPTIONS } from "@/lib/constants";
 import { getVisibleFieldTemplate } from "@/lib/workflow";
-import { isIssueOnVersionedWorkflow } from "@/lib/workflowExecutionService";
+import { getIssueWorkflowRuntime, isIssueOnVersionedWorkflow } from "@/lib/workflowExecutionService";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
 import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import DynamicFieldsForm, { DynamicOption } from "@/components/DynamicFieldsForm";
 import EditIssueTeamApplicantField from "./EditIssueTeamApplicantField";
@@ -22,8 +23,13 @@ export default async function EditIssuePage({ params }: { params: { id: string }
   // 建立工單／團隊整合修正：Hotfix 已啟動新版流程引擎者，一律只能透過九階段獨立頁面編輯
   // （stage1「Hotfix 建立工單」草稿頁，或 Admin 專用改派面板），不得再透過這個通用編輯頁
   // 繞過關卡限制直接修改團隊／申請人／基本欄位。
+  let detailHref = resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, workflowStatus: issue.workflowStatus });
   if (issue.issueType === "Hotfix" && isIssueOnVersionedWorkflow(issue)) {
-    redirect(`/issues/${issue.id}`);
+    const runtime = await getIssueWorkflowRuntime(issue.id, actor.id);
+    if (runtime.onVersionedWorkflow) {
+      detailHref = resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey: runtime.currentStage.stageKey, workflowStatus: issue.workflowStatus });
+    }
+    redirect(detailHref);
   }
 
   const fieldsMap: Record<string, string> = {};
@@ -161,7 +167,7 @@ export default async function EditIssuePage({ params }: { params: { id: string }
             儲存
           </button>
           <a
-            href={`/issues/${issue.id}`}
+            href={detailHref}
             className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             取消

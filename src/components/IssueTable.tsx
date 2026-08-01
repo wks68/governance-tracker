@@ -25,6 +25,7 @@ export interface IssueRow {
   executorName?: string;
   actionKind?: string;
   actionHref?: string;
+  detailHref: string;
   relationSummary?: GovernanceRelationListSummary;
 }
 
@@ -45,7 +46,7 @@ function HotfixUrgencyBadge({ value, legacyPriority }: { value?: string | null; 
 function ActionCell({ issue }: { issue: IssueRow }) {
   return (
     <div className="flex items-center gap-2">
-      <Link href={`/issues/${issue.id}`} className="text-xs font-medium text-primary hover:underline">
+      <Link href={issue.detailHref} className="text-xs font-medium text-primary hover:underline">
         查看
       </Link>
       {issue.actionHref && issue.actionKind && (
@@ -99,10 +100,10 @@ export default function IssueTable({ issues, mode }: { issues: IssueRow[]; mode:
               return (
                 <tr key={issue.id} className="hover:bg-gray-50">
                   <td className="whitespace-nowrap px-3 py-2"><HotfixUrgencyBadge value={issue.hotfixPriority} legacyPriority={issue.priority} /></td>
-                  <td className="whitespace-nowrap px-3 py-2"><Link href={`/issues/${issue.id}`} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
+                  <td className="whitespace-nowrap px-3 py-2"><Link href={issue.detailHref} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issueTypeShortLabel(issue.issueType)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.systemName || "—"}</td>
-                  <td className="max-w-[260px] truncate px-3 py-2 text-gray-800" title={displayTitle}>{displayTitle}</td>
+                  <td className="max-w-[260px] truncate px-3 py-2 text-gray-800" title={displayTitle}><Link href={issue.detailHref} className="hover:text-primary hover:underline">{displayTitle}</Link></td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.reporterName || "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDate(issue.dueDate)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowStatus}</td>
@@ -138,7 +139,7 @@ export default function IssueTable({ issues, mode }: { issues: IssueRow[]; mode:
         <tbody className="divide-y divide-gray-100">
           {issues.map((issue) => (
             <tr key={issue.id} className="hover:bg-gray-50">
-              <td className="whitespace-nowrap px-3 py-2"><Link href={`/issues/${issue.id}`} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
+              <td className="whitespace-nowrap px-3 py-2"><Link href={issue.detailHref} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">季度專案</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.systemName || "—"}</td>
               <td className="max-w-[300px] truncate px-3 py-2 text-gray-800" title={issue.title}>{issue.title}</td>

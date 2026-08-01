@@ -12,7 +12,7 @@ import { isIssueOnVersionedWorkflow } from "./workflowExecutionService";
 import { createIssueForActor, getFieldsMap, readDynFieldValue, recalcIssue, IssueCreationValidationError } from "./issueCreation";
 import { assertCreationTeamAndApplicant } from "./team-applicant/issueCreationScope";
 import { NoEligibleApproverError } from "./approvalService";
-import { routeForStageKey } from "./hotfix-ui/nineStage";
+import { resolveIssueDetailHref } from "./issue-detail-href";
 import { actionOk, toActionResult, type ActionResult } from "./actionResult";
 import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./constants";
 import { requireCapability } from "./permissions";
@@ -58,8 +58,12 @@ export async function createIssueAction(formData: FormData): Promise<ActionResul
   revalidatePath(`/issues/${issue.id}`, "layout");
 
   // 送簽成功後直接進第 2 關；只暫存則進第 1 關繼續編輯。不得導向第 1 關再要求按第二次建立。
-  const stageRoute = routeForStageKey(issue.id, issue.workflowStatus);
-  const redirectTo = stageRoute ?? `/issues/${issue.id}`;
+  const redirectTo = resolveIssueDetailHref({
+    id: issue.id,
+    issueType: issue.issueType,
+    currentStageKey: issue.workflowVersionId ? issue.workflowStatus : null,
+    workflowStatus: issue.workflowStatus,
+  });
 
   return actionOk(submitForApproval ? "已建立工單，已送交申請人直屬主管簽核" : "已暫存草稿", {
     issueId: issue.id,
@@ -196,7 +200,7 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
   revalidatePath(`/issues/${issueId}`);
   revalidatePath("/governance");
   revalidatePath("/issues");
-  redirect(`/issues/${issueId}`);
+  redirect(resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, workflowStatus: issue.workflowStatus }));
 }
 
 // ---------------------------------------------------------------------------

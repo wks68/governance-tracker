@@ -10,6 +10,7 @@ import Link from "next/link";
 import { hotfixBoardApprovalBadge } from "@/lib/governance-dashboard/stagePhase";
 import { RISK_STATUS_LABEL, RISK_STATUS_TONE, returnBadgeLabel } from "@/lib/governance-dashboard/labels";
 import type { GovernanceHotfixBoardEntry, GovernanceIssueRow } from "@/lib/governance-dashboard/types";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
 
 function HotfixCard({ issue }: { issue: GovernanceIssueRow }) {
   const approvalBadge = issue.currentStage ? hotfixBoardApprovalBadge(issue.currentStage) : null;
@@ -18,7 +19,12 @@ function HotfixCard({ issue }: { issue: GovernanceIssueRow }) {
 
   return (
     <Link
-      href={`/issues/${issue.id}`}
+      href={resolveIssueDetailHref({
+        id: issue.id,
+        issueType: issue.issueType,
+        currentStageKey: issue.currentStage?.stageKey ?? null,
+        workflowStatus: issue.lifecycleStatus === "COMPLETED" ? "closed" : issue.lifecycleStatus === "CANCELLED" ? "cancelled" : null,
+      })}
       className="block rounded-md border border-gray-200 bg-white p-2.5 text-sm hover:border-primary hover:shadow-sm"
     >
       <div className="flex items-center justify-between gap-2">

@@ -35,7 +35,7 @@ export const NINE_STAGES: readonly NineStageDef[] = [
   { index: 6, key: "QA_APPROVAL", label: "QA主管簽核" },
   { index: 7, key: "OP_DEPLOY", label: "OP上版作業" },
   { index: 8, key: "OP_APPROVAL", label: "OP主管上版後確認" },
-  { index: 9, key: "CLOSURE", label: "結案" },
+  { index: 9, key: "CLOSURE", label: "原申請人確認結案" },
 ];
 
 const STAGE_KEY_TO_NINE_STAGE_INDEX: Record<string, number> = {
@@ -78,13 +78,65 @@ export function nineStageKeyOfIndex(index: number): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// 路由：9 個獨立頁面（4 個唯讀主管簽核頁 + 5 個執行/結案頁）的路徑產生器，全站唯一
-// 允許組出這些路徑字串的地方，避免各處各自硬編碼、日後改路徑要到處找。
+// 舊制 Hotfix 唯讀顯示轉接
+//
+// 只把 Issue.workflowStatus 轉成九階段「顯示位置」，不建立 runtime、不寫回 Issue，也不
+// 代表舊制資料曾實際執行新版 Workflow 的關卡或取得任何操作權。未知值仍顯示完整九階段，
+// 但沒有 current 節點，呼叫端須清楚標示「舊制資料，僅供查閱」。
 // ---------------------------------------------------------------------------
 
-export type HotfixRouteName = "create" | "approvalRequester" | "rd" | "approvalRd" | "qa" | "approvalQa" | "op" | "approvalOp" | "close";
+const LEGACY_WORKFLOW_STATUS_TO_NINE_STAGE_INDEX: Record<string, number> = {
+  opened: 1,
+  rdFix: 3,
+  rdSelfTest: 3,
+  qaVerify: 5,
+  qaRelease: 6,
+  opDeploy: 7,
+  prodConfirm: 8,
+};
+
+export interface LegacyHotfixNineStageDisplay {
+  currentIndex: number | null;
+  cancelledAtIndex: number | null;
+  terminalComplete: boolean;
+  cancelled: boolean;
+  statusKnown: boolean;
+  stageLabel: string;
+}
+
+export function legacyHotfixNineStageDisplay(workflowStatus: string): LegacyHotfixNineStageDisplay {
+  if (workflowStatus === "cancelled") {
+    return {
+      currentIndex: null,
+      cancelledAtIndex: null,
+      terminalComplete: false,
+      cancelled: true,
+      statusKnown: true,
+      stageLabel: "已取消",
+    };
+  }
+
+  const currentIndex = nineStageIndexOfStageKey(workflowStatus) ?? LEGACY_WORKFLOW_STATUS_TO_NINE_STAGE_INDEX[workflowStatus] ?? null;
+  const terminalComplete = workflowStatus === "closed";
+  return {
+    currentIndex,
+    cancelledAtIndex: null,
+    terminalComplete,
+    cancelled: false,
+    statusKnown: currentIndex !== null,
+    stageLabel: currentIndex === null ? "舊制狀態無法精確判斷" : nineStageLabelOfIndex(currentIndex),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 路由：9 個正式階段頁面（4 個唯讀主管簽核頁 + 5 個執行/結案頁），另加一個只服務
+// 無正式 runtime 舊制 Hotfix 的唯讀 summary。這是全站唯一允許組出 Hotfix 詳情路徑的地方。
+// ---------------------------------------------------------------------------
+
+export type HotfixRouteName = "summary" | "create" | "approvalRequester" | "rd" | "approvalRd" | "qa" | "approvalQa" | "op" | "approvalOp" | "close";
 
 const ROUTE_SUFFIX: Record<HotfixRouteName, string> = {
+  summary: "hotfix/summary",
   create: "hotfix/create",
   approvalRequester: "hotfix/approval/requester",
   rd: "hotfix/rd",
@@ -102,8 +154,8 @@ export function hotfixRoute(issueId: string, name: HotfixRouteName): string {
 
 // 依目前 stageKey 判斷「現在應該導向哪一個 Hotfix 九階段頁面」，供 Issue 明細頁做轉址、
 // 也供各頁面在偵測到 Issue 已離開自己負責的關卡時（例如已被他人核准／退回）自我轉址。
-// 回傳 null 表示目前關卡不在 9 階段任何一頁的管轄範圍內（例如 cancelled）——呼叫端此時
-// 應該顯示終態畫面，不導向任何九階段頁面。
+// cancelled 雖不屬於 9 個正式業務階段，仍由 close 頁提供專屬唯讀終態，避免退回舊通用頁。
+// 回傳 null 只表示未知 stageKey，呼叫端不得自行發明第二套 stage mapping。
 export function routeForStageKey(issueId: string, stageKey: string): string | null {
   switch (stageKey) {
     case "draft":
@@ -133,6 +185,7 @@ export function routeForStageKey(issueId: string, stageKey: string): string | nu
     case "pendingReporterConfirmation":
     case "reporterConfirming":
     case "closed":
+    case "cancelled":
       return hotfixRoute(issueId, "close");
     default:
       return null;

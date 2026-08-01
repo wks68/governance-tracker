@@ -22,7 +22,7 @@ import CommentList from "@/components/CommentList";
 import AuditLogList from "@/components/AuditLogList";
 import AiAssistantPanel from "@/components/AiAssistantPanel";
 import StartWorkflowPanel from "@/components/workflow-execution/StartWorkflowPanel";
-import { routeForStageKey } from "@/lib/hotfix-ui/nineStage";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
 import { getUserHasCapability } from "@/lib/permissions";
 import { canApplicantDeleteIssue, loadAdminDeleteImpactSummary } from "@/lib/issue-management/issueDeletionService";
 import DeleteOwnDraftButton from "@/components/hotfix-nine-stage/DeleteOwnDraftButton";
@@ -47,34 +47,26 @@ export default async function IssueDetailPage({ params }: { params: { id: string
 
   if (!issue) notFound();
 
-  const auditLogs = await prisma.auditLog.findMany({
-    where: { entityType: "Issue", entityId: issue.id },
-    orderBy: { createdAt: "desc" },
-    include: { actor: true },
-  });
-
   const onVersionedWorkflow = isIssueOnVersionedWorkflow(issue);
 
   // ---------------------------------------------------------------------------
-  // Hotfix 九階段 UI 收斂：已啟動新版流程引擎的 Hotfix 工單，一律轉址到對應的九階段
-  // 獨立頁面（見 src/lib/hotfix-ui/nineStage.ts），本頁不再自行渲染 Hotfix 專屬區塊——
-  // 舊版單頁 7 階段進度／內嵌主管核准／技術性下一步操作等區塊已全面移除。cancelled（已
-  // 取消）不屬於 9 階段任何一頁，改在本頁顯示最小化的唯讀終態說明。非 Hotfix、或尚未啟動
-  // 新版流程引擎的 Issue，完全維持原本 workflow.ts／gateRules.ts 行為，不受影響。
+  // Hotfix 一律在 Server Component render 前解析 canonical route：正式 runtime 進既有
+  // stage detail，舊制 Hotfix 進專屬唯讀 summary。非 Hotfix 才繼續渲染本通用詳情頁。
   // ---------------------------------------------------------------------------
 
   let runtime: Awaited<ReturnType<typeof getIssueWorkflowRuntime>> | null = null;
   let startableVersions: Array<{ id: string; versionNo: number; definitionName: string }> = [];
   let canStartWorkflow = false;
-  let hotfixCancelledStageLabel: string | null = null;
 
-  if (onVersionedWorkflow) {
-    runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
-    if (issue.issueType === "Hotfix" && runtime.onVersionedWorkflow) {
-      const target = routeForStageKey(issue.id, runtime.currentStage.stageKey);
-      if (target) redirect(target);
-      hotfixCancelledStageLabel = runtime.currentStage.label;
+  if (issue.issueType === "Hotfix") {
+    let currentStageKey: string | null = null;
+    if (onVersionedWorkflow) {
+      runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
+      if (runtime.onVersionedWorkflow) currentStageKey = runtime.currentStage.stageKey;
     }
+    redirect(resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey, workflowStatus: issue.workflowStatus }));
+  } else if (onVersionedWorkflow) {
+    runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
   } else {
     canStartWorkflow = await hasExecutionCapability(currentUser.id, "admin.full");
     if (canStartWorkflow) {
@@ -82,6 +74,12 @@ export default async function IssueDetailPage({ params }: { params: { id: string
       startableVersions = selectable.map((v) => ({ id: v.id, versionNo: v.versionNo, definitionName: v.workflowDefinition.name }));
     }
   }
+
+  const auditLogs = await prisma.auditLog.findMany({
+    where: { entityType: "Issue", entityId: issue.id },
+    orderBy: { createdAt: "desc" },
+    include: { actor: true },
+  });
 
   const supportsGovernanceRelations =
     issue.issueType === "Incident" ||
@@ -230,13 +228,7 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             </div>
           </section>
 
-          {hotfixCancelledStageLabel ? (
-            <section className="rounded-lg border border-gray-200 bg-gray-50 p-5">
-              <h2 className="mb-1 text-sm font-semibold text-gray-700">此 Hotfix 工單已取消</h2>
-              <p className="text-sm text-gray-500">目前關卡：{hotfixCancelledStageLabel}。已取消不屬於正式九階段流程，不再提供任何操作，僅供查閱基本資訊與歷程。</p>
-            </section>
-          ) : (
-            <>
+          <>
               {/* 6.3 流程進度條（舊版線性流程） */}
               <section className="rounded-lg border border-gray-200 bg-white p-5">
                 <h2 className="mb-3 text-sm font-semibold text-gray-700">流程進度</h2>
@@ -278,8 +270,7 @@ export default async function IssueDetailPage({ params }: { params: { id: string
                   dynamicOptions={dynamicOptions}
                 />
               </section>
-            </>
-          )}
+          </>
 
           {/* 6.6 佐證資料區 */}
           <section className="rounded-lg border border-gray-200 bg-white p-5">

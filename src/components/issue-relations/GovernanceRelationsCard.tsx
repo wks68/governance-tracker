@@ -85,7 +85,7 @@ function RelationItem({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/issues/${item.id}`}
+              href={item.detailHref}
               className="font-mono text-xs font-semibold text-primary hover:underline"
             >
               {item.issueKey}
@@ -106,7 +106,7 @@ function RelationItem({
           </p>
         </div>
         <Link
-          href={`/issues/${item.id}`}
+          href={item.detailHref}
           className="text-xs font-medium text-primary hover:underline"
         >
           查看

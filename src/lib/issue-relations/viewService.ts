@@ -9,6 +9,7 @@ import {
   IssueRelationNotFoundError,
   type IssueRelationWithIssues,
 } from "./service";
+import { resolveIssueDetailHref } from "../issue-detail-href";
 
 export interface GovernanceRelationCandidate {
   id: string;
@@ -35,6 +36,7 @@ export interface GovernanceRelationDisplayItem {
   relationId: string | null;
   pathLabel: string | null;
   isCurrent: boolean;
+  detailHref: string;
 }
 
 export interface GovernanceRelationGroup {
@@ -404,6 +406,12 @@ export async function loadGovernanceRelationViewForActor(
       relationId: entry.relationId,
       pathLabel: entry.pathLabel,
       isCurrent: entry.isCurrent === true,
+      detailHref: resolveIssueDetailHref({
+        id: issue.id,
+        issueType: issue.issueType,
+        currentStageKey: issue.currentWorkflowStage?.stageKey ?? null,
+        workflowStatus: issue.workflowStatus,
+      }),
     });
   }
 

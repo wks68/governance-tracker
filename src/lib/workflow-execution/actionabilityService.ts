@@ -1,5 +1,5 @@
 import { prisma } from "../prisma";
-import { routeForStageKey } from "../hotfix-ui/nineStage";
+import { resolveIssueDetailHref } from "../issue-detail-href";
 import {
   evaluateCurrentActorTask,
   type ActorTaskSummary,
@@ -62,7 +62,9 @@ export async function resolveIssueTasksForActor(
       const summary = await evaluateCurrentActorTask(issue.id, actorId);
       if (!summary) return null;
       const actionHref =
-        summary.action === "VIEW_ONLY" ? null : routeForStageKey(issue.id, summary.stageKey);
+        summary.action === "VIEW_ONLY"
+          ? null
+          : resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey: summary.stageKey });
       const actionable =
         summary.action !== "VIEW_ONLY" && actionHref
           ? ({
