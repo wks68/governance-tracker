@@ -27,25 +27,29 @@ export default async function HotfixRdPage({ params }: { params: { id: string } 
 
   const stageKey = ctx.runtime.currentStage.stageKey;
   const attachments = await listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: stageKey });
-  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: `/issues/${params.id}`, ctx };
+  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: "/issues?view=hotfix", ctx };
 
   if (stageKey === "pendingRdTriage") {
     const preview = await listClaimableTeamsForStage(params.id, actor.id);
     return (
-      <HotfixStageShell title="RD 修正與自測" {...shellProps}>
-        <ClaimTeamPanel issueId={params.id} preview={preview} />
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      </HotfixStageShell>
+      <HotfixStageShell
+        title="RD 修正與自測"
+        {...shellProps}
+        main={<ClaimTeamPanel issueId={params.id} preview={preview} />}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
+      />
     );
   }
 
   if (stageKey === "pendingRdClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="RD 修正與自測" {...shellProps}>
-        <ExecutorAssignmentSummary issueId={params.id} preview={preview} />
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      </HotfixStageShell>
+      <HotfixStageShell
+        title="RD 修正與自測"
+        {...shellProps}
+        main={<ExecutorAssignmentSummary issueId={params.id} preview={preview} />}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
+      />
     );
   }
 
@@ -61,9 +65,10 @@ export default async function HotfixRdPage({ params }: { params: { id: string } 
       title="RD 修正與自測"
       subtitle="填寫修正內容並完成自測後送出，將轉交 RD 主管簽核"
       {...shellProps}
-    >
-      <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
-      {isResponsible ? (
+      main={<>
+        <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
+        <div className="mt-5">
+          {isResponsible ? (
         <ExecutionFieldsForm
           issueId={params.id}
           stageKey={stageKey}
@@ -78,7 +83,9 @@ export default async function HotfixRdPage({ params }: { params: { id: string } 
       ) : (
         <ExecutionFieldsReadOnly fields={RD_FIX_FIELDS} values={values} title="RD 修正內容" />
       )}
-      <AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />
-    </HotfixStageShell>
+        </div>
+      </>}
+      side={<AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />}
+    />
   );
 }

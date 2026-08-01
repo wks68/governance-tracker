@@ -21,7 +21,6 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
   if (ctx.redirectTo) redirect(ctx.redirectTo);
 
   const review = await buildApprovalReviewViewData(ctx);
-  if (!review) redirect(`/issues/${params.id}`);
 
   const [attachments, opValues] = await Promise.all([
     listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: ctx.runtime.currentStage.stageKey }),
@@ -35,10 +34,10 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
       nineStageIndex={ctx.nineStageIndex}
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
-      backHref={`/issues/${params.id}`}
+      backHref="/issues?view=hotfix"
       ctx={ctx}
-    >
-      <section className="rounded-lg border border-gray-200 bg-white p-4">
+      main={<div className="space-y-5">
+      <section className="ui-card p-4">
         <h2 className="text-sm font-semibold text-gray-800">第 7 關子步驟</h2>
         <ol className="mt-3 grid gap-2 sm:grid-cols-3">
           <li className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">1. 上版前確認 ✓</li>
@@ -57,8 +56,10 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
           本次監控確認選擇不適用；請主管特別確認不適用原因。
         </p>
       )}
-      <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      <ApprovalReviewPanel
+      </div>}
+      side={<div className="space-y-5">
+        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
+        {review ? <ApprovalReviewPanel
         issueId={params.id}
         approvalRecordId={review.approvalRecordId}
         roleLabel="OP 主管"
@@ -66,7 +67,12 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
         requestedAt={review.requestedAt}
         isResponsible={review.isResponsible}
         expectedApproverLabel={review.expectedApproverLabel}
-      />
-    </HotfixStageShell>
+        /> : <MissingApprovalRecordNotice />}
+      </div>}
+    />
   );
+}
+
+function MissingApprovalRecordNotice() {
+  return <section className="ui-card p-4"><h2 className="text-sm font-semibold text-text-primary">簽核紀錄暫不可用</h2><p className="mt-2 text-sm text-text-secondary">目前關卡仍保留唯讀顯示；沒有有效簽核紀錄時不提供同意或駁回操作。</p></section>;
 }

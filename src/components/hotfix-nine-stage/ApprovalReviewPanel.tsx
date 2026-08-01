@@ -4,7 +4,7 @@
 // 駁回（紅色外框）兩個按鈕。駁回一律開啟必填的「駁回意見」視窗（500 字上限，取消／確認
 // 駁回）；同意不強制填寫意見。非目前責任角色時完全唯讀，只顯示應由誰核准。
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { decideHotfixApprovalAction } from "@/app/issues/[id]/hotfix/approval-actions";
 import { formatDateTime } from "@/lib/datetime";
@@ -13,14 +13,32 @@ const MAX_REASON_LENGTH = 500;
 
 function RejectModal({ onCancel, onConfirm, isPending, title }: { onCancel: () => void; onConfirm: (reason: string) => void; isPending: boolean; title: string }) {
   const [reason, setReason] = useState("");
+  const [closing, setClosing] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const blank = reason.trim().length === 0;
 
+  const requestClose = useCallback(() => {
+    if (isPending || closing) return;
+    setClosing(true);
+    window.setTimeout(onCancel, 160);
+  }, [closing, isPending, onCancel]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") requestClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [requestClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
+    <div className={`${closing ? "animate-dialog-overlay-out" : "animate-dialog-overlay-in"} fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4`} onClick={requestClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="reject-dialog-title" className={`${closing ? "animate-dialog-content-out" : "animate-dialog-content-in"} w-full max-w-md rounded-lg bg-white p-4 shadow-xl`} onClick={(e) => e.stopPropagation()}>
+        <h3 id="reject-dialog-title" className="text-sm font-semibold text-gray-800">{title}</h3>
         <p className="mt-1 text-xs text-gray-500">請填寫駁回原因，將完整記錄於工單歷程，供後續稽核與追蹤。</p>
         <textarea
+          ref={inputRef}
           value={reason}
           onChange={(e) => setReason(e.target.value.slice(0, MAX_REASON_LENGTH))}
           rows={4}
@@ -31,7 +49,7 @@ function RejectModal({ onCancel, onConfirm, isPending, title }: { onCancel: () =
         />
         <p className="mt-1 text-right text-xs text-gray-400">{reason.length}/{MAX_REASON_LENGTH}</p>
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" disabled={isPending} onClick={onCancel} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+          <button type="button" disabled={isPending || closing} onClick={requestClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
             取消
           </button>
           <button
@@ -64,6 +82,12 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const rejectTriggerRef = useRef<HTMLButtonElement>(null);
+
+  function closeReject() {
+    setRejectOpen(false);
+    window.requestAnimationFrame(() => rejectTriggerRef.current?.focus());
+  }
 
   function submit(decision: "APPROVED" | "REJECTED", reason: string) {
     setError(null);
@@ -108,6 +132,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
               {isPending ? "處理中…" : "同意"}
             </button>
             <button
+              ref={rejectTriggerRef}
               type="button"
               disabled={isPending}
               onClick={() => setRejectOpen(true)}
@@ -119,7 +144,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
         </>
       )}
 
-      {rejectOpen && <RejectModal title="駁回意見" isPending={isPending} onCancel={() => setRejectOpen(false)} onConfirm={(reason) => submit("REJECTED", reason)} />}
+      {rejectOpen && <RejectModal title="駁回意見" isPending={isPending} onCancel={closeReject} onConfirm={(reason) => submit("REJECTED", reason)} />}
     </section>
   );
 }

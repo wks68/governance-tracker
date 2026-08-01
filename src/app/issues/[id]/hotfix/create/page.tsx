@@ -40,8 +40,14 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
       : undefined;
 
   return (
-    <HotfixStageShell title="Hotfix 建立工單" nineStageIndex={ctx.nineStageIndex} cancelled={ctx.cancelled} ticketBasicInfo={ctx.ticketBasicInfo} backHref={`/issues/${params.id}`} ctx={ctx}>
-      {isResponsible ? (
+    <HotfixStageShell
+      title="Hotfix 建立工單"
+      nineStageIndex={ctx.nineStageIndex}
+      cancelled={ctx.cancelled}
+      ticketBasicInfo={ctx.ticketBasicInfo}
+      backHref="/issues?view=hotfix"
+      ctx={ctx}
+      main={isResponsible ? (
         <HotfixDraftForm
           issueId={params.id}
           initialValues={{
@@ -60,11 +66,11 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
           initialApplicants={initialApplicants}
         />
       ) : (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <section className="ui-card p-4">
           <p className="text-sm text-gray-500">僅原始填單人可編輯此階段，此頁為唯讀。</p>
         </section>
       )}
-      <AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />
-    </HotfixStageShell>
+      side={<AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />}
+    />
   );
 }

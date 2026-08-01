@@ -92,6 +92,7 @@ export default function AppShell({
   const searchParams = useSearchParams();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileRendered, setMobileRendered] = useState(false);
   const [workOpen, setWorkOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(pathname.startsWith("/admin") || pathname.startsWith("/settings"));
   const mobileTriggerRef = useRef<HTMLButtonElement>(null);
@@ -103,6 +104,15 @@ export default function AppShell({
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname, searchParams]);
+
+  useEffect(() => {
+    if (mobileOpen) {
+      setMobileRendered(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setMobileRendered(false), 220);
+    return () => window.clearTimeout(timer);
+  }, [mobileOpen]);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -178,18 +188,33 @@ export default function AppShell({
         />
       </aside>
 
-      {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="主要導覽">
+      {mobileRendered && (
+        <div
+          className={clsx(
+            "fixed inset-0 z-50 transition-opacity duration-200 motion-reduce:transition-none lg:hidden",
+            mobileOpen ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+          role="dialog"
+          aria-modal="true"
+          aria-label="主要導覽"
+          aria-hidden={!mobileOpen}
+        >
           <button
             type="button"
             aria-label="關閉導覽"
-            className="absolute inset-0 bg-slate-950/40 backdrop-blur-[1px]"
+            className="animate-drawer-overlay-in absolute inset-0 bg-slate-950/40 backdrop-blur-[1px]"
             onClick={() => {
               setMobileOpen(false);
               mobileTriggerRef.current?.focus();
             }}
           />
-          <div ref={mobilePanelRef} className="relative h-full w-[min(20rem,88vw)] bg-surface shadow-overlay">
+          <div
+            ref={mobilePanelRef}
+            className={clsx(
+              "relative h-full w-[min(20rem,88vw)] bg-surface shadow-overlay transition-transform duration-200 motion-reduce:transition-none",
+              mobileOpen ? "animate-mobile-drawer-panel-in translate-x-0" : "-translate-x-full",
+            )}
+          >
             <button
               ref={mobileCloseRef}
               type="button"
@@ -350,7 +375,9 @@ function SidebarContent({
               )}
             </div>
 
-            {!collapsed && workOpen && (
+            {!collapsed && (
+              <div className={clsx("grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none", workOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+              <div className="min-h-0 overflow-hidden">
               <div className="ml-4 mt-1 space-y-3 border-l border-border pl-3">
                 <WorkGroupSection
                   group={WORK_GROUPS[0]}
@@ -371,6 +398,8 @@ function SidebarContent({
                   currentView={currentView}
                   currentQuick={currentQuick}
                 />
+              </div>
+              </div>
               </div>
             )}
           </div>
@@ -400,11 +429,15 @@ function SidebarContent({
               {!collapsed && <span className="min-w-0 flex-1 text-left">系統設定</span>}
               {!collapsed && (settingsOpen ? <ChevronDown className="h-4 w-4" aria-hidden /> : <ChevronRight className="h-4 w-4" aria-hidden />)}
             </button>
-            {!collapsed && settingsOpen && (
+            {!collapsed && (
+              <div className={clsx("grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none", settingsOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+              <div className="min-h-0 overflow-hidden">
               <div className="ml-4 mt-1 space-y-0.5 border-l border-border pl-3">
                 {visibleSettings.map((item) => (
                   <NavItem key={item.href} item={item} active={pathname.startsWith(item.href)} collapsed={false} nested />
                 ))}
+              </div>
+              </div>
               </div>
             )}
           </div>
@@ -487,7 +520,9 @@ function WorkGroupSection({
         <span className="min-w-0 flex-1">{group.label}</span>
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />}
       </button>
-      {open && (group.label === "申請與紀錄" ? (
+      <div className={clsx("grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+      <div className="min-h-0 overflow-hidden">
+      {group.label === "申請與紀錄" ? (
         <div className="mt-1 rounded-lg bg-surface-muted px-2.5 py-2 text-xs text-text-muted" aria-disabled="true">
           <span className="block font-medium text-text-secondary">OP 帳號與權限申請</span>
           <span className="mt-0.5 block">即將提供</span>
@@ -504,7 +539,9 @@ function WorkGroupSection({
             />
           ))}
         </div>
-      ))}
+      )}
+      </div>
+      </div>
     </div>
   );
 }

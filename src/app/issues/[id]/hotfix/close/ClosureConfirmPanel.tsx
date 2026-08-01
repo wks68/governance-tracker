@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { confirmHotfixClosureAction, rejectHotfixClosureAction } from "../closure-actions";
@@ -9,19 +9,34 @@ const MAX_REASON_LENGTH = 500;
 
 function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void; onConfirm: (reason: string) => void; isPending: boolean }) {
   const [reason, setReason] = useState("");
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const blank = reason.trim().length === 0;
+
+  const requestClose = useCallback(() => {
+    if (isPending || closing) return;
+    setClosing(true);
+    window.setTimeout(onCancel, 160);
+  }, [closing, isPending, onCancel]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") requestClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [requestClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-gray-800">退回處理意見</h3>
+    <div className={`${closing ? "animate-dialog-overlay-out" : "animate-dialog-overlay-in"} fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4`} onClick={requestClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="closure-reject-title" className={`${closing ? "animate-dialog-content-out" : "animate-dialog-content-in"} w-full max-w-md rounded-lg bg-white p-4 shadow-xl`} onClick={(e) => e.stopPropagation()}>
+        <h3 id="closure-reject-title" className="text-sm font-semibold text-gray-800">退回處理意見</h3>
         <p className="mt-1 text-xs text-gray-500">請說明退回原因，將完整記錄於工單歷程。</p>
         <textarea
+          ref={inputRef}
           value={reason}
-          onChange={(e) => {
-            setReason(e.target.value.slice(0, MAX_REASON_LENGTH));
-            setValidationError(null);
-          }}
+          onChange={(e) => setReason(e.target.value.slice(0, MAX_REASON_LENGTH))}
           rows={4}
           maxLength={MAX_REASON_LENGTH}
           disabled={isPending}
@@ -31,21 +46,14 @@ function RejectModal({ onCancel, onConfirm, isPending }: { onCancel: () => void;
         <p className="mt-1 text-right text-xs text-gray-400">
           {reason.length}/{MAX_REASON_LENGTH}
         </p>
-        {validationError && <p className="mt-1 text-sm text-danger-text">{validationError}</p>}
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" disabled={isPending} onClick={onCancel} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+          <button type="button" disabled={isPending || closing} onClick={requestClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
             取消
           </button>
           <button
             type="button"
-            disabled={isPending}
-            onClick={() => {
-              if (blank) {
-                setValidationError("請填寫退回原因。");
-                return;
-              }
-              onConfirm(reason.trim());
-            }}
+            disabled={isPending || blank}
+            onClick={() => onConfirm(reason.trim())}
             className="rounded-md bg-danger px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
           >
             {isPending ? "處理中…" : "確認退回"}
@@ -62,6 +70,12 @@ export default function ClosureConfirmPanel({ issueId }: { issueId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const rejectTriggerRef = useRef<HTMLButtonElement>(null);
+
+  function closeReject() {
+    setRejectOpen(false);
+    window.requestAnimationFrame(() => rejectTriggerRef.current?.focus());
+  }
 
   function confirm() {
     setError(null);
@@ -107,6 +121,7 @@ export default function ClosureConfirmPanel({ issueId }: { issueId: string }) {
           {isPending ? "處理中…" : "確認結案"}
         </button>
         <button
+          ref={rejectTriggerRef}
           type="button"
           disabled={isPending}
           onClick={() => setRejectOpen(true)}
@@ -115,7 +130,7 @@ export default function ClosureConfirmPanel({ issueId }: { issueId: string }) {
           退回處理
         </button>
       </div>
-      {rejectOpen && <RejectModal isPending={isPending} onCancel={() => setRejectOpen(false)} onConfirm={reject} />}
+      {rejectOpen && <RejectModal isPending={isPending} onCancel={closeReject} onConfirm={reject} />}
     </section>
   );
 }

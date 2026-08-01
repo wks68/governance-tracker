@@ -81,7 +81,7 @@ function AttachmentItem({ issueId, item, onChanged }: { issueId: string; item: H
   }
 
   return (
-    <div className="rounded-md border border-gray-200 p-3">
+    <div className="animate-item-enter rounded-md border border-gray-200 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-gray-800">{item.fileName}</p>
@@ -152,7 +152,7 @@ export default function AttachmentSection({ issueId, items, readOnly, canUpload 
 
       {canUpload && !readOnly && (
         <div
-          className={`mt-3 rounded-md border-2 border-dashed p-4 text-center text-sm ${dragOver ? "border-primary bg-primary-50" : "border-gray-200"}`}
+          className={`mt-3 rounded-md border-2 border-dashed p-4 text-center text-sm transition-colors duration-150 motion-reduce:transition-none ${dragOver ? "border-primary bg-primary-50" : "border-gray-200"}`}
           onDragOver={(e) => {
             e.preventDefault();
             setDragOver(true);

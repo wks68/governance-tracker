@@ -21,7 +21,6 @@ export default async function HotfixApprovalRdPage({ params }: { params: { id: s
   if (ctx.redirectTo) redirect(ctx.redirectTo);
 
   const review = await buildApprovalReviewViewData(ctx);
-  if (!review) redirect(`/issues/${params.id}`);
 
   const [attachments, rdValues] = await Promise.all([
     listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: ctx.runtime.currentStage.stageKey }),
@@ -35,12 +34,12 @@ export default async function HotfixApprovalRdPage({ params }: { params: { id: s
       nineStageIndex={ctx.nineStageIndex}
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
-      backHref={`/issues/${params.id}`}
+      backHref="/issues?view=hotfix"
       ctx={ctx}
-    >
-      <ExecutionFieldsReadOnly fields={RD_FIX_FIELDS} values={rdValues} title="RD 修正內容" />
-      <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      <ApprovalReviewPanel
+      main={<ExecutionFieldsReadOnly fields={RD_FIX_FIELDS} values={rdValues} title="RD 修正內容（正式提交快照）" />}
+      side={<div className="space-y-5">
+        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
+        {review ? <ApprovalReviewPanel
         issueId={params.id}
         approvalRecordId={review.approvalRecordId}
         roleLabel="RD 主管"
@@ -48,7 +47,12 @@ export default async function HotfixApprovalRdPage({ params }: { params: { id: s
         requestedAt={review.requestedAt}
         isResponsible={review.isResponsible}
         expectedApproverLabel={review.expectedApproverLabel}
-      />
-    </HotfixStageShell>
+        /> : <MissingApprovalRecordNotice />}
+      </div>}
+    />
   );
+}
+
+function MissingApprovalRecordNotice() {
+  return <section className="ui-card p-4"><h2 className="text-sm font-semibold text-text-primary">簽核紀錄暫不可用</h2><p className="mt-2 text-sm text-text-secondary">目前關卡仍保留唯讀顯示；沒有有效簽核紀錄時不提供同意或駁回操作。</p></section>;
 }

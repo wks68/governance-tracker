@@ -25,6 +25,11 @@
   --info-muted: 231 240 255;
   --disabled: 226 232 240;
   --focus-ring: 0 91 172;
+  --workflow-complete: #1f9d68;
+  --workflow-complete-deep: #167a52;
+  --workflow-complete-muted: #e8f6ef;
+  --workflow-complete-line: #57b98f;
+  --workflow-complete-foreground: #ffffff;
   --shadow-card: 0 8px 24px rgba(15, 23, 42, 0.06);
   --shadow-overlay: 0 18px 50px rgba(15, 23, 42, 0.18);
 }
@@ -124,5 +129,19 @@ body {
   }
   .animate-stage-halo {
     opacity: 0 !important;
+  }
+  .animate-stage-complete-enter,
+  .animate-stage-check-in,
+  .animate-stage-line-fill,
+  .animate-stage-current-enter,
+  .animate-drawer-overlay-in,
+  .animate-drawer-panel-in,
+  .animate-mobile-drawer-panel-in,
+  .animate-dialog-overlay-in,
+  .animate-dialog-content-in,
+  .animate-dialog-overlay-out,
+  .animate-dialog-content-out,
+  .animate-item-enter {
+    animation: none !important;
   }
 }

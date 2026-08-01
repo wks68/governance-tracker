@@ -46,10 +46,12 @@ function readSnapshot(value: string | undefined): Record<string, string> {
   }
 }
 
-export default async function CumulativeWorkflowContext({ ctx }: { ctx: HotfixPageContext }) {
-  const [records, snapshots, history] = await Promise.all([
+export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: { ctx?: HotfixPageContext; legacyIssueId?: string }) {
+  const issueId = ctx?.issue.id ?? legacyIssueId;
+  if (!issueId) return null;
+  const [records, snapshots, history, auditLogs] = await Promise.all([
     prisma.approvalRecord.findMany({
-      where: { issueId: ctx.issue.id },
+      where: { issueId },
       orderBy: [{ requestedAt: "asc" }, { revisionNo: "asc" }],
       include: {
         requestedBy: true,
@@ -60,11 +62,16 @@ export default async function CumulativeWorkflowContext({ ctx }: { ctx: HotfixPa
         supersededBy: true,
       },
     }),
-    prisma.issueFieldValue.findMany({ where: { issueId: ctx.issue.id } }),
+    prisma.issueFieldValue.findMany({ where: { issueId } }),
     prisma.issueWorkflowStageHistory.findMany({
-      where: { issueId: ctx.issue.id },
+      where: { issueId },
       orderBy: { executedAt: "asc" },
       include: { fromStage: true, toStage: true, assignedTeamAfter: true },
+    }),
+    prisma.auditLog.findMany({
+      where: { entityType: "Issue", entityId: issueId },
+      orderBy: { createdAt: "desc" },
+      include: { actor: true },
     }),
   ]);
 
@@ -82,7 +89,7 @@ export default async function CumulativeWorkflowContext({ ctx }: { ctx: HotfixPa
     if (recordId) snapshotByRecord.set(recordId, readSnapshot(row.fieldValue));
   }
 
-  if (records.length === 0 && history.length <= 1) return null;
+  if (records.length === 0 && history.length <= 1 && auditLogs.length === 0) return null;
 
   return (
     <>
@@ -150,6 +157,22 @@ export default async function CumulativeWorkflowContext({ ctx }: { ctx: HotfixPa
           </ol>
         </section>
       )}
+
+      <section className="rounded-lg border border-gray-200 bg-white p-4" aria-label="歷程與 Audit Log">
+        <h2 className="text-sm font-semibold text-gray-800">歷程與 Audit Log</h2>
+        {auditLogs.length === 0 ? (
+          <p className="mt-2 text-sm text-gray-400">尚無 Audit Log。</p>
+        ) : (
+          <ol className="mt-3 space-y-2">
+            {auditLogs.map((row) => (
+              <li key={row.id} className="border-l-2 border-gray-200 pl-3 text-sm text-gray-700">
+                <p className="font-medium">{row.summary}</p>
+                <p className="mt-0.5 text-xs text-gray-400">{formatDateTime(row.createdAt)} · {row.actor?.name ?? "系統"} · {row.actionType}</p>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
     </>
   );
 }

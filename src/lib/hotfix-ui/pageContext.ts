@@ -165,3 +165,17 @@ export async function loadGovernanceFixLinks(actor: User): Promise<{ canManageTe
     canManageApprovalGovernance: canManageDelegation,
   };
 }
+
+/**
+ * Cancelled is outside the formal nine-stage mapping. Read the final history
+ * edge so the progress UI can preserve only the stages completed before the
+ * cancellation without inventing a second stage mapping.
+ */
+export async function loadCancelledFromNineStageIndex(issueId: string): Promise<number | null> {
+  const cancelledHistory = await prisma.issueWorkflowStageHistory.findFirst({
+    where: { issueId, toStage: { stageKey: "cancelled" } },
+    orderBy: { executedAt: "desc" },
+    include: { fromStage: true },
+  });
+  return cancelledHistory?.fromStage ? nineStageIndexOfStageKey(cancelledHistory.fromStage.stageKey) : null;
+}

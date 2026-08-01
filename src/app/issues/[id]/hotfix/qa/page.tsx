@@ -27,25 +27,29 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
 
   const stageKey = ctx.runtime.currentStage.stageKey;
   const attachments = await listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: stageKey });
-  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: `/issues/${params.id}`, ctx };
+  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: "/issues?view=hotfix", ctx };
 
   if (stageKey === "pendingQaTriage") {
     const preview = await listClaimableTeamsForStage(params.id, actor.id);
     return (
-      <HotfixStageShell title="QA 驗證" {...shellProps}>
-        <ClaimTeamPanel issueId={params.id} preview={preview} />
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      </HotfixStageShell>
+      <HotfixStageShell
+        title="QA 驗證"
+        {...shellProps}
+        main={<ClaimTeamPanel issueId={params.id} preview={preview} />}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
+      />
     );
   }
 
   if (stageKey === "pendingQaClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="QA 驗證" {...shellProps}>
-        <ExecutorAssignmentSummary issueId={params.id} preview={preview} />
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      </HotfixStageShell>
+      <HotfixStageShell
+        title="QA 驗證"
+        {...shellProps}
+        main={<ExecutorAssignmentSummary issueId={params.id} preview={preview} />}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
+      />
     );
   }
 
@@ -61,9 +65,10 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
       title="QA 驗證"
       subtitle="完成驗證後送出，將轉交 QA 主管簽核"
       {...shellProps}
-    >
-      <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
-      {isResponsible ? (
+      main={<>
+        <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
+        <div className="mt-5">
+          {isResponsible ? (
         <ExecutionFieldsForm
           issueId={params.id}
           stageKey={stageKey}
@@ -78,7 +83,9 @@ export default async function HotfixQaPage({ params }: { params: { id: string } 
       ) : (
         <ExecutionFieldsReadOnly fields={QA_VERIFY_FIELDS} values={values} title="QA 驗證內容" />
       )}
-      <AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />
-    </HotfixStageShell>
+        </div>
+      </>}
+      side={<AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />}
+    />
   );
 }

@@ -94,6 +94,11 @@ export default function ExecutionFieldsForm({
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const missingRequired = fields.filter((field) => field.required && !(values[field.key] ?? "").trim());
+  const requiredCount = fields.filter((field) => field.required).length;
+  const completedRequiredCount = requiredCount - missingRequired.length;
+  const canSubmit = missingRequired.length === 0;
+  const completionPercent = requiredCount === 0 ? 100 : Math.round((completedRequiredCount / requiredCount) * 100);
 
   function buildFormData(): FormData {
     const fd = new FormData();
@@ -122,6 +127,27 @@ export default function ExecutionFieldsForm({
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-gray-800">{title}</h2>
+      <div id="execution-form-completion" className="mt-3 rounded-md border border-border bg-surface-muted px-3 py-2" aria-live="polite">
+        <p className="text-sm font-medium text-text-primary">必填完成度：{completedRequiredCount}/{requiredCount}</p>
+        <div
+          className="mt-2 h-1.5 overflow-hidden rounded-full bg-disabled"
+          role="progressbar"
+          aria-label="必填欄位完成度"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={completionPercent}
+        >
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none"
+            style={{ width: `${completionPercent}%` }}
+          />
+        </div>
+        {canSubmit ? (
+          <p className="mt-0.5 text-xs text-success">必填欄位已完成，可送主管簽核；系統仍會在送出時再次驗證。</p>
+        ) : (
+          <p className="mt-0.5 text-xs text-text-secondary">尚缺：{missingRequired.map((field) => field.label).join("、")}。完成後才能送出。</p>
+        )}
+      </div>
       <ActionErrorText message={error} />
       {errorCode === "NoEligibleApproverError" && governanceFixLinks && <NoApproverGuidance links={governanceFixLinks} />}
       <ActionSuccessText message={success} />
@@ -177,8 +203,9 @@ export default function ExecutionFieldsForm({
         </button>
         <button
           type="button"
-          disabled={isPending}
+          disabled={isPending || !canSubmit}
           onClick={() => run(submitAction)}
+          aria-describedby={!canSubmit ? "execution-form-completion" : undefined}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40"
         >
           {isPending ? "處理中…" : submitLabel}

@@ -56,25 +56,29 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
 
   const stageKey = ctx.runtime.currentStage.stageKey;
   const attachments = await listHotfixAttachments(params.id, { actorId: actor.id, currentStageKey: stageKey });
-  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: `/issues/${params.id}`, ctx };
+  const shellProps = { nineStageIndex: ctx.nineStageIndex, cancelled: ctx.cancelled, ticketBasicInfo: ctx.ticketBasicInfo, backHref: "/issues?view=hotfix", ctx };
 
   if (stageKey === "pendingOpTriage") {
     const preview = await listClaimableTeamsForStage(params.id, actor.id);
     return (
-      <HotfixStageShell title="OP 上版" {...shellProps}>
-        <ClaimTeamPanel issueId={params.id} preview={preview} />
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      </HotfixStageShell>
+      <HotfixStageShell
+        title="OP 上版"
+        {...shellProps}
+        main={<ClaimTeamPanel issueId={params.id} preview={preview} />}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
+      />
     );
   }
 
   if (stageKey === "pendingOpClaim") {
     const preview = await listAssignableMembers(params.id, actor.id);
     return (
-      <HotfixStageShell title="OP 上版" {...shellProps}>
-        <ExecutorAssignmentSummary issueId={params.id} preview={preview} />
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-      </HotfixStageShell>
+      <HotfixStageShell
+        title="OP 上版"
+        {...shellProps}
+        main={<ExecutorAssignmentSummary issueId={params.id} preview={preview} />}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
+      />
     );
   }
 
@@ -90,7 +94,7 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
         title="OP 上版"
         subtitle="填寫上版計畫後送出，將轉交 OP 主管簽核"
         {...shellProps}
-      >
+        main={<div className="space-y-5">
         <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
         <OpSubsteps stageKey={stageKey} />
         {isResponsible ? (
@@ -103,8 +107,9 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
         ) : (
           <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={values} title="上版計畫" />
         )}
-        <AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />
-      </HotfixStageShell>
+        </div>}
+        side={<AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />}
+      />
     );
   }
 
@@ -116,7 +121,11 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
   const postApprovalReview = stageKey === "opCompleted" ? await buildApprovalReviewViewData(ctx) : null;
 
   return (
-    <HotfixStageShell title={stageKey === "opCompleted" ? "OP 主管上版後確認" : "OP 上版"} subtitle="OP 主管已核准，執行上版並記錄結果" {...shellProps}>
+    <HotfixStageShell
+      title={stageKey === "opCompleted" ? "OP 主管上版後確認" : "OP 上版"}
+      subtitle="OP 主管已核准，執行上版並記錄結果"
+      {...shellProps}
+      main={<div className="space-y-5">
       <ExecutorAssignmentSummary issueId={params.id} preview={reassignPreview} />
       <OpSubsteps stageKey={stageKey} />
       <ExecutionFieldsReadOnly fields={OP_DEPLOY_FIELDS} values={planValues} title="OP 上版前確認（已核准）" />
@@ -149,8 +158,8 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
           )}
         </>
       )}
-
-      <AttachmentSection issueId={params.id} items={attachments} readOnly={stageKey === "opCompleted" || !isResponsible} canUpload={stageKey !== "opCompleted" && isResponsible} />
-    </HotfixStageShell>
+      </div>}
+      side={<AttachmentSection issueId={params.id} items={attachments} readOnly={stageKey === "opCompleted" || !isResponsible} canUpload={stageKey !== "opCompleted" && isResponsible} />}
+    />
   );
 }
