@@ -1,11 +1,32 @@
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { roleLabel } from "@/lib/constants";
+import { getCurrentUser } from "@/lib/auth";
 import LoginUserForm from "./LoginUserForm";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_POST_LOGIN_ROUTE = "/governance";
+
+// 只允許站內相對路徑；不是以單一 "/" 開頭、以 "//" 開頭或含 "://" 一律視為不安全，
+// 回正式首頁，避免 Open Redirect。
+function safePostLoginRoute(value: string | undefined): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("://")) {
+    return DEFAULT_POST_LOGIN_ROUTE;
+  }
+  return value;
+}
+
 export default async function LoginPage({ searchParams }: { searchParams: Record<string, string | undefined> }) {
+  // 已登入使用者（含重新整理／瀏覽器上一頁回到 /login）一律在 Server Render 前導向正式
+  // 首頁，不得先送出登入名單再由 Client 跳轉——getCurrentUser 已即時查詢 active session，
+  // 未登入或帳號已停用時回傳 null，維持既有 Session 語意，不另建第二套判斷。
+  const currentUser = await getCurrentUser();
+  if (currentUser) {
+    redirect(safePostLoginRoute(searchParams.next));
+  }
+
   const users = await prisma.user.findMany({
     where: { isActive: true },
     include: {

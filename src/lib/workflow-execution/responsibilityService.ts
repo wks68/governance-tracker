@@ -134,8 +134,11 @@ export async function evaluateCurrentActorTask(issueId: string, actorId: string)
         isMineToClaim = true;
       }
     }
-  } else if (stage.stageType === "CLAIM" && issue.assignedTeamId) {
-    // 已接單待指派
+  } else if (stage.stageType === "CLAIM" && issue.assignedTeamId && stage.stageKey !== "pendingReporterConfirmation") {
+    // 已接單待指派。pendingReporterConfirmation 的 stageType 同樣是 CLAIM（供既有
+    // reporterClaim transition 沿用同一種關卡類型），但其責任人是原申請人本人，不是
+    // 上一輪 RD/QA/OP 承接團隊的 Lead——必須排除，改走下方申請人分支，否則第 8→9 關
+    // 交接會被誤判為「還在等承接團隊指派」，責任永遠回不到原申請人。
     waitingRoleLabel = assignedTeam ? `${assignedTeam.name} 團隊 Lead` : "承接團隊 Lead";
     if (canEdit) {
       const leadMembership = await prisma.teamMember.findFirst({
@@ -146,8 +149,11 @@ export async function evaluateCurrentActorTask(issueId: string, actorId: string)
         isMineToClaim = true;
       }
     }
-  } else if (executorDomain) {
-    // WORK／DEPLOYMENT／CONFIRMATION：執行人處理中
+  } else if (executorDomain && stage.stageKey !== "opCompleted") {
+    // WORK／DEPLOYMENT：執行人處理中。opCompleted 雖仍在 OP 執行人領域範圍內（供
+    // ExecutorAssignmentSummary 等畫面顯示「原執行人是誰」），但其責任語意是 OP 主管的
+    // 第二輪 DEPLOYMENT_APPROVAL 上版後確認，不是執行人的工作關卡——必須排除，改走下方
+    // 的核准分支，否則執行人完成上版後仍會被誤判為「待處理」，主管永遠拿不到核准責任。
     waitingRoleLabel = assignedTeam ? `${assignedTeam.name}／${executorName ?? "（待指派）"}` : executorName ?? "（待指派）";
     if (canEdit && executorName) {
       const row = await prisma.issueFieldValue.findUnique({
@@ -155,10 +161,16 @@ export async function evaluateCurrentActorTask(issueId: string, actorId: string)
       });
       if (row?.fieldValue === actorId) action = "ENTER_WORK";
     }
-  } else if (stage.stageType === "APPROVAL" && stage.approvalType) {
-    waitingRoleLabel = APPROVAL_ROLE_LABEL[stage.approvalType] ?? "主管";
+  } else if (stage.stageKey === "opCompleted" || (stage.stageType === "APPROVAL" && stage.approvalType)) {
+    // opCompleted 沒有獨立的 approvalType 欄位（stageType 是 CONFIRMATION，不是
+    // APPROVAL），但其 ApprovalRecord 一律以 DEPLOYMENT_APPROVAL／relatedStageKey=
+    // "opCompleted" 建立（見 requirementService.ts createRequiredApprovalRecordIfNeeded
+    // 對 opCompleted 的特例、queries.ts 對 pendingApproval 的相同特例），因此在這裡沿用
+    // 同一組 approvalType 常數，不落回一般 WORK 分支、也不新建第二套核准判斷。
+    const approvalType = stage.stageKey === "opCompleted" ? "DEPLOYMENT_APPROVAL" : stage.approvalType!;
+    waitingRoleLabel = APPROVAL_ROLE_LABEL[approvalType] ?? "主管";
     const pending = await prisma.approvalRecord.findFirst({
-      where: { issueId, approvalType: stage.approvalType, relatedStageKey: stage.stageKey, recordStatus: "ACTIVE", decision: "PENDING" },
+      where: { issueId, approvalType, relatedStageKey: stage.stageKey, recordStatus: "ACTIVE", decision: "PENDING" },
       orderBy: { revisionNo: "desc" },
     });
     if (pending) {

@@ -73,9 +73,6 @@ export const OP_DEPLOY_FIELDS: readonly ExecutionFieldDef[] = [
   { key: "opComponentTypes", label: "服務／元件類型", type: "text", required: false },
   { key: "opComponentOther", label: "其他服務或元件說明", type: "text", required: false },
   { key: "opOperationTargets", label: "實際操作標的", type: "text", required: false },
-  { key: "opOperationPlannedAt", label: "預計操作時間", type: "datetime-local", required: false },
-  { key: "opOperationImpactMinutes", label: "操作造成的預計影響時間（分鐘）", type: "text", required: false },
-  { key: "opOperationImpactScope", label: "操作影響範圍", type: "textarea", required: false },
   { key: "opExpectedImpacts", label: "預計影響", type: "text", required: true },
   { key: "opImpactOther", label: "其他影響說明", type: "text", required: false },
   { key: "opNoImpactJustification", label: "無明顯影響判定說明", type: "textarea", required: false },
@@ -233,10 +230,6 @@ export function validateExecutionSubmission(stageKey: string, values: Record<str
       if (operations.includes("其他")) requireValue(values, "opOperationOther", "其他操作說明", issues);
       if (components.includes("其他")) requireValue(values, "opComponentOther", "其他服務或元件說明", issues);
       requireValue(values, "opOperationTargets", "實際操作標的", issues);
-      requireValue(values, "opOperationPlannedAt", "預計操作時間", issues);
-      if (Number.isNaN(new Date(values.opOperationPlannedAt ?? "").getTime())) issues.push("預計操作時間格式不正確");
-      if (!isPositiveInteger(values.opOperationImpactMinutes)) issues.push("操作造成的預計影響時間必須為正整數");
-      requireValue(values, "opOperationImpactScope", "影響範圍", issues);
     }
     const impacts = parseMultiValue(values.opExpectedImpacts);
     if (impacts.length === 0) issues.push("預計影響至少選擇一項");
