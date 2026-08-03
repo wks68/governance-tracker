@@ -257,8 +257,8 @@ function runStaticSourceChecks() {
       shellSrc.includes("CurrentHotfixFlowCard") && !shellSrc.includes("CurrentStageGuidanceCard"),
   );
   check(
-    "[11c-2] 目前 Hotfix 流程只有三項，下一關沿用 nineStage 動態名稱並正確處理終態",
-    (currentFlowSrc.match(/<dt/g) ?? []).length === 3 &&
+    "[11c-2] 目前 Hotfix 流程整合目前責任（目前待辦／等待人員）並沿用 nineStage 動態名稱、正確處理終態",
+    currentFlowSrc.includes("view.currentTodo") && currentFlowSrc.includes("view.waitingOn") &&
       currentFlowSrc.includes("nineStageLabelOfIndex(view.currentIndex + 1)") &&
       currentFlowSrc.includes("流程已完成") && currentFlowSrc.includes("流程已取消"),
   );

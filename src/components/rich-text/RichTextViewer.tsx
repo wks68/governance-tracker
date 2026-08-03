@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- Attachment dimensions are user supplied; max-width containment and the authenticated internal route are required here. */
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { normalizeRichTextImageWidth, parseRichTextValue, type RichTextMark, type RichTextNode } from "@/lib/rich-text/value";
 
@@ -31,7 +31,16 @@ function RichTextImage({ node, onImage }: { node: RichTextNode; onImage: (src: s
   const widthPercent = normalizeRichTextImageWidth(node.attrs?.widthPercent);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const imgRef = useRef<HTMLImageElement>(null);
   const style: CSSProperties = { width: `${widthPercent}%`, minWidth: "min(160px, 100%)", maxWidth: "100%" };
+
+  // Server-rendered <img> can finish failing to load before React hydrates and attaches
+  // onError, in which case the browser never fires it again. Detect that already-broken
+  // state on mount/retry too, not just future error events.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth === 0) setFailed(true);
+  }, [attempt, src]);
 
   return (
     <div className="my-3 ml-auto mr-auto min-w-0" style={style} data-width-percent={widthPercent}>
@@ -49,7 +58,7 @@ function RichTextImage({ node, onImage }: { node: RichTextNode; onImage: (src: s
         </div>
       ) : (
         <button type="button" className="block w-full cursor-zoom-in rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onImage(src)} aria-label="放大預覽圖片">
-          <img key={attempt} src={src} alt="使用者上傳的問題截圖" className="block h-auto w-full max-w-full rounded-lg border border-border object-contain" onError={() => setFailed(true)} />
+          <img ref={imgRef} key={attempt} src={src} alt="使用者上傳的問題截圖" className="block h-auto w-full max-w-full rounded-lg border border-border object-contain" onError={() => setFailed(true)} />
         </button>
       )}
     </div>

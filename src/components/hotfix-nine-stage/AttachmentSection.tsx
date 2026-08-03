@@ -3,7 +3,7 @@
 // Hotfix 九階段 UI：附件（選填）——上傳＋清單＋預覽＋刪除共用元件。
 // 主管簽核頁傳入 readOnly=true：只能預覽，不顯示上傳／刪除。
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { ActionErrorText } from "@/components/ActionResultBanner";
@@ -17,12 +17,6 @@ function formatSize(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatAttachmentTime(value: string): string {
-  // Node and Chromium can use different Unicode spacing for the same Intl
-  // locale. Normalize it so the Client Component hydrates deterministically.
-  return formatDateTime(value).replace(/[\u2009\u202f]/g, " ");
 }
 
 function isImage(mimeType: string): boolean {
@@ -70,6 +64,15 @@ function TextPreviewModal({ url, fileName, onClose }: { url: string; fileName: s
 
 function AttachmentThumbnail({ src, fileName, onOpen }: { src: string; fileName: string; onOpen: () => void }) {
   const [failed, setFailed] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // Same SSR/hydration gap as RichTextViewer's inline images: an already-broken <img>
+  // never re-fires onError once React attaches the handler, so check on mount too.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth === 0) setFailed(true);
+  }, [src]);
+
   if (failed) {
     return (
       <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-border bg-surface-muted text-[10px] text-text-muted">
@@ -84,7 +87,7 @@ function AttachmentThumbnail({ src, fileName, onOpen }: { src: string; fileName:
       aria-label={`預覽附件：${fileName}`}
       className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-border bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
-      <Image src={src} alt="" fill unoptimized sizes="56px" className="object-cover object-center" onError={() => setFailed(true)} />
+      <Image ref={imgRef} src={src} alt="" fill unoptimized sizes="56px" className="object-cover object-center" onError={() => setFailed(true)} />
     </button>
   );
 }
@@ -92,6 +95,13 @@ function AttachmentThumbnail({ src, fileName, onOpen }: { src: string; fileName:
 function ImageLightbox({ src, fileName, onClose }: { src: string; fileName: string; onClose: () => void }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth === 0) setFailed(true);
+  }, [attempt, src]);
+
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4"
@@ -119,7 +129,7 @@ function ImageLightbox({ src, fileName, onClose }: { src: string; fileName: stri
         </div>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element -- lightbox needs the authenticated internal route, natural sizing.
-        <img key={attempt} src={src} alt={fileName} className="max-h-full max-w-full rounded-lg object-contain" onClick={(event) => event.stopPropagation()} onError={() => setFailed(true)} />
+        <img ref={imgRef} key={attempt} src={src} alt={fileName} className="max-h-full max-w-full rounded-lg object-contain" onClick={(event) => event.stopPropagation()} onError={() => setFailed(true)} />
       )}
     </div>
   );
@@ -156,7 +166,7 @@ function AttachmentItem({ issueId, item, onChanged }: { issueId: string; item: H
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-gray-800" title={item.fileName}>{item.fileName}</p>
             <p className="mt-1 break-words text-xs leading-5 text-text-muted">
-              {item.mimeType || "未知類型"} ・ {formatSize(item.sizeBytes)} ・ 上傳人：{item.uploaderName} ・ {formatAttachmentTime(item.uploadedAt)}
+              {item.mimeType || "未知類型"} ・ {formatSize(item.sizeBytes)} ・ 上傳人：{item.uploaderName} ・ {formatDateTime(item.uploadedAt)}
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">

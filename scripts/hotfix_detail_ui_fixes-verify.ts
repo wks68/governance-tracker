@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { repairDisplayFileName, asciiFallbackFileName } from "../src/lib/hotfix-ui/fileNameDisplay";
 import { getHistoryPlainText } from "../src/lib/rich-text/value";
+import { formatDateTime, formatDate } from "../src/lib/datetime";
 
 const ROOT = process.cwd();
 let passed = 0;
@@ -132,6 +133,51 @@ test("技術明細預設收合，需點擊才展開", () => {
 test("技術明細不顯示 DB id，只顯示事件代碼／時間／執行人／階段", () => {
   assert.ok(timeline.includes("事件代碼：") && timeline.includes("執行人：") && timeline.includes("階段："));
   assert.ok(!/entry\.id/.test(timeline.replace(/key=\{entry\.id\}/, "")));
+});
+
+console.log("\n=== 共用日期 formatter：Server／Client Unicode 空白正規化（Hydration 根因） ===");
+test("formatDateTime／formatDate 輸出不含任何非一般空格的 Unicode 空白字元", () => {
+  const dt = formatDateTime(new Date("2026-08-03T12:52:30.000Z"));
+  const d = formatDate(new Date("2026-08-03T12:52:30.000Z"));
+  assert.ok(!/[^\S ]/u.test(dt.replace(/ /g, "")) && !/\p{Zs}/u.test(dt.replace(/ /g, "")));
+  assert.doesNotMatch(dt, /[    　]/);
+  assert.doesNotMatch(d, /[    　]/);
+});
+test("附件不再有第二套日期正規化邏輯，統一呼叫共用 formatDateTime", () => {
+  assert.ok(!attachmentSection.includes("formatAttachmentTime"));
+  assert.ok(attachmentSection.includes("formatDateTime(item.uploadedAt)"));
+});
+test("ApprovalReviewPanel 未使用 suppressHydrationWarning 或延後渲染掩蓋問題", () => {
+  const approvalReviewPanel = source("src/components/hotfix-nine-stage/ApprovalReviewPanel.tsx");
+  assert.ok(!approvalReviewPanel.includes("suppressHydrationWarning"));
+  assert.ok(approvalReviewPanel.includes("formatDateTime"));
+});
+
+console.log("\n=== 目前責任整合進 CurrentHotfixFlowCard ===");
+test("CurrentHotfixFlowCard 呈現目前待辦與目前等待人員／執行人，依既有 responsibility resolver 動態決定", () => {
+  assert.ok(currentFlow.includes("目前待辦") && currentFlow.includes("目前等待人員／執行人"));
+  assert.ok(currentFlow.includes("view.currentTodo") && currentFlow.includes("view.waitingOn"));
+  assert.ok(!/["'`](申請人直屬主管|RD 主管|QA 主管|OP 主管)["'`]/.test(currentFlow));
+});
+test("HotfixStageShell 把既有 evaluateCurrentActorTask 結果餵給 CurrentHotfixFlowCard，沒有另建第二套責任判斷", () => {
+  assert.ok(shell.includes("task?.businessStatusLabel") && shell.includes("task?.waitingRoleLabel") && shell.includes("task?.action"));
+  assert.ok(shell.includes("evaluateCurrentActorTask"));
+});
+test("送出時間沿用既有 ApprovalRecord／Workflow Runtime 資料，不另建查詢", () => {
+  assert.ok(shell.includes("ctx?.runtime.pendingApproval?.requestedAt"));
+});
+
+console.log("\n=== 送簽摘要（data-driven，取代舊「送簽內容」靜態卡） ===");
+test("標題為「送簽摘要」，使用既有資料且不重複顯示大型內嵌圖片", () => {
+  assert.ok(requesterPage.includes("送簽摘要"));
+  assert.ok(requesterPage.includes("getRichTextPlainText") && requesterPage.includes("hasMeaningfulRichTextContent"));
+  assert.ok(!requesterPage.includes("<RichTextViewer"));
+});
+test("送簽摘要不重複顯示申請人／團隊名稱／Hotfix 單號等既有基本資訊欄位", () => {
+  assert.ok(!requesterPage.includes("info.reporterName") && !requesterPage.includes("info.teamName") && !requesterPage.includes("info.issueKey"));
+});
+test("空資料時顯示小型空狀態文字，而非大型空卡", () => {
+  assert.ok(requesterPage.includes("目前沒有額外送簽說明，請依工單基本資訊進行確認"));
 });
 
 console.log("\n=== 歷程內容不外洩 Rich Text JSON／[object Object]／圖片 URL ===");

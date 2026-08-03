@@ -17,6 +17,7 @@ import type { GovernanceRelationView } from "@/lib/issue-relations/viewService";
 import { evaluateCurrentActorTask } from "@/lib/workflow-execution/responsibilityService";
 import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
+import { formatDateTime } from "@/lib/datetime";
 
 export default async function HotfixStageShell({
   subtitle,
@@ -83,6 +84,9 @@ export default async function HotfixStageShell({
     : legacyView
       ? <CumulativeWorkflowContext legacyIssueId={legacyView.issueId} />
       : null;
+  const currentTodo = task?.businessStatusLabel ?? (cancelled ? "已取消" : terminalComplete ? "已結案" : "—");
+  const waitingOn = task?.waitingRoleLabel ?? "—";
+  const enteredAt = ctx?.runtime.pendingApproval?.requestedAt ? formatDateTime(ctx.runtime.pendingApproval.requestedAt) : null;
 
   return (
     <div className="hotfix-shell mx-auto max-w-[100rem] space-y-4 pb-20 sm:space-y-5 xl:space-y-6">
@@ -121,6 +125,10 @@ export default async function HotfixStageShell({
           teamName: ctx?.ticketBasicInfo.teamName ?? legacyView?.teamName ?? null,
           cancelled,
           terminalComplete,
+          currentTodo,
+          waitingOn,
+          actionKind: task?.action ?? null,
+          enteredAt,
         }} />}
         contentLeft={main ?? children}
         contentRight={side}

@@ -42,16 +42,24 @@ function toDate(value: DateInput): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// Node 與 Chromium 的 ICU 對同一個 locale／欄位組合，仍可能選用不同的 Unicode 空白字元
+// （例如 Node 常在日期與時間之間插入 U+2009 THIN SPACE，Chromium 則輸出一般空格）。
+// 這與時區／locale 無關，純粹是 ICU 版本差異，比照上面已處理的雙向隔離符號，一律正規化成
+// 一般空格，否則 Server 與 Client 算出的字串逐字元不同，仍會觸發 Hydration 錯誤。
+function normalizeFormatted(text: string): string {
+  return text.replace(/⁦|⁩/g, "").replace(/\p{Zs}/gu, " ");
+}
+
 /** 日期＋時間（例：2026/07/29 21:38:34）。伺服器與瀏覽器輸出保證一致。 */
 export function formatDateTime(value: DateInput, fallback = "—"): string {
   const date = toDate(value);
   if (!date) return fallback;
-  return DATE_TIME_FORMATTER.format(date).replace(/⁦|⁩/g, "");
+  return normalizeFormatted(DATE_TIME_FORMATTER.format(date));
 }
 
 /** 只有日期（例：2026/07/29）。伺服器與瀏覽器輸出保證一致。 */
 export function formatDate(value: DateInput, fallback = "—"): string {
   const date = toDate(value);
   if (!date) return fallback;
-  return DATE_FORMATTER.format(date).replace(/⁦|⁩/g, "");
+  return normalizeFormatted(DATE_FORMATTER.format(date));
 }
