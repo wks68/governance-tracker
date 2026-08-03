@@ -39,7 +39,7 @@ function Field({ label, children }: { label: React.ReactNode; children: React.Re
 export default function TicketBasicInfo({ data }: { data: TicketBasicInfoData }) {
   const priorityDef = hotfixPriorityDefOf(data.hotfixPriority);
   return (
-    <section className="ui-card h-full p-5 sm:p-6">
+    <section className="ui-card p-5 sm:p-6">
       <h2 className="text-base font-semibold text-text-primary">Hotfix 單基本資訊</h2>
       <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
         <Field label="Hotfix 單編號">{data.issueKey}</Field>

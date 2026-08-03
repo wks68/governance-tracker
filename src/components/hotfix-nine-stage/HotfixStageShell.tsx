@@ -17,7 +17,6 @@ import type { GovernanceRelationView } from "@/lib/issue-relations/viewService";
 import { evaluateCurrentActorTask } from "@/lib/workflow-execution/responsibilityService";
 import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
-import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
 
 export default async function HotfixStageShell({
   subtitle,
@@ -130,7 +129,6 @@ export default async function HotfixStageShell({
           {cumulativeContext}
         </div>}
       />
-      <ScrollDownChevron />
     </div>
   );
 }

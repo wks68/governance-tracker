@@ -5,6 +5,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { uploadHotfixAttachmentAction, deleteHotfixAttachmentAction } from "@/app/issues/[id]/hotfix/attachment-actions";
 import type { HotfixAttachmentView } from "@/lib/hotfix-ui/attachmentService";
@@ -67,10 +68,69 @@ function TextPreviewModal({ url, fileName, onClose }: { url: string; fileName: s
   );
 }
 
+function AttachmentThumbnail({ src, fileName, onOpen }: { src: string; fileName: string; onOpen: () => void }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-border bg-surface-muted text-[10px] text-text-muted">
+        無法預覽
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`預覽附件：${fileName}`}
+      className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-border bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      <Image src={src} alt="" fill unoptimized sizes="56px" className="object-cover object-center" onError={() => setFailed(true)} />
+    </button>
+  );
+}
+
+function ImageLightbox({ src, fileName, onClose }: { src: string; fileName: string; onClose: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`預覽附件：${fileName}`}
+      onClick={onClose}
+      onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}
+      tabIndex={-1}
+    >
+      <button type="button" onClick={onClose} aria-label="關閉附件預覽" className="absolute right-4 top-4 inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-gray-800">
+        <X className="h-5 w-5" />
+      </button>
+      {failed ? (
+        <div className="max-w-sm rounded-lg bg-white p-4 text-center text-sm text-gray-700" role="status" onClick={(event) => event.stopPropagation()}>
+          <p className="font-medium">圖片附件目前無法預覽</p>
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            <button type="button" className="ui-button-secondary min-h-9 px-3 py-1.5" onClick={() => { setAttempt((value) => value + 1); setFailed(false); }}>
+              <RefreshCw className="h-4 w-4" aria-hidden />重新載入
+            </button>
+            <a href={src} target="_blank" rel="noreferrer" className="ui-button-secondary min-h-9 px-3 py-1.5">
+              <ExternalLink className="h-4 w-4" aria-hidden />開啟附件
+            </a>
+          </div>
+        </div>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element -- lightbox needs the authenticated internal route, natural sizing.
+        <img key={attempt} src={src} alt={fileName} className="max-h-full max-w-full rounded-lg object-contain" onClick={(event) => event.stopPropagation()} onError={() => setFailed(true)} />
+      )}
+    </div>
+  );
+}
+
 function AttachmentItem({ issueId, item, onChanged }: { issueId: string; item: HotfixAttachmentView; onChanged: () => void }) {
   const [textPreviewOpen, setTextPreviewOpen] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const image = isImage(item.mimeType);
 
   function handleDelete() {
     if (!confirm(`確定要刪除附件「${item.fileName}」？`)) return;
@@ -89,41 +149,44 @@ function AttachmentItem({ issueId, item, onChanged }: { issueId: string; item: H
   }
 
   return (
-    <div className="animate-item-enter rounded-md border border-gray-200 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-gray-800">{item.fileName}</p>
-          <p className="mt-1 text-xs leading-5 text-text-muted">
-            {item.mimeType || "未知類型"} ・ {formatSize(item.sizeBytes)} ・ 上傳人：{item.uploaderName} ・ {formatAttachmentTime(item.uploadedAt)}
-          </p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          {isTextLike(item.mimeType, item.fileName) ? (
-            <button type="button" onClick={() => setTextPreviewOpen(true)} className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
-              預覽
-            </button>
-          ) : (
-            <a href={item.url} target="_blank" rel="noreferrer" className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
-              {isImage(item.mimeType) || isPdf(item.mimeType) ? "預覽" : "開啟"}
+    <div className="animate-item-enter flex items-start gap-3 rounded-md border border-gray-200 p-3">
+      {image && <AttachmentThumbnail src={item.url} fileName={item.fileName} onOpen={() => setImagePreviewOpen(true)} />}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-gray-800" title={item.fileName}>{item.fileName}</p>
+            <p className="mt-1 break-words text-xs leading-5 text-text-muted">
+              {item.mimeType || "未知類型"} ・ {formatSize(item.sizeBytes)} ・ 上傳人：{item.uploaderName} ・ {formatAttachmentTime(item.uploadedAt)}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {image ? (
+              <button type="button" onClick={() => setImagePreviewOpen(true)} className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
+                預覽
+              </button>
+            ) : isTextLike(item.mimeType, item.fileName) ? (
+              <button type="button" onClick={() => setTextPreviewOpen(true)} className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
+                預覽
+              </button>
+            ) : (
+              <a href={item.url} target="_blank" rel="noreferrer" className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
+                {isPdf(item.mimeType) ? "預覽" : "開啟"}
+              </a>
+            )}
+            <a href={`${item.url}?download=1`} className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
+              下載
             </a>
-          )}
-          <a href={`${item.url}?download=1`} className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">
-            下載
-          </a>
-          {item.deletable && (
-            <button type="button" disabled={isPending} onClick={handleDelete} className="rounded-md border border-danger-border px-2 py-1 text-xs text-danger-text hover:bg-danger-bg disabled:opacity-40">
-              {isPending ? "刪除中…" : "刪除"}
-            </button>
-          )}
+            {item.deletable && (
+              <button type="button" disabled={isPending} onClick={handleDelete} className="rounded-md border border-danger-border px-2 py-1 text-xs text-danger-text hover:bg-danger-bg disabled:opacity-40">
+                {isPending ? "刪除中…" : "刪除"}
+              </button>
+            )}
+          </div>
         </div>
+        <ActionErrorText message={error} />
       </div>
-      {isImage(item.mimeType) && (
-        <div className="relative mt-3 aspect-video w-full overflow-hidden rounded-xl border border-border bg-surface-muted">
-          <Image src={item.url} alt={item.fileName} fill unoptimized sizes="(min-width: 768px) 50vw, 100vw" className="object-cover object-center" />
-        </div>
-      )}
-      <ActionErrorText message={error} />
       {textPreviewOpen && <TextPreviewModal url={item.url} fileName={item.fileName} onClose={() => setTextPreviewOpen(false)} />}
+      {imagePreviewOpen && <ImageLightbox src={item.url} fileName={item.fileName} onClose={() => setImagePreviewOpen(false)} />}
     </div>
   );
 }
@@ -156,7 +219,7 @@ export default function AttachmentSection({ issueId, items, readOnly, canUpload 
   }
 
   return (
-    <section id="attachment-section" className="ui-card h-full p-5 sm:p-6">
+    <section id="attachment-section" className="ui-card p-5 sm:p-6">
       <h2 className="text-base font-semibold text-text-primary">附件（選填）</h2>
 
       {canUpload && !readOnly && (

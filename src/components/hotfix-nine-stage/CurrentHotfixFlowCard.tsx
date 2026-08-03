@@ -17,7 +17,7 @@ function nextStageLabel(view: CurrentHotfixFlowView): string {
 
 export default function CurrentHotfixFlowCard({ view }: { view: CurrentHotfixFlowView }) {
   return (
-    <section className="ui-card h-full p-5 sm:p-6" aria-label="目前 Hotfix 流程">
+    <section className="ui-card p-5 sm:p-6" aria-label="目前 Hotfix 流程">
       <h2 className="text-base font-semibold text-text-primary">目前 Hotfix 流程</h2>
       <dl className="mt-4 grid gap-4 text-sm">
         <div>

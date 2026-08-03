@@ -1,5 +1,16 @@
+"use client";
+
+import { useState } from "react";
 import ExpandableContentBlock from "@/components/ui/ExpandableContentBlock";
 import RichTextViewer from "@/components/rich-text/RichTextViewer";
+
+export interface WorkflowHistoryTechnicalEvent {
+  label: string;
+  code: string;
+  occurredAt: string;
+  actor: string;
+  stage?: string;
+}
 
 export interface WorkflowHistoryEntry {
   id: string;
@@ -8,7 +19,36 @@ export interface WorkflowHistoryEntry {
   detail?: string | null;
   richDetails?: Array<{ label: string; value: string }>;
   fieldChanges?: Array<{ label: string; before: string; after: string }>;
-  technicalCode?: string | null;
+  technical: WorkflowHistoryTechnicalEvent[];
+}
+
+function TechnicalDetail({ events }: { events: WorkflowHistoryTechnicalEvent[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="rounded-md px-1 py-0.5 text-xs font-medium text-text-muted transition hover:bg-surface-muted hover:text-text-secondary"
+      >
+        {open ? "收合技術明細" : "技術明細"}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-2 rounded-lg border border-border bg-surface-muted p-2.5">
+          {events.map((event, index) => (
+            <div key={index} className="min-w-0 max-w-full text-xs leading-5 text-text-muted [overflow-wrap:anywhere]">
+              <span className="font-medium text-text-secondary">{event.label}</span>
+              <span className="ml-2 font-mono">事件代碼：{event.code}</span>
+              <span className="ml-2">{event.occurredAt}</span>
+              <span className="ml-2">執行人：{event.actor}</span>
+              {event.stage && <span className="ml-2">階段：{event.stage}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function WorkflowHistoryTimeline({ entries }: { entries: WorkflowHistoryEntry[] }) {
@@ -24,7 +64,6 @@ export default function WorkflowHistoryTimeline({ entries }: { entries: Workflow
               <span aria-hidden className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary" />
               <div className="min-w-0 max-w-full text-sm leading-6"><ExpandableContentBlock text={entry.primary} characterThreshold={220} /></div>
               <p className="mt-1 break-words text-sm leading-5 text-text-muted">{entry.meta}</p>
-              {entry.technicalCode && <p className="mt-0.5 break-all font-mono text-xs leading-5 text-text-muted">事件代碼：{entry.technicalCode}</p>}
               {entry.detail && <div className="mt-2 min-w-0 max-w-full rounded-lg bg-surface-muted px-3 py-2 text-sm leading-6"><ExpandableContentBlock text={entry.detail} characterThreshold={180} /></div>}
               {entry.fieldChanges?.map((change, index) => (
                 <section key={`${change.label}-${index}`} className="mt-2 min-w-0 max-w-full rounded-lg border border-border bg-surface-muted p-3" aria-label={`${change.label}異動`}>
@@ -36,6 +75,7 @@ export default function WorkflowHistoryTimeline({ entries }: { entries: Workflow
                 </section>
               ))}
               {entry.richDetails?.map((detail) => <div key={detail.label} className="mt-2 min-w-0 max-w-full rounded-lg bg-surface-muted px-3 py-2"><p className="mb-1 break-words text-sm font-medium leading-5 text-text-secondary">{detail.label}</p><RichTextViewer value={detail.value} /></div>)}
+              <TechnicalDetail events={entry.technical} />
             </li>
           ))}
         </ol>

@@ -9,6 +9,7 @@ import { hasExecutionCapability } from "@/lib/workflowExecutionService";
 import { prisma } from "@/lib/prisma";
 import { readAttachmentFile } from "@/lib/hotfix-ui/attachmentStorage";
 import { ATTACHMENT_URL_PREFIX } from "@/lib/hotfix-ui/attachmentStorage";
+import { repairDisplayFileName, asciiFallbackFileName } from "@/lib/hotfix-ui/fileNameDisplay";
 
 export async function GET(request: NextRequest, { params }: { params: { storedFileName: string } }) {
   const user = await getCurrentUser();
@@ -30,12 +31,14 @@ export async function GET(request: NextRequest, { params }: { params: { storedFi
 
   const download = request.nextUrl.searchParams.get("download") === "1";
   const disposition = download ? "attachment" : "inline";
-  const safeName = encodeURIComponent(evidence.title || "attachment");
+  const displayName = repairDisplayFileName(evidence.title || "attachment");
+  const asciiName = asciiFallbackFileName(displayName).replace(/"/g, "'");
+  const utf8Name = encodeURIComponent(displayName);
 
   return new NextResponse(new Uint8Array(bytes), {
     headers: {
       "Content-Type": evidence.type || "application/octet-stream",
-      "Content-Disposition": `${disposition}; filename*=UTF-8''${safeName}`,
+      "Content-Disposition": `${disposition}; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`,
       "Cache-Control": "private, no-store",
     },
   });

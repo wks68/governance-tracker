@@ -7,6 +7,7 @@ import { evaluateActorEligibilityForStage } from "../workflowExecutionService";
 import { writeAttachmentFile, deleteAttachmentFileIfExists, attachmentFileSize, MAX_ATTACHMENT_BYTES, ATTACHMENT_URL_PREFIX } from "./attachmentStorage";
 import { nineStageIndexOfStageKey, nineStageLabelOfIndex } from "./nineStage";
 import { canActorEditHotfixDraft } from "./draftService";
+import { repairDisplayFileName } from "./fileNameDisplay";
 
 export class AttachmentValidationError extends Error {
   constructor(message: string) {
@@ -199,7 +200,7 @@ export async function listHotfixAttachments(issueId: string, opts?: { actorId?: 
     const nineIdx = nineStageIndexOfStageKey(stageKey);
     result.push({
       id: row.id,
-      fileName: row.title,
+      fileName: repairDisplayFileName(row.title),
       mimeType: row.type,
       sizeBytes,
       stageKey,

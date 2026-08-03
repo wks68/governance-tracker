@@ -76,6 +76,122 @@ function readSnapshot(value: string | undefined): Record<string, string> {
   }
 }
 
+// 建立 Hotfix 當下（同一個 transaction）一律連續寫入這幾種技術紀錄：IssueCreated（建立
+// 工單）→ ISSUE_CREATED_AUTO_START（啟動流程）→ HOTFIX_TICKET_SUBMITTED（自動推進到第 2
+// 關）。畫面上這些純屬「建立並送出」这一個業務動作的技術副產物，不應各自成一筆歷程。
+// 只依「同一 actor＋同一組已知技術代碼＋時間緊鄰」聚合，不相關事件（例如日後的 RD／QA／OP
+// 簽核）技術代碼不在此集合內，時間也相差甚遠，不會被誤併。
+const CREATION_CHAIN_CODES = new Set(["IssueCreated", "ISSUE_CREATED_AUTO_START", "HOTFIX_TICKET_SUBMITTED"]);
+const CREATION_CLUSTER_WINDOW_MS = 5 * 60 * 1000;
+
+interface RawTimelineEntry {
+  id: string;
+  timestamp: number;
+  actorId: string | null;
+  actorName: string;
+  stageLabel: string;
+  technicalCode: string;
+  technicalLabel: string;
+  primary: string;
+  meta: string;
+  detail?: string | null;
+  richDetails?: Array<{ label: string; value: string }>;
+  fieldChanges?: Array<{ label: string; before: string; after: string }>;
+  technicalGroup?: RawTimelineEntry[];
+}
+
+// 只依真實資料語意聚合：建立工單／自動啟動流程／自動送出核准這幾個技術事件，只要確實落在
+// 建立 Hotfix 這筆交易起算的短時間窗內、且是同一 actor，就視為同一個業務動作——即使實際寫入
+// 順序與 timestamp 精度導致它們不是連續相鄰（例如「送出核准」的 AuditLog 可能晚於已建立的
+// PENDING ApprovalRecord 才寫入），一律以「整個時間窗」逐筆判斷，不是只看開頭連續片段，
+// 才不會漏併同一次交易稍後才落地的技術紀錄。時間窗外、或 actor 不同的事件一律維持原樣，不
+// 相關事件（例如日後才發生的 RD／QA／OP 簽核，技術代碼相同也因時間相差甚遠而不受影響）。
+// 找不到 IssueCreated 這個錨點時完全不做任何合併，維持原始歷程逐筆顯示。
+function collapseCreationCluster(ascending: RawTimelineEntry[], issue: { issueKey: string; title: string }): RawTimelineEntry[] {
+  if (ascending.length === 0 || ascending[0].technicalCode !== "IssueCreated") return ascending;
+
+  const first = ascending[0];
+  const windowEnd = first.timestamp + CREATION_CLUSTER_WINDOW_MS;
+
+  const creationGroup: RawTimelineEntry[] = [];
+  const stageEntryPrecursors: RawTimelineEntry[] = [];
+  let approvalCandidate: RawTimelineEntry | null = null;
+  const untouched: RawTimelineEntry[] = [];
+
+  for (const item of ascending) {
+    const withinWindow = item.timestamp <= windowEnd;
+    if (withinWindow && item.actorId === first.actorId && CREATION_CHAIN_CODES.has(item.technicalCode)) {
+      creationGroup.push(item);
+      continue;
+    }
+    if (withinWindow && !approvalCandidate && item.id.startsWith("approval-")) {
+      approvalCandidate = item;
+      continue;
+    }
+    // 「送出核准」的 AuditLog 只是待核准紀錄本身的前導技術副本，實際狀態一律以
+    // approvalCandidate（ApprovalRecord）為準；併入其技術明細，不獨立顯示成第三筆。
+    if (withinWindow && item.technicalCode === "WORKFLOW_STAGE_ENTRY") {
+      stageEntryPrecursors.push(item);
+      continue;
+    }
+    untouched.push(item);
+  }
+
+  if (creationGroup.length === 0) return ascending;
+
+  const submitted = creationGroup.some((item) => item.technicalCode === "HOTFIX_TICKET_SUBMITTED");
+  const createdAtText = formatDateTime(new Date(first.timestamp));
+
+  const creationEntry: RawTimelineEntry = {
+    id: "creation-summary",
+    timestamp: first.timestamp,
+    actorId: first.actorId,
+    actorName: first.actorName,
+    stageLabel: first.stageLabel,
+    technicalCode: "HOTFIX_CREATED_SUBMITTED",
+    technicalLabel: submitted ? "建立並送出 Hotfix" : "建立 Hotfix",
+    primary: submitted
+      ? `建立並送出 Hotfix：建立者 ${first.actorName}，Hotfix 單號 ${issue.issueKey}，標題「${issue.title}」，建立時間 ${createdAtText}，已送交直屬主管簽核。`
+      : `建立 Hotfix：建立者 ${first.actorName}，Hotfix 單號 ${issue.issueKey}，標題「${issue.title}」，建立時間 ${createdAtText}。`,
+    meta: first.meta,
+    technicalGroup: creationGroup,
+  };
+
+  const result: RawTimelineEntry[] = [creationEntry];
+
+  if (approvalCandidate) {
+    result.push({
+      ...approvalCandidate,
+      id: "creation-summary-approval",
+      primary: `進入${approvalCandidate.stageLabel}：目前階段 ${approvalCandidate.stageLabel}，等待核准，進入時間 ${formatDateTime(new Date(approvalCandidate.timestamp))}。`,
+      technicalGroup: [approvalCandidate, ...stageEntryPrecursors],
+    });
+  } else if (stageEntryPrecursors.length > 0) {
+    creationEntry.technicalGroup = [...creationGroup, ...stageEntryPrecursors];
+  }
+
+  return [...result, ...untouched];
+}
+
+function toDisplayEntry(item: RawTimelineEntry): WorkflowHistoryEntry {
+  const group = item.technicalGroup ?? [item];
+  return {
+    id: item.id,
+    primary: item.primary,
+    meta: item.meta,
+    detail: item.detail ?? null,
+    richDetails: item.richDetails,
+    fieldChanges: item.fieldChanges,
+    technical: group.map((raw) => ({
+      label: raw.technicalLabel,
+      code: raw.technicalCode,
+      occurredAt: formatDateTime(new Date(raw.timestamp)),
+      actor: raw.actorName,
+      stage: raw.stageLabel,
+    })),
+  };
+}
+
 export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: { ctx?: HotfixPageContext; legacyIssueId?: string }) {
   const issueId = ctx?.issue.id ?? legacyIssueId;
   if (!issueId) return null;
@@ -116,7 +232,7 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
     if (recordId) snapshotByRecord.set(recordId, readSnapshot(row.fieldValue));
   }
 
-  const timeline: Array<WorkflowHistoryEntry & { timestamp: number }> = [];
+  const timeline: RawTimelineEntry[] = [];
   for (const record of records) {
     const stageLabel = APPROVAL_LABELS[record.relatedStageKey] ?? "主管簽核";
     const actorName = record.approver?.name ?? record.requestedBy.name;
@@ -133,9 +249,13 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
     timeline.push({
       id: `approval-${record.id}`,
       timestamp: happenedAt.getTime(),
+      actorId: record.approver?.id ?? record.requestedBy.id,
+      actorName,
+      stageLabel,
+      technicalCode: `APPROVAL_${record.decision}`,
+      technicalLabel: `${stageLabel}－${decisionLabel(record.decision)}`,
       primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${stageLabel}－${decisionLabel(record.decision)}」，執行人：${actorName}，團隊：${teamName}，流程階段：${stageLabel}。`,
       meta: `${formatDateTime(happenedAt)} · ${actorName}`,
-      technicalCode: `APPROVAL_${record.decision}`,
       detail: getHistoryPlainText(detailParts.join("\n")) || null,
       richDetails,
     });
@@ -148,9 +268,13 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
     timeline.push({
       id: `history-${row.id}`,
       timestamp: row.executedAt.getTime(),
+      actorId: row.actorUserId,
+      actorName,
+      stageLabel: row.toStage.label,
+      technicalCode: row.reasonCode || row.transitionType,
+      technicalLabel: action,
       primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${action}」，執行人：${actorName}，團隊：${teamName}，流程階段：${row.toStage.label}。`,
       meta: `${formatDateTime(row.executedAt)} · ${actorName}`,
-      technicalCode: row.reasonCode || row.transitionType,
     });
   }
 
@@ -163,14 +287,20 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
     timeline.push({
       id: `event-${event.id}`,
       timestamp: event.createdAt.getTime(),
+      actorId: event.actorUserId,
+      actorName: event.actor?.name ?? "系統",
+      stageLabel,
+      technicalCode: event.reasonCode || event.actionType,
+      technicalLabel: actionLabel,
       primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${actionLabel}」，執行人：${event.actor?.name ?? "系統"}，團隊：${teamName}，流程階段：${stageLabel}。`,
       meta: `${formatDateTime(event.createdAt)} · ${event.actor?.name ?? "系統"}`,
-      technicalCode: event.reasonCode || event.actionType,
       detail: fieldChanges.length ? null : getHistoryPlainText(event.summary),
       fieldChanges,
     });
   }
 
-  const entries = timeline.sort((left, right) => right.timestamp - left.timestamp).map(({ timestamp: _timestamp, ...entry }) => entry);
+  const ascending = timeline.sort((left, right) => left.timestamp - right.timestamp);
+  const collapsed = collapseCreationCluster(ascending, issue);
+  const entries = collapsed.sort((left, right) => right.timestamp - left.timestamp).map(toDisplayEntry);
   return <WorkflowHistoryTimeline entries={entries} />;
 }

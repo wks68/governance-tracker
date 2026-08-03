@@ -239,7 +239,6 @@ function runStaticSourceChecks() {
   const shellSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/HotfixStageShell.tsx"), "utf8");
   const currentFlowSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/CurrentHotfixFlowCard.tsx"), "utf8");
   const expandableSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/ui/ExpandableContentBlock.tsx"), "utf8");
-  const scrollChevronSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/ui/ScrollDownChevron.tsx"), "utf8");
   check(
     "[11b] Workflow 完成色集中於正式 semantic tokens",
     [
@@ -251,10 +250,10 @@ function runStaticSourceChecks() {
     ].every((token) => globalsSrc.includes(token)) && tailwindSrc.includes('"workflow-complete"'),
   );
   check(
-    "[11c] Z 型布局共用 50／50 等高列，手機維持相同 DOM 閱讀順序",
+    "[11c] Z 型布局共用 50／50 雙欄，手機維持相同 DOM 閱讀順序，高度依內容自然決定（不強制 stretch）",
     zLayoutSrc.includes("EqualHeightContentRow") &&
       equalHeightRowSrc.includes("grid-cols-1") && equalHeightRowSrc.includes("md:grid-cols-2") &&
-      equalHeightRowSrc.includes("items-stretch") && equalHeightRowSrc.includes("[&>section]:h-full") &&
+      !equalHeightRowSrc.includes("items-stretch") && !equalHeightRowSrc.includes("h-full") &&
       shellSrc.includes("CurrentHotfixFlowCard") && !shellSrc.includes("CurrentStageGuidanceCard"),
   );
   check(
@@ -310,12 +309,12 @@ function runStaticSourceChecks() {
       ].every((className) => globalsSrc.includes(className)),
   );
   check(
-    "[11h] 長內容與 Scroll Chevron 具 ARIA、條件式顯示及 reduced-motion",
+    "[11h] 長內容具 ARIA、條件式顯示及 reduced-motion；Hotfix 詳情頁不再有錯誤的雙箭頭 Scroll Chevron",
     expandableSrc.includes("aria-expanded={expanded}") && expandableSrc.includes("aria-controls={contentId}") &&
       expandableSrc.includes("閱讀更多") && expandableSrc.includes("顯示更少") &&
-      scrollChevronSrc.includes("scrollHeight > window.innerHeight + 180") &&
-      scrollChevronSrc.includes('aria-label="向下查看更多內容"') &&
-      [".animate-tooltip-in", ".animate-expand-hint-once", ".animate-scroll-chevron"].every((className) => globalsSrc.includes(className)),
+      !shellSrc.includes("ScrollDownChevron") &&
+      !fs.existsSync(path.join(REPO_ROOT, "src/components/ui/ScrollDownChevron.tsx")) &&
+      [".animate-tooltip-in", ".animate-expand-hint-once"].every((className) => globalsSrc.includes(className)),
   );
 }
 

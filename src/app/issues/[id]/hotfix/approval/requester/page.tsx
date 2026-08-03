@@ -31,7 +31,6 @@ export default async function HotfixApprovalRequesterPage({ params }: { params: 
       ticketBasicInfo={ctx.ticketBasicInfo}
       backHref="/issues?view=hotfix"
       ctx={ctx}
-      main={<section className="ui-card p-4"><h2 className="text-sm font-semibold text-text-primary">送簽內容</h2><p className="mt-2 text-sm text-text-secondary">請依工單基本資訊確認申請內容與影響範圍；本階段不提供編輯。</p></section>}
       side={<div className="space-y-5">
         <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
         {review ? <ApprovalReviewPanel
