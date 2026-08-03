@@ -16,6 +16,8 @@ import type {
   GovernanceRelationGroup,
   GovernanceRelationView,
 } from "@/lib/issue-relations/viewService";
+import ExpandableContentBlock from "@/components/ui/ExpandableContentBlock";
+import GovernanceRelationSelector from "./GovernanceRelationSelector";
 
 const KIND_LABELS: Record<GovernanceRelationGroup["key"], string> = {
   incident: "事件通報",
@@ -68,10 +70,12 @@ function RelationItem({
   item,
   canManage,
   onRemove,
+  expandable = false,
 }: {
   item: GovernanceRelationGroup["items"][number];
   canManage: boolean;
   onRemove: (relationId: string, label: string) => void;
+  expandable?: boolean;
 }) {
   return (
     <article
@@ -101,9 +105,9 @@ function RelationItem({
               </span>
             )}
           </div>
-          <p className="mt-1 line-clamp-2 text-sm font-medium text-gray-800">
-            {item.title}
-          </p>
+          <div className="mt-1 text-sm font-medium text-gray-800">
+            {expandable ? <ExpandableContentBlock text={item.title} characterThreshold={180} /> : <p className="line-clamp-2">{item.title}</p>}
+          </div>
         </div>
         <Link
           href={item.detailHref}
@@ -149,8 +153,12 @@ function RelationItem({
 
 export default function GovernanceRelationsCard({
   view,
+  presentation = "default",
+  hotfixCurrentStageLabel,
 }: {
   view: GovernanceRelationView;
+  presentation?: "default" | "hotfix-flow";
+  hotfixCurrentStageLabel?: string;
 }) {
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
@@ -172,6 +180,10 @@ export default function GovernanceRelationsCard({
       candidate.searchText.toLocaleLowerCase("zh-TW").includes(query),
     );
   }, [addQuery, candidates]);
+  const currentItem = view.groups.find((group) => group.key === "hotfix")?.items.find((item) => item.isCurrent) ?? null;
+  const incidentItems = view.groups.find((group) => group.key === "incident")?.items.filter((item) => !item.isCurrent) ?? [];
+  const rcaItems = view.groups.find((group) => group.key === "rca")?.items.filter((item) => !item.isCurrent) ?? [];
+  const projectItems = view.groups.find((group) => group.key === "project")?.items.filter((item) => !item.isCurrent) ?? [];
 
   function resetDialogs() {
     setAddOpen(false);
@@ -230,7 +242,7 @@ export default function GovernanceRelationsCard({
   return (
     <section
       aria-labelledby="governance-relations-title"
-      className="rounded-lg border border-gray-200 bg-white p-4"
+      className={presentation === "hotfix-flow" ? "ui-card p-5 sm:p-6" : "rounded-lg border border-gray-200 bg-white p-4"}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -238,10 +250,12 @@ export default function GovernanceRelationsCard({
             id="governance-relations-title"
             className="text-sm font-semibold text-gray-800"
           >
-            關聯治理紀錄
+            {presentation === "hotfix-flow" ? "治理關聯與追蹤" : "關聯治理紀錄"}
           </h2>
           <p className="mt-1 text-xs text-gray-500">
-            事件通報 → RCA → Hotfix → 季度專案
+            {presentation === "hotfix-flow"
+              ? "顯示與本次 Hotfix 相關的事件通報、RCA 及季度專案。"
+              : "事件通報 → RCA → Hotfix → 季度專案"}
           </p>
         </div>
         {view.canManage && (
@@ -251,7 +265,7 @@ export default function GovernanceRelationsCard({
               setError(null);
               setAddOpen(true);
             }}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-primary hover:text-primary"
+            className="min-h-11 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:border-primary hover:text-primary sm:w-auto"
           >
             管理關聯
           </button>
@@ -261,12 +275,30 @@ export default function GovernanceRelationsCard({
       <div className="mt-3">
         <ActionSuccessText message={success} />
       </div>
-      {!view.hasRelations && (
+      {!view.hasRelations && presentation !== "hotfix-flow" && (
         <p className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-500">
           尚未關聯
         </p>
       )}
 
+      {presentation === "hotfix-flow" ? (
+        <div className="mt-5 space-y-4">
+          <div className="rounded-xl border border-primary/25 bg-primary-muted p-4 sm:p-5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-primary">本次 Hotfix</h3>
+            {currentItem ? (
+              <div className="mt-3">
+                <p className="font-mono text-xs font-semibold text-primary">{currentItem.issueKey}</p>
+                <div className="mt-1 font-semibold text-text-primary"><ExpandableContentBlock text={currentItem.title} characterThreshold={180} /></div>
+                <p className="mt-3 text-xs text-text-secondary">目前流程階段：{hotfixCurrentStageLabel ?? currentItem.statusLabel}</p>
+                <span className="mt-2 inline-flex rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-primary">{currentItem.statusLabel}</span>
+              </div>
+            ) : <p className="mt-3 text-sm text-text-muted">目前 Hotfix</p>}
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {([ ["關聯事件通報", incidentItems], ["關聯 RCA", rcaItems], ["所屬季度專案", projectItems] ] as const).map(([label, items]) => <div key={label} className="min-w-0 rounded-xl border border-border bg-surface-muted p-4"><h3 className="text-xs font-semibold text-text-secondary">{label}</h3><div className="mt-3 space-y-2">{items.length === 0 ? <p className="text-sm text-text-muted">尚未關聯</p> : items.map((item) => <RelationItem key={item.id} item={item} canManage={view.canManage} expandable onRemove={(relationId, itemLabel) => { setError(null); setRemovalReason(""); setRemoveTarget({ relationId, label: itemLabel }); }} />)}</div></div>)}
+          </div>
+        </div>
+      ) : (
       <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]">
         {view.groups.map((group, index) => (
           <div key={group.key} className="contents">
@@ -306,6 +338,7 @@ export default function GovernanceRelationsCard({
           </div>
         ))}
       </div>
+      )}
 
       {addOpen && (
         <div
@@ -330,7 +363,7 @@ export default function GovernanceRelationsCard({
             </p>
             <div className="mt-4">
               <ActionErrorText message={error} />
-              <label
+              {presentation === "hotfix-flow" ? <GovernanceRelationSelector candidates={view.candidates} excludedIds={view.directRelations.map((item) => item.relatedIssueId)} onManageSelect={(candidate) => setSelectedIssueId(candidate.id)} /> : <><label
                 htmlFor="relation-candidate-search"
                 className="mb-1 block text-sm font-medium text-gray-700"
               >
@@ -361,6 +394,8 @@ export default function GovernanceRelationsCard({
                   目前沒有符合條件且可建立的治理紀錄。
                 </p>
               )}
+              </>}
+              {presentation === "hotfix-flow" && selectedIssueId && <p className="mt-3 rounded-md bg-primary-muted px-3 py-2 text-xs text-primary">已選擇治理紀錄，按「新增關聯」後正式儲存。</p>}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button

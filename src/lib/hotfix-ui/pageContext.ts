@@ -56,19 +56,13 @@ export async function loadHotfixPageContext(issueId: string, actor: User, allowe
     redirectTo = resolveIssueDetailHref({ id: issueId, issueType: issue.issueType, currentStageKey: stageKey, workflowStatus: issue.workflowStatus });
   }
 
-  const [hotfixPriority, team, createdAudit] = await Promise.all([
+  const [hotfixPriority, team] = await Promise.all([
     loadHotfixPriority(issueId),
     issue.assignedTeamId ? prisma.team.findUnique({ where: { id: issue.assignedTeamId } }) : Promise.resolve(null),
-    prisma.auditLog.findFirst({
-      where: { entityType: "Issue", entityId: issue.id, actionType: "IssueCreated" },
-      orderBy: { createdAt: "asc" },
-      include: { actor: true },
-    }),
   ]);
   const ticketBasicInfo: TicketBasicInfoData = {
     issueKey: issue.issueKey,
     reporterName: issue.reporter,
-    creatorName: createdAudit?.actor?.name ?? null,
     teamName: team?.name ?? null,
     environment: issue.environment,
     title: issue.title,

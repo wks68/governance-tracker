@@ -19,13 +19,21 @@ type DraftFilters = {
   overdue: boolean;
 };
 
-const FILTER_KEYS = ["quick", "systemName", "light", "urgency", "waitingRole", "overdue"] as const;
+const PANEL_FILTER_KEYS = ["quick", "systemName", "light", "urgency", "waitingRole", "overdue"] as const;
+const ACTIVE_FILTER_KEYS = ["summary", ...PANEL_FILTER_KEYS] as const;
+type ActiveFilterKey = (typeof ACTIVE_FILTER_KEYS)[number];
 
 const QUICK_LABELS: Record<string, string> = {
   mine: "待我處理",
   myApprovals: "待我核准",
   claimable: "待團隊接單",
   myTeam: "我團隊處理中",
+};
+
+const SUMMARY_LABELS: Record<string, string> = {
+  "my-work": "待我處理",
+  "pending-approval": "待主管核准",
+  "due-this-week": "本週到期",
 };
 
 function hrefWithParams(pathname: string, params: URLSearchParams): string {
@@ -68,8 +76,8 @@ export default function FilterBar({
     };
   }, [open]);
 
-  const activeFilters = FILTER_KEYS.filter((key) => {
-    if (!showActionability && key === "quick") return false;
+  const activeFilters = ACTIVE_FILTER_KEYS.filter((key) => {
+    if (!showActionability && (key === "quick" || key === "summary")) return false;
     return searchParams.has(key);
   });
 
@@ -87,9 +95,16 @@ export default function FilterBar({
     router.push(hrefWithParams(pathname, params));
   }
 
+  function clearSearch() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("q");
+    setSearch("");
+    router.push(hrefWithParams(pathname, params));
+  }
+
   function applyFilters() {
     const params = new URLSearchParams(searchParams.toString());
-    for (const key of FILTER_KEYS) params.delete(key);
+    for (const key of PANEL_FILTER_KEYS) params.delete(key);
     if (showActionability && draft.quick) params.set("quick", draft.quick);
     if (draft.systemName) params.set("systemName", draft.systemName);
     if (draft.light) params.set("light", draft.light);
@@ -102,12 +117,12 @@ export default function FilterBar({
 
   function clearAll() {
     const params = new URLSearchParams(searchParams.toString());
-    for (const key of FILTER_KEYS) params.delete(key);
+    for (const key of ACTIVE_FILTER_KEYS) params.delete(key);
     router.push(hrefWithParams(pathname, params));
     setOpen(false);
   }
 
-  function removeFilter(key: (typeof FILTER_KEYS)[number]) {
+  function removeFilter(key: ActiveFilterKey) {
     const params = new URLSearchParams(searchParams.toString());
     params.delete(key);
     router.push(hrefWithParams(pathname, params));
@@ -119,11 +134,11 @@ export default function FilterBar({
   return (
     <div ref={rootRef} className="relative rounded-lg border border-gray-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <form onSubmit={submitSearch} className="flex min-w-[16rem] flex-1 gap-2">
+        <form onSubmit={submitSearch} className="flex w-full min-w-0 flex-1 flex-wrap gap-2 sm:w-auto sm:min-w-[16rem] sm:flex-nowrap">
           <input
             type="search"
-            aria-label="搜尋工單編號或正式標題"
-            placeholder="搜尋工單編號或標題"
+            aria-label="搜尋 Hotfix 單號、標題或系統名稱"
+            placeholder="搜尋 Hotfix 單號、標題或系統名稱"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
@@ -131,6 +146,11 @@ export default function FilterBar({
           <button type="submit" className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
             搜尋
           </button>
+          {(search || searchParams.has("q")) && (
+            <button type="button" onClick={clearSearch} className="rounded-md px-2 py-2 text-sm text-text-secondary hover:bg-surface-muted hover:text-text-primary">
+              清除搜尋
+            </button>
+          )}
         </form>
         <button
           type="button"
@@ -248,7 +268,8 @@ function readDraft(searchParams: Pick<URLSearchParams, "get">): DraftFilters {
   };
 }
 
-function filterLabel(key: (typeof FILTER_KEYS)[number], value: string): string {
+function filterLabel(key: ActiveFilterKey, value: string): string {
+  if (key === "summary") return SUMMARY_LABELS[value] ?? "摘要條件";
   if (key === "quick") return QUICK_LABELS[value] ?? "待辦範圍";
   if (key === "systemName") return `系統：${value}`;
   if (key === "light") return `燈號：${STATUS_LIGHT_META[value as keyof typeof STATUS_LIGHT_META]?.label ?? value}`;

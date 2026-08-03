@@ -114,7 +114,7 @@ export default function ClosureConfirmPanel({ issueId }: { issueId: string }) {
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-gray-800">確認結案</h2>
-      <p className="mt-1 text-sm text-gray-500">請唯讀確認全部流程資料；此處不會修改任何已提交或已核准的內容。</p>
+      <p className="mt-1 text-sm text-gray-500">請確認全部流程資料；此處不會修改任何已提交或已核准的內容。</p>
       <ActionErrorText message={error} code={errorCode} itemKey={issueId} />
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" disabled={isPending} onClick={confirm} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40">

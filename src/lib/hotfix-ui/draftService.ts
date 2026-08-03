@@ -10,6 +10,7 @@ import { HOTFIX_PRIORITY_FIELD_KEY, HOTFIX_PRIORITIES } from "./priority";
 import { assertCreationTeamAndApplicant } from "../team-applicant/issueCreationScope";
 import { ENVIRONMENTS, RISK_LEVELS, isValidSystemName } from "../constants";
 import { normalizeHotfixTitleForStorage } from "./title";
+import { hasMeaningfulRichTextContent, sanitizeRichTextValue } from "../rich-text/value";
 
 export interface HotfixDraftFields {
   title: string;
@@ -47,7 +48,7 @@ export function missingDraftFields(fields: HotfixDraftFields): string[] {
     teamId: "團隊名稱",
     applicantId: "申請人",
   };
-  return REQUIRED_KEYS.filter((k) => !fields[k]?.trim()).map((k) => labels[k]);
+  return REQUIRED_KEYS.filter((k) => k === "description" ? !hasMeaningfulRichTextContent(fields.description) : !fields[k]?.trim()).map((k) => labels[k]);
 }
 
 async function requireDraftOwnership(issueId: string, actorId: string) {
@@ -115,7 +116,7 @@ export async function saveHotfixDraft(input: { issueId: string; actorId: string;
       where: { id: input.issueId },
       data: {
         ...(input.fields.title !== undefined ? { title: normalizeHotfixTitleForStorage(input.fields.title) } : {}),
-        ...(input.fields.description !== undefined ? { description: input.fields.description } : {}),
+        ...(input.fields.description !== undefined ? { description: sanitizeRichTextValue(input.fields.description) } : {}),
         ...(input.fields.systemName !== undefined ? { systemName: input.fields.systemName } : {}),
         ...(input.fields.environment !== undefined ? { environment: input.fields.environment } : {}),
         ...(input.fields.riskLevel !== undefined ? { riskLevel: input.fields.riskLevel } : {}),

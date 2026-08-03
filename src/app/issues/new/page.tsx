@@ -45,6 +45,7 @@ export default async function NewIssuePage({ searchParams }: { searchParams: { t
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader title="你現在要辦理什麼？" description="已選擇辦理類型；團隊與申請人範圍會依目前登入身分決定。" />
       <NewIssueForm
+        actorId={currentUser.id}
         scope={scope}
         initialApplicants={initialApplicants}
         relationCandidates={relationCandidates}

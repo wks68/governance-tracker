@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { roleLabel } from "@/lib/constants";
-import { listActionableTasksForActor } from "@/lib/workflowExecutionService";
+import { listWorkflowTaskNotificationsForActor } from "@/lib/workflowExecutionService";
 import { getUserEffectiveRoles, hasCapability, resolveGovernanceAccessContext } from "@/lib/permissions";
 import { resolveMemberManagementScope } from "@/lib/peopleService";
 import { prisma } from "@/lib/prisma";
@@ -48,16 +48,9 @@ export default async function Nav({ children }: { children: ReactNode }) {
     }),
   ]);
   const canUseWorkManagement = hasCapability(roles, "issue.view");
-  const actionableTasks = canUseWorkManagement ? await listActionableTasksForActor(user.id) : [];
-  const notificationTasks = actionableTasks.map((task) => ({
-    issueId: task.issueId,
-    issueKey: task.issueKey,
-    title: task.title,
-    actionLabel: task.actionLabel,
-    actionHref: task.actionHref,
-    currentStageLabel: task.currentStageLabel,
-    enteredAt: task.enteredAt?.toISOString() ?? null,
-  }));
+  const notificationTasks = canUseWorkManagement
+    ? await listWorkflowTaskNotificationsForActor(user.id)
+    : [];
   const canManagePeople =
     managementScope.ledTeamIds.length > 0 ||
     ["user.create", "user.update", "user.activate", "user.deactivate", "user.assignRole", "user.removeRole"].some(

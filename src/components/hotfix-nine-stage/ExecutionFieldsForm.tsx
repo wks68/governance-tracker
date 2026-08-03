@@ -10,6 +10,10 @@ import { useRouter } from "next/navigation";
 import { ActionErrorText, ActionSuccessText } from "@/components/ActionResultBanner";
 import { displayExecutionValue, type ExecutionFieldDef } from "@/lib/hotfix-ui/executionFields";
 import type { ActionResult } from "@/lib/actionResult";
+import ExpandableContentBlock from "@/components/ui/ExpandableContentBlock";
+import RichTextEditor from "@/components/rich-text/RichTextEditor";
+import RichTextViewer from "@/components/rich-text/RichTextViewer";
+import { hasMeaningfulRichTextContent } from "@/lib/rich-text/value";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -47,7 +51,7 @@ function NoApproverGuidance({ links }: { links: GovernanceFixLinks }) {
 }
 
 export function ExecutionFieldsReadOnly({ fields, values, title }: { fields: readonly ExecutionFieldDef[]; values: Record<string, string>; title: string }) {
-  const populated = fields.filter((field) => values[field.key]?.trim());
+  const populated = fields.filter((field) => field.richText ? hasMeaningfulRichTextContent(values[field.key]) : values[field.key]?.trim());
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-gray-800">{title}</h2>
@@ -58,7 +62,7 @@ export function ExecutionFieldsReadOnly({ fields, values, title }: { fields: rea
         {populated.map((f) => (
           <div key={f.key}>
             <dt className="text-xs text-gray-400">{f.label}</dt>
-            <dd className="mt-0.5 whitespace-pre-wrap text-sm text-gray-800">{displayExecutionValue(values[f.key])}</dd>
+            <dd className="mt-0.5">{f.richText ? <RichTextViewer value={values[f.key]} /> : <ExpandableContentBlock text={displayExecutionValue(values[f.key])} characterThreshold={180} />}</dd>
           </div>
         ))}
       </dl>
@@ -94,10 +98,11 @@ export default function ExecutionFieldsForm({
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const missingRequired = fields.filter((field) => field.required && !(values[field.key] ?? "").trim());
+  const [busyRichTextFields, setBusyRichTextFields] = useState<Set<string>>(new Set());
+  const missingRequired = fields.filter((field) => field.required && (field.richText ? !hasMeaningfulRichTextContent(values[field.key]) : !(values[field.key] ?? "").trim()));
   const requiredCount = fields.filter((field) => field.required).length;
   const completedRequiredCount = requiredCount - missingRequired.length;
-  const canSubmit = missingRequired.length === 0;
+  const canSubmit = missingRequired.length === 0 && busyRichTextFields.size === 0;
   const completionPercent = requiredCount === 0 ? 100 : Math.round((completedRequiredCount / requiredCount) * 100);
 
   function buildFormData(): FormData {
@@ -158,14 +163,10 @@ export default function ExecutionFieldsForm({
               {f.label}
               {f.required && <span className="ml-1 text-danger">*</span>}
             </label>
-            {f.type === "textarea" ? (
-              <textarea
-                rows={3}
-                disabled={isPending}
-                value={values[f.key] ?? ""}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                className={inputCls}
-              />
+            {f.type === "textarea" && f.richText ? (
+              <RichTextEditor name={f.key} issueId={issueId} value={values[f.key] ?? ""} onChange={(value) => setValues((v) => ({ ...v, [f.key]: value }))} onBusyChange={(busy) => setBusyRichTextFields((current) => { const next = new Set(current); busy ? next.add(f.key) : next.delete(f.key); return next; })} required={f.required} disabled={isPending} minHeight={180} placeholder={`請填寫${f.label}`} />
+            ) : f.type === "textarea" ? (
+              <textarea rows={3} disabled={isPending} value={values[f.key] ?? ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} className={inputCls} />
             ) : f.type === "select" ? (
               <select
                 disabled={isPending}
@@ -195,7 +196,7 @@ export default function ExecutionFieldsForm({
       <div className="mt-4 flex gap-2">
         <button
           type="button"
-          disabled={isPending}
+          disabled={isPending || busyRichTextFields.size > 0}
           onClick={() => run(saveAction, "已暫存")}
           className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
         >

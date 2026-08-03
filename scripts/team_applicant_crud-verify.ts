@@ -9,11 +9,12 @@
 //      找不到主管時的友善訊息、駁回後重新送簽不重複、申請人刪除與 Admin 永久刪除的授權
 //      邊界與資料清理、團隊 CRUD 授權邊界與引用保護、Admin 改派團隊/申請人。
 //
-// Fail-closed：第一行 import 為 assertSafeTestDatabase，拒絕連線到正式 prisma/dev.db。
+// Fail-closed：第一行 import 為 assertSafeTestDatabase；verify 僅允許 /tmp 隔離 DB，
+// 會在任何產品模組 import／寫入前拒絕正式或 Preview DB，process 結束自動清除 scratch。
 //
 // 執行方式：
-//   touch /path/to/scratch.db
-//   DATABASE_URL="file:/path/to/scratch.db" node_modules/.bin/tsx scripts/team_applicant_crud-verify.ts
+//   touch /tmp/team-applicant-crud-scratch.db
+//   DATABASE_URL="file:/tmp/team-applicant-crud-scratch.db" node_modules/.bin/tsx scripts/team_applicant_crud-verify.ts
 
 import "./lib/assertSafeTestDatabase";
 

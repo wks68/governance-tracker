@@ -8,12 +8,20 @@ import { useRouter } from "next/navigation";
 import { ActionErrorText } from "@/components/ActionResultBanner";
 import { uploadHotfixAttachmentAction, deleteHotfixAttachmentAction } from "@/app/issues/[id]/hotfix/attachment-actions";
 import type { HotfixAttachmentView } from "@/lib/hotfix-ui/attachmentService";
+import { formatDateTime } from "@/lib/datetime";
+import Image from "next/image";
 
 function formatSize(bytes: number | null): string {
   if (bytes === null) return "大小未知";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatAttachmentTime(value: string): string {
+  // Node and Chromium can use different Unicode spacing for the same Intl
+  // locale. Normalize it so the Client Component hydrates deterministically.
+  return formatDateTime(value).replace(/[\u2009\u202f]/g, " ");
 }
 
 function isImage(mimeType: string): boolean {
@@ -85,8 +93,8 @@ function AttachmentItem({ issueId, item, onChanged }: { issueId: string; item: H
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-gray-800">{item.fileName}</p>
-          <p className="mt-0.5 text-xs text-gray-400">
-            {item.mimeType || "未知類型"} ・ {formatSize(item.sizeBytes)} ・ 於「{item.stageLabel}」由 {item.uploaderName} 上傳
+          <p className="mt-1 text-xs leading-5 text-text-muted">
+            {item.mimeType || "未知類型"} ・ {formatSize(item.sizeBytes)} ・ 上傳人：{item.uploaderName} ・ {formatAttachmentTime(item.uploadedAt)}
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -110,8 +118,9 @@ function AttachmentItem({ issueId, item, onChanged }: { issueId: string; item: H
         </div>
       </div>
       {isImage(item.mimeType) && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={item.url} alt={item.fileName} className="mt-2 max-h-48 rounded-md border border-gray-100 object-contain" />
+        <div className="relative mt-3 aspect-video w-full overflow-hidden rounded-xl border border-border bg-surface-muted">
+          <Image src={item.url} alt={item.fileName} fill unoptimized sizes="(min-width: 768px) 50vw, 100vw" className="object-cover object-center" />
+        </div>
       )}
       <ActionErrorText message={error} />
       {textPreviewOpen && <TextPreviewModal url={item.url} fileName={item.fileName} onClose={() => setTextPreviewOpen(false)} />}
@@ -147,8 +156,8 @@ export default function AttachmentSection({ issueId, items, readOnly, canUpload 
   }
 
   return (
-    <section id="attachment-section" className="rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-gray-800">附件（選填）</h2>
+    <section id="attachment-section" className="ui-card h-full p-5 sm:p-6">
+      <h2 className="text-base font-semibold text-text-primary">附件（選填）</h2>
 
       {canUpload && !readOnly && (
         <div
@@ -189,7 +198,7 @@ export default function AttachmentSection({ issueId, items, readOnly, canUpload 
 
       <div className="mt-3 space-y-2">
         {items.length === 0 ? (
-          <p className="text-xs text-gray-400">尚無附件。</p>
+          <p className="text-sm text-text-muted">尚無附件</p>
         ) : (
           items.map((item) => <AttachmentItem key={item.id} issueId={issueId} item={item} onChanged={refresh} />)
         )}

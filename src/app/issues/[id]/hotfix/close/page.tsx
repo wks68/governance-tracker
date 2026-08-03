@@ -12,6 +12,7 @@ import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection"
 import { ExecutionFieldsReadOnly } from "@/components/hotfix-nine-stage/ExecutionFieldsForm";
 import ClosureConfirmPanel from "./ClosureConfirmPanel";
 import LegacyHotfixSummaryPage from "../summary/page";
+import RichTextViewer from "@/components/rich-text/RichTextViewer";
 
 const ALLOWED = ["pendingReporterConfirmation", "reporterConfirming", "closed", "cancelled"];
 
@@ -55,7 +56,7 @@ export default async function HotfixClosePage({ params }: { params: { id: string
   return (
     <HotfixStageShell
       title={isCancelled ? "Hotfix 已取消" : "結案"}
-      subtitle={isCancelled ? "此工單已取消，以下資訊唯讀" : isClosed ? "此工單已結案，以下資訊唯讀" : "請確認上版與驗證結果後確認結案，或退回處理"}
+      subtitle={isCancelled ? "此工單已取消" : isClosed ? "此工單已結案" : "請確認上版與驗證結果後確認結案，或退回處理"}
       nineStageIndex={ctx.nineStageIndex}
       cancelled={ctx.cancelled}
       ticketBasicInfo={ctx.ticketBasicInfo}
@@ -98,15 +99,15 @@ export default async function HotfixClosePage({ params }: { params: { id: string
       ) : isClosed ? (
         <section className="rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-gray-800">結案摘要</h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{closureSummary.summary || "已由原申請人確認結案"}</p>
+          <div className="mt-2"><RichTextViewer value={closureSummary.summary} empty="已由原申請人確認結案" /></div>
           <h2 className="mt-4 text-sm font-semibold text-gray-800">後續觀察追蹤結果</h2>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-gray-800">{closureSummary.followUpNotes || "—"}</p>
+          <div className="mt-2"><RichTextViewer value={closureSummary.followUpNotes} /></div>
         </section>
       ) : isResponsible ? (
         <ClosureConfirmPanel issueId={params.id} />
       ) : (
         <section className="ui-card p-4">
-          <p className="text-sm text-gray-500">僅原始填單人可確認結案或退回處理，此頁為唯讀。</p>
+          <p className="text-sm text-gray-500">僅原始填單人可確認結案或退回處理。</p>
         </section>
       )}
       </div>}

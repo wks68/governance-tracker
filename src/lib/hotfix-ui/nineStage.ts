@@ -81,8 +81,8 @@ export function nineStageKeyOfIndex(index: number): string | null {
 // 舊制 Hotfix 唯讀顯示轉接
 //
 // 只把 Issue.workflowStatus 轉成九階段「顯示位置」，不建立 runtime、不寫回 Issue，也不
-// 代表舊制資料曾實際執行新版 Workflow 的關卡或取得任何操作權。未知值仍顯示完整九階段，
-// 但沒有 current 節點，呼叫端須清楚標示「舊制資料，僅供查閱」。
+// 代表既有資料曾實際執行版本化 Workflow 的關卡或取得任何操作權。未知值仍顯示完整
+// 九階段，但沒有 current 節點，也不據此提供操作。
 // ---------------------------------------------------------------------------
 
 const LEGACY_WORKFLOW_STATUS_TO_NINE_STAGE_INDEX: Record<string, number> = {
@@ -124,7 +124,7 @@ export function legacyHotfixNineStageDisplay(workflowStatus: string): LegacyHotf
     terminalComplete,
     cancelled: false,
     statusKnown: currentIndex !== null,
-    stageLabel: currentIndex === null ? "舊制狀態無法精確判斷" : nineStageLabelOfIndex(currentIndex),
+    stageLabel: currentIndex === null ? "目前階段待確認" : nineStageLabelOfIndex(currentIndex),
   };
 }
 

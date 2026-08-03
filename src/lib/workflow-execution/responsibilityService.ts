@@ -34,6 +34,8 @@ export interface ActorTaskSummary {
   isMineToClaim: boolean; // 待我處理（含待我接單）
   isMineToApprove: boolean; // 待我核准
   isClaimableStage: boolean; // 目前關卡是否為「待團隊接單」（TRIAGE 且尚未承接），與 actor 是否為合格 Lead 無關
+  /** 核准關卡為 ApprovalRecord.id；用來辨識同一關卡重新送核產生的新責任。 */
+  actionSourceId: string | null;
 }
 
 const APPROVAL_ROLE_LABEL: Record<string, string> = {
@@ -116,6 +118,7 @@ export async function evaluateCurrentActorTask(issueId: string, actorId: string)
   let waitingRoleLabel = "—";
   let isMineToClaim = false;
   let isMineToApprove = false;
+  let actionSourceId: string | null = null;
 
   const canEdit = await hasExecutionCapability(actorId, "issue.edit");
 
@@ -167,6 +170,7 @@ export async function evaluateCurrentActorTask(issueId: string, actorId: string)
       if (eligibleIds.includes(actorId)) {
         action = "APPROVE";
         isMineToApprove = true;
+        actionSourceId = pending.id;
       }
     }
   } else if (stage.stageKey === "pendingReporterConfirmation" || stage.stageKey === "reporterConfirming") {
@@ -191,5 +195,6 @@ export async function evaluateCurrentActorTask(issueId: string, actorId: string)
     isMineToClaim,
     isMineToApprove,
     isClaimableStage: claimDomain !== null && !issue.assignedTeamId,
+    actionSourceId,
   };
 }

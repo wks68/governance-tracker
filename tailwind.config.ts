@@ -38,6 +38,29 @@ const config: Config = {
           line: "var(--workflow-complete-line)",
           foreground: "var(--workflow-complete-foreground)",
         },
+        "action-pending-approval": {
+          DEFAULT: "var(--action-pending-approval)",
+          hover: "var(--action-pending-approval-hover)",
+          active: "var(--action-pending-approval-active)",
+          focus: "var(--action-pending-approval-focus)",
+          foreground: "var(--action-pending-approval-foreground)",
+        },
+        "action-pending-work": {
+          DEFAULT: "var(--action-pending-work)",
+          hover: "var(--action-pending-work-hover)",
+          active: "var(--action-pending-work-active)",
+          focus: "var(--action-pending-work-focus)",
+          foreground: "var(--action-pending-work-foreground)",
+        },
+        "action-view": {
+          DEFAULT: "var(--action-view)",
+          hover: "var(--action-view-hover)",
+          active: "var(--action-view-active)",
+          border: "var(--action-view-border)",
+          "border-hover": "var(--action-view-border-hover)",
+          foreground: "var(--action-view-foreground)",
+          focus: "var(--action-view-focus)",
+        },
         danger: {
           DEFAULT: "rgb(var(--danger) / <alpha-value>)",
           muted: "rgb(var(--danger-muted) / <alpha-value>)",
@@ -153,6 +176,18 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(0.25rem)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "tooltip-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        "expand-hint-once": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.55" },
+        },
+        "scroll-chevron": {
+          "0%, 100%": { transform: "translateY(0)", opacity: "0.75" },
+          "50%": { transform: "translateY(0.25rem)", opacity: "1" },
+        },
       },
       animation: {
         "pulse-red": "pulse-red 1.6s ease-in-out infinite",
@@ -170,6 +205,9 @@ const config: Config = {
         "dialog-overlay-out": "drawer-overlay-in 160ms ease-in reverse both",
         "dialog-content-out": "dialog-content-out 160ms ease-in both",
         "item-enter": "item-enter 180ms ease-out both",
+        "tooltip-in": "tooltip-in 180ms ease-out both",
+        "expand-hint-once": "expand-hint-once 900ms ease-in-out 250ms 1 both",
+        "scroll-chevron": "scroll-chevron 1.5s ease-in-out infinite",
       },
       borderRadius: {
         card: "0.75rem",

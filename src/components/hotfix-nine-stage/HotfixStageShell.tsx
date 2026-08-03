@@ -3,7 +3,7 @@
 
 import NineStageProgressBar from "./NineStageProgressBar";
 import Link from "next/link";
-import { hotfixStageSubtitle } from "@/lib/hotfix-ui/nineStage";
+import { hotfixStageSubtitle, nineStageLabelOfIndex } from "@/lib/hotfix-ui/nineStage";
 import TicketBasicInfo, { type TicketBasicInfoData } from "./TicketBasicInfo";
 import HotfixHeaderActions from "./HotfixHeaderActions";
 import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
@@ -11,18 +11,19 @@ import CumulativeWorkflowContext from "./CumulativeWorkflowContext";
 import GovernanceRelationsCard from "@/components/issue-relations/GovernanceRelationsCard";
 import { loadGovernanceRelationViewForActor } from "@/lib/issue-relations/viewService";
 import WorkflowZLayout from "@/components/workflow-execution/WorkflowZLayout";
-import CurrentResponsibilityCard, { type LegacyHotfixResponsibilityView } from "./CurrentResponsibilityCard";
-import CurrentStageGuidanceCard, { type LegacyHotfixGuidanceView } from "./CurrentStageGuidanceCard";
+import CurrentHotfixFlowCard from "./CurrentHotfixFlowCard";
 import { loadCancelledFromNineStageIndex } from "@/lib/hotfix-ui/pageContext";
 import type { GovernanceRelationView } from "@/lib/issue-relations/viewService";
+import { evaluateCurrentActorTask } from "@/lib/workflow-execution/responsibilityService";
+import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
+import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
+import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
 
 export default async function HotfixStageShell({
-  title,
   subtitle,
   nineStageIndex,
   cancelled,
   ticketBasicInfo,
-  backHref,
   ctx,
   legacyView,
   relationViewOverride,
@@ -42,8 +43,8 @@ export default async function HotfixStageShell({
   /** 沒有正式 runtime 的 Hotfix 僅提供唯讀資料；不據此產生任何 Workflow 操作。 */
   legacyView?: {
     issueId: string;
-    responsibility: LegacyHotfixResponsibilityView;
-    guidance: LegacyHotfixGuidanceView;
+    currentStageLabel: string;
+    teamName: string | null;
     cancelledAtIndex: number | null;
     terminalComplete: boolean;
   };
@@ -57,10 +58,15 @@ export default async function HotfixStageShell({
   side?: React.ReactNode;
   children?: React.ReactNode;
 }) {
-  // 副標題一律以「目前 Workflow 關卡」為準（見 nineStage.hotfixStageSubtitle）；
-  // 頁面傳入的 subtitle 只在該關卡沒有對應說明時作為 fallback，不得覆蓋流程狀態。
-  const resolvedSubtitle = (ctx ? hotfixStageSubtitle(ctx.runtime.currentStage.stageKey) : null) ?? subtitle;
-  const listHref = backHref.startsWith("/issues?") ? backHref : "/issues";
+  const task = ctx ? await evaluateCurrentActorTask(ctx.issue.id, ctx.actor.id) : null;
+  const canHandleCurrentStage = ctx
+    ? ctx.runtime.currentStage.stageKey === "draft"
+      ? await canActorEditHotfixDraft(ctx.issue.id, ctx.actor.id)
+      : task?.action !== "VIEW_ONLY"
+    : false;
+  const resolvedSubtitle = canHandleCurrentStage
+    ? hotfixStageSubtitle(ctx!.runtime.currentStage.stageKey) ?? subtitle
+    : "您不屬於本單流程處理團隊，本頁僅提供簽核進度及相關紀錄查閱。";
   const relationView = relationViewOverride ?? (ctx
     ? await loadGovernanceRelationViewForActor(ctx.actor.id, ctx.issue.id)
     : null);
@@ -68,6 +74,11 @@ export default async function HotfixStageShell({
     ? await loadCancelledFromNineStageIndex(ctx.issue.id)
     : legacyView?.cancelledAtIndex ?? null;
   const terminalComplete = legacyView?.terminalComplete ?? Boolean(ctx && !ctx.cancelled && ctx.runtime.currentStage.stageKey === "closed");
+  const currentStageLabel = ctx
+    ? ctx.nineStageIndex === null
+      ? ctx.runtime.currentStage.label
+      : nineStageLabelOfIndex(ctx.nineStageIndex)
+    : legacyView?.currentStageLabel ?? "待確認";
   const cumulativeContext = ctx
     ? <CumulativeWorkflowContext ctx={ctx} />
     : legacyView
@@ -75,14 +86,15 @@ export default async function HotfixStageShell({
       : null;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-16">
+    <div className="hotfix-shell mx-auto max-w-[100rem] space-y-4 pb-20 sm:space-y-5 xl:space-y-6">
+      <AppPageBreadcrumb label={`工作管理／Hotfix（${ticketBasicInfo.issueKey}）`} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Link href={listHref} className="text-xs text-gray-500 hover:text-primary hover:underline">
-            ← 工單清單
+          <Link href="/work-management" className="text-sm font-medium text-text-secondary hover:text-primary hover:underline">
+            ← 回工作管理
           </Link>
-          <h1 className="mt-1 text-xl font-bold text-gray-900">{title}</h1>
-          {resolvedSubtitle && <p className="mt-0.5 text-sm text-gray-500">{resolvedSubtitle}</p>}
+          <h1 className="mt-2 text-xl font-bold tracking-tight text-text-primary sm:text-2xl">Hotfix（{ticketBasicInfo.issueKey}）簽核流程狀態</h1>
+          {resolvedSubtitle && <p className="mt-2 max-w-4xl text-sm leading-6 text-text-secondary">{resolvedSubtitle}</p>}
         </div>
         {(headerActions || ctx) && (
           <div className="flex flex-wrap items-start justify-end gap-2">
@@ -92,7 +104,7 @@ export default async function HotfixStageShell({
         )}
       </div>
 
-      <div className="ui-card p-4">
+      <div data-hotfix-scroll-section className="ui-card scroll-mt-24 p-4 sm:p-5">
         <NineStageProgressBar
           issueId={ctx?.issue.id ?? legacyView?.issueId ?? ticketBasicInfo.issueKey}
           currentIndex={nineStageIndex}
@@ -104,15 +116,21 @@ export default async function HotfixStageShell({
 
       <WorkflowZLayout
         topLeft={<TicketBasicInfo data={ticketBasicInfo} />}
-        topRight={ctx ? <CurrentResponsibilityCard ctx={ctx} /> : <CurrentResponsibilityCard legacyView={legacyView?.responsibility} />}
-        middleRight={ctx ? <CurrentStageGuidanceCard ctx={ctx} /> : <CurrentStageGuidanceCard legacyView={legacyView?.guidance} />}
-        bottomLeft={main ?? children}
-        bottomRight={side}
+        topRight={<CurrentHotfixFlowCard view={{
+          currentIndex: nineStageIndex,
+          currentStageLabel,
+          teamName: ctx?.ticketBasicInfo.teamName ?? legacyView?.teamName ?? null,
+          cancelled,
+          terminalComplete,
+        }} />}
+        contentLeft={main ?? children}
+        contentRight={side}
         after={<div className="space-y-5">
-          {relationView && <GovernanceRelationsCard view={relationView} />}
+          {relationView && <GovernanceRelationsCard view={relationView} presentation="hotfix-flow" hotfixCurrentStageLabel={currentStageLabel} />}
           {cumulativeContext}
         </div>}
       />
+      <ScrollDownChevron />
     </div>
   );
 }

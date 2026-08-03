@@ -20,6 +20,8 @@
 // 5. 以 fs.realpathSync 解開 symlink 後，不得等於 prisma/dev.db 的 realpath。
 // 6. 額外以 device+inode 比對，防止路徑字串不同但實際上是同一實體檔案（hardlink）。
 // 7. 不得落在 /home/codespace/.claude/backups/ 備份目錄之下。
+// 8. `*-verify.ts` 必須使用 /tmp 下的隔離 DB；任何持久化 Preview DB 均在寫入前拒絕。
+// 9. verify process 結束時同步清除 scratch DB 與 SQLite sidecar（失敗路徑亦會執行）。
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -27,9 +29,17 @@ import * as path from "node:path";
 const PRISMA_DIR = path.resolve(__dirname, "..", "..", "prisma");
 const FORBIDDEN_DEV_DB = path.join(PRISMA_DIR, "dev.db");
 const FORBIDDEN_BACKUP_DIR = path.resolve("/home/codespace/.claude/backups");
+const SCRATCH_ROOT = path.resolve("/tmp");
+const PERSISTENT_DATABASES = [
+  FORBIDDEN_DEV_DB,
+  "/workspaces/governance-tracker/prisma/dev.db",
+  "/workspaces/dms-governance-tracker-hotfix-ui/prisma/hotfix-ui-preview.db",
+  "/workspaces/dms-governance-relations-ui-preview.db",
+].map((entry) => path.resolve(entry));
+const isVerifyScript = /-verify\.[cm]?[jt]sx?$/.test(process.argv[1] ?? "");
 
 function refuse(reason: string): never {
-  console.error("拒絕執行：Verify 必須明確指定專用測試資料庫，不得連線至 prisma/dev.db。");
+  console.error("拒絕執行：Verify 必須明確指定 /tmp 下的專用測試資料庫，不得連線至持久化 DB。");
   console.error(`  原因：${reason}`);
   process.exit(1);
 }
@@ -71,6 +81,10 @@ function main(): void {
     refuse(`DATABASE_URL 不得指向備份目錄：${realResolved}`);
   }
 
+  if (isVerifyScript && !(realResolved === SCRATCH_ROOT || realResolved.startsWith(SCRATCH_ROOT + path.sep))) {
+    refuse(`*-verify.ts 僅允許使用 /tmp 隔離 DB，收到：${realResolved}`);
+  }
+
   let devDbStat: fs.Stats | null = null;
   let realDevDb: string | null = null;
   try {
@@ -89,7 +103,39 @@ function main(): void {
     refuse(`DATABASE_URL 解析後的檔案與正式 prisma/dev.db 為同一實體檔案（相同 device/inode）：${realResolved}`);
   }
 
-  console.log(`[assertSafeTestDatabase] 通過：DATABASE_URL 指向專用測試資料庫 ${realResolved}`);
+  for (const persistentPath of PERSISTENT_DATABASES) {
+    let realPersistent = persistentPath;
+    let persistentStat: fs.Stats | null = null;
+    try {
+      realPersistent = fs.realpathSync(persistentPath);
+      persistentStat = fs.statSync(realPersistent);
+    } catch {
+      // 不存在時仍保留絕對路徑比對；未來檔案建立後也不會因別名而被允許。
+    }
+    if (realResolved === realPersistent) {
+      refuse(`DATABASE_URL 指向受保護或持久化 DB：${realResolved}`);
+    }
+    if (persistentStat && persistentStat.dev === resolvedStat.dev && persistentStat.ino === resolvedStat.ino) {
+      refuse(`DATABASE_URL 與受保護或持久化 DB 為同一實體檔案（相同 device/inode）：${persistentPath}`);
+    }
+  }
+
+  if (isVerifyScript) {
+    const cleanupTargets = [realResolved, `${realResolved}-journal`, `${realResolved}-wal`, `${realResolved}-shm`];
+    process.once("exit", () => {
+      for (const target of cleanupTargets) {
+        try {
+          fs.unlinkSync(target);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            console.error(`[assertSafeTestDatabase] 無法清除 scratch 檔案：${target}`);
+          }
+        }
+      }
+    });
+  }
+
+  console.log(`[assertSafeTestDatabase] 通過：DATABASE_URL 指向專用測試資料庫 ${realResolved}${isVerifyScript ? "（process 結束自動清除）" : ""}`);
 }
 
 main();

@@ -74,5 +74,5 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
 }
 
 function MissingApprovalRecordNotice() {
-  return <section className="ui-card p-4"><h2 className="text-sm font-semibold text-text-primary">簽核紀錄暫不可用</h2><p className="mt-2 text-sm text-text-secondary">目前關卡仍保留唯讀顯示；沒有有效簽核紀錄時不提供同意或駁回操作。</p></section>;
+  return <section className="ui-card p-4"><h2 className="text-sm font-semibold text-text-primary">簽核紀錄暫不可用</h2><p className="mt-2 text-sm text-text-secondary">目前沒有可顯示的有效簽核紀錄，因此不提供同意或駁回操作。</p></section>;
 }

@@ -52,6 +52,12 @@ export {
   type ActionableIssueSource,
   type ResolvedIssueTask,
 } from "./actionabilityService";
+export {
+  listWorkflowTaskNotificationsForActor,
+  resolveWorkflowTaskNotificationsForActor,
+  type WorkflowTaskNotification,
+  type WorkflowTaskNotificationType,
+} from "./notificationService";
 export { getIssueWorkflowHistory } from "./historyService";
 export { getIssueWorkflowRuntime, recordStageRequirementResult, type IssueWorkflowRuntime } from "./queries";
 export { evaluateWorkflowStageRequirements, submitStageFieldValue, submitStageRiskCheckAnswer } from "./requirementService";

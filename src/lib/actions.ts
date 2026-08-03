@@ -16,15 +16,15 @@ import { resolveIssueDetailHref } from "./issue-detail-href";
 import { actionOk, toActionResult, type ActionResult } from "./actionResult";
 import { ENVIRONMENTS, PRIORITIES, RISK_LEVELS, isValidSystemName } from "./constants";
 import { requireCapability } from "./permissions";
+import { hasMeaningfulRichTextContent, sanitizeRichTextValue, getRichTextPlainText } from "./rich-text/value";
 
 // ---------------------------------------------------------------------------
 // 建立工單
 // ---------------------------------------------------------------------------
 
-// 雙重提交流程修正：共用建立工單頁的兩個按鈕都走這個 Action，差別只在 submitForApproval。
-//
-//   暫存    ：建立／更新草稿，停在第 1 關，不建立 ApprovalRecord、不推進 Workflow。
-//   建立工單：於同一 transaction 內建立工單並直接送申請人直屬主管簽核，成功後導向第 2 關。
+// Hotfix 的「暫存」是純 Client Draft，絕不呼叫本 Action。本 Action 對 Hotfix 只接受
+// submitForApproval=true 的正式建立；即使有人偽造 Server Action payload，也不得建立
+// workflowVersionId=null、停在 draft，或已啟動 runtime 的半成品 Hotfix。
 //
 // 回傳 ActionResult（不再直接 redirect）——失敗時前端才能留在原頁保留使用者已填內容，
 // 並顯示可讀的中文訊息；成功時由前端依 redirectTo 導向。
@@ -42,6 +42,14 @@ const NO_ELIGIBLE_APPROVER_MESSAGE =
 export async function createIssueAction(formData: FormData): Promise<ActionResult<CreateIssueActionData>> {
   const currentUser = await requireCurrentUser();
   const submitForApproval = String(formData.get("submitForApproval") ?? "") === "true";
+  const issueType = String(formData.get("issueType") ?? "");
+  if (issueType === "Hotfix" && !submitForApproval) {
+    return {
+      ok: false,
+      code: "HotfixClientDraftOnly",
+      message: "Hotfix 草稿只保存在目前瀏覽器，尚未建立正式工單。",
+    };
+  }
 
   let issue;
   try {
@@ -57,7 +65,7 @@ export async function createIssueAction(formData: FormData): Promise<ActionResul
   revalidatePath("/issues");
   revalidatePath(`/issues/${issue.id}`, "layout");
 
-  // 送簽成功後直接進第 2 關；只暫存則進第 1 關繼續編輯。不得導向第 1 關再要求按第二次建立。
+  // Hotfix 正式建立成功後直接進第 2 關；非 Hotfix 暫存維持既有行為。
   const redirectTo = resolveIssueDetailHref({
     id: issue.id,
     issueType: issue.issueType,
@@ -85,7 +93,7 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
 
   const baseFields: Record<string, string> = {
     title: String(formData.get("title") ?? "").trim(),
-    description: String(formData.get("description") ?? "").trim(),
+    description: issue.issueType === "Hotfix" ? sanitizeRichTextValue(String(formData.get("description") ?? "")) : String(formData.get("description") ?? "").trim(),
     systemName: String(formData.get("systemName") ?? ""),
     environment: String(formData.get("environment") ?? ""),
     riskLevel: String(formData.get("riskLevel") ?? ""),
@@ -93,7 +101,7 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
   };
   const missing = [
     !baseFields.title ? "標題" : null,
-    !baseFields.description ? "問題現象" : null,
+    !(issue.issueType === "Hotfix" ? hasMeaningfulRichTextContent(baseFields.description) : baseFields.description) ? "問題現象" : null,
     !baseFields.systemName ? "系統名稱" : null,
     !baseFields.environment ? "環境" : null,
     !baseFields.riskLevel ? "風險等級" : null,
@@ -120,7 +128,9 @@ export async function updateIssueAction(issueId: string, formData: FormData) {
   for (const key of Object.keys(baseFields)) {
     const oldVal = (issue as any)[key] ?? "";
     if (baseFields[key] !== oldVal) {
-      changes.push(`${labelMap[key]}：「${oldVal || "（空白）"}」→「${baseFields[key] || "（空白）"}」`);
+      const oldDisplay = key === "description" && issue.issueType === "Hotfix" ? getRichTextPlainText(oldVal) : oldVal;
+      const newDisplay = key === "description" && issue.issueType === "Hotfix" ? getRichTextPlainText(baseFields[key]) : baseFields[key];
+      changes.push(`${labelMap[key]}：「${oldDisplay || "（空白）"}」→「${newDisplay || "（空白）"}」`);
     }
   }
 

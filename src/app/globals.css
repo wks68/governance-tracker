@@ -30,9 +30,36 @@
   --workflow-complete-muted: #e8f6ef;
   --workflow-complete-line: #57b98f;
   --workflow-complete-foreground: #ffffff;
+  --action-pending-approval: #6d28d9;
+  --action-pending-approval-hover: #5b21b6;
+  --action-pending-approval-active: #4c1d95;
+  --action-pending-approval-focus: #a78bfa;
+  --action-pending-approval-foreground: #ffffff;
+  --action-pending-work: #245cb8;
+  --action-pending-work-hover: #1e4f9e;
+  --action-pending-work-active: #193f7f;
+  --action-pending-work-focus: #7da7e8;
+  --action-pending-work-foreground: #ffffff;
+  --action-view: #f8fafc;
+  --action-view-hover: #f1f5f9;
+  --action-view-active: #e2e8f0;
+  --action-view-border: #cbd5e1;
+  --action-view-border-hover: #94a3b8;
+  --action-view-foreground: #475569;
+  --action-view-focus: #94a3b8;
   --shadow-card: 0 8px 24px rgba(15, 23, 42, 0.06);
   --shadow-overlay: 0 18px 50px rgba(15, 23, 42, 0.18);
 }
+
+.rich-text-content { min-height: inherit; overflow-wrap: anywhere; }
+.rich-text-content p, .rich-text-viewer p { margin: .35rem 0; }
+.rich-text-content ul, .rich-text-viewer ul { list-style: disc; margin: .5rem 0; padding-left: 1.5rem; }
+.rich-text-content ol, .rich-text-viewer ol { list-style: decimal; margin: .5rem 0; padding-left: 1.5rem; }
+.rich-text-content blockquote, .rich-text-viewer blockquote { border-left: 3px solid #cbd5e1; color: #475569; margin: .5rem 0; padding-left: .75rem; }
+.rich-text-content img { height: auto; max-width: 100%; }
+.rich-text-image-node { margin-left: auto; margin-right: auto; }
+.rich-text-image-node.is-selected > img { outline: 2px solid #245cb8; outline-offset: 2px; }
+.rich-text-content .is-editor-empty:first-child::before { color: #94a3b8; content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
 
 html,
 body {
@@ -114,6 +141,10 @@ body {
   .ui-button-secondary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-text-secondary transition hover:border-primary/40 hover:bg-primary-muted hover:text-primary focus-visible:ring-2 focus-visible:ring-focus-ring/20 disabled:cursor-not-allowed disabled:opacity-50;
   }
+
+  .issue-action-button {
+    @apply inline-flex h-10 w-24 min-w-24 max-w-24 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60;
+  }
 }
 
 /* 九階段進度列「目前節點」呼吸提示：尊重使用者的減少動態偏好設定。
@@ -141,7 +172,10 @@ body {
   .animate-dialog-content-in,
   .animate-dialog-overlay-out,
   .animate-dialog-content-out,
-  .animate-item-enter {
+  .animate-item-enter,
+  .animate-tooltip-in,
+  .animate-expand-hint-once,
+  .animate-scroll-chevron {
     animation: none !important;
   }
 }

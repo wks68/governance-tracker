@@ -28,7 +28,7 @@ interface AttachmentMeta {
   uploaderName: string;
 }
 
-function encodeMeta(meta: AttachmentMeta): string {
+export function encodeAttachmentMeta(meta: AttachmentMeta): string {
   return JSON.stringify(meta);
 }
 
@@ -94,6 +94,27 @@ export interface UploadAttachmentInput {
   bytes: Buffer;
 }
 
+const RICH_TEXT_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+export function validateRichTextImage(input: Pick<UploadAttachmentInput, "fileName" | "mimeType" | "bytes">): void {
+  if (input.bytes.length === 0) throw new AttachmentValidationError("圖片內容無效");
+  if (input.bytes.length > MAX_ATTACHMENT_BYTES) {
+    throw new AttachmentValidationError(`圖片超過大小限制（${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)}MB）`);
+  }
+  if (!(RICH_TEXT_IMAGE_TYPES as readonly string[]).includes(input.mimeType)) {
+    throw new AttachmentValidationError("圖片格式不支援，請使用 PNG、JPEG 或 WebP");
+  }
+  const b = input.bytes;
+  const actual =
+    b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) ? "image/png" :
+    b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? "image/jpeg" :
+    b.length >= 12 && b.subarray(0, 4).toString("ascii") === "RIFF" && b.subarray(8, 12).toString("ascii") === "WEBP" ? "image/webp" : "";
+  if (actual !== input.mimeType) throw new AttachmentValidationError("圖片內容無效或副檔名與內容不一致");
+  const extension = input.fileName.toLowerCase().split(".").pop() ?? "";
+  const allowedExtensions = actual === "image/png" ? ["png"] : actual === "image/jpeg" ? ["jpg", "jpeg"] : ["webp"];
+  if (extension && !allowedExtensions.includes(extension)) throw new AttachmentValidationError("圖片副檔名與內容不一致");
+}
+
 export async function uploadHotfixAttachment(input: UploadAttachmentInput) {
   if (input.bytes.length === 0) throw new AttachmentValidationError("檔案內容為空");
   if (input.bytes.length > MAX_ATTACHMENT_BYTES) {
@@ -102,16 +123,25 @@ export async function uploadHotfixAttachment(input: UploadAttachmentInput) {
   const { stageKey } = await requireActorCanManageAttachmentsForCurrentStage(input.issueId, input.actorId);
 
   const storedFileName = await writeAttachmentFile(input.bytes);
-  const evidence = await prisma.evidence.create({
-    data: {
-      issueId: input.issueId,
-      type: input.mimeType || "application/octet-stream",
-      title: input.fileName || "未命名檔案",
-      url: `${ATTACHMENT_URL_PREFIX}${storedFileName}`,
-      description: encodeMeta({ stageKey, uploaderUserId: input.actorId, uploaderName: input.actorName }),
-    },
-  });
-  return evidence;
+  try {
+    return await prisma.evidence.create({
+      data: {
+        issueId: input.issueId,
+        type: input.mimeType || "application/octet-stream",
+        title: input.fileName || "未命名檔案",
+        url: `${ATTACHMENT_URL_PREFIX}${storedFileName}`,
+        description: encodeAttachmentMeta({ stageKey, uploaderUserId: input.actorId, uploaderName: input.actorName }),
+      },
+    });
+  } catch (error) {
+    await deleteAttachmentFileIfExists(storedFileName);
+    throw error;
+  }
+}
+
+export async function uploadHotfixRichTextImage(input: UploadAttachmentInput) {
+  validateRichTextImage(input);
+  return uploadHotfixAttachment(input);
 }
 
 export async function deleteHotfixAttachment(input: { issueId: string; evidenceId: string; actorId: string }) {

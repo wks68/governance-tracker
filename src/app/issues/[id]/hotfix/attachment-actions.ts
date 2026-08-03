@@ -5,7 +5,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireCurrentUser } from "@/lib/auth";
-import { uploadHotfixAttachment, deleteHotfixAttachment } from "@/lib/hotfix-ui/attachmentService";
+import { uploadHotfixAttachment, uploadHotfixRichTextImage, deleteHotfixAttachment } from "@/lib/hotfix-ui/attachmentService";
 import { actionOk, toActionResult, type ActionResult } from "@/lib/actionResult";
 
 export async function uploadHotfixAttachmentAction(formData: FormData): Promise<ActionResult> {
@@ -27,6 +27,29 @@ export async function uploadHotfixAttachmentAction(formData: FormData): Promise<
     });
     revalidatePath(`/issues/${issueId}`, "layout");
     return actionOk("已上傳附件");
+  } catch (err) {
+    return toActionResult(err);
+  }
+}
+
+export interface RichTextImageUploadData { evidenceId: string; url: string; fileName: string; mimeType: string }
+
+export async function uploadHotfixRichTextImageAction(formData: FormData): Promise<ActionResult<RichTextImageUploadData>> {
+  const actor = await requireCurrentUser();
+  const issueId = String(formData.get("issueId") ?? "");
+  const file = formData.get("file");
+  if (!(file instanceof File)) return toActionResult(new Error("請選擇要上傳的圖片"));
+  try {
+    const evidence = await uploadHotfixRichTextImage({
+      issueId,
+      actorId: actor.id,
+      actorName: actor.name,
+      fileName: file.name,
+      mimeType: file.type,
+      bytes: Buffer.from(await file.arrayBuffer()),
+    });
+    revalidatePath(`/issues/${issueId}`, "layout");
+    return actionOk("圖片上傳完成", { evidenceId: evidence.id, url: evidence.url, fileName: evidence.title, mimeType: evidence.type });
   } catch (err) {
     return toActionResult(err);
   }

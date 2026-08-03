@@ -31,6 +31,9 @@ import { Prisma } from "@prisma/client";
 import type { User } from "@prisma/client";
 import { normalizeHotfixTitleForStorage } from "./hotfix-ui/title";
 import { createIssueRelationInTx } from "./issue-relations/service";
+import { pendingRichTextImageIds, replacePendingRichTextImages, sanitizeRichTextValue } from "./rich-text/value";
+import { validateRichTextImage, encodeAttachmentMeta } from "./hotfix-ui/attachmentService";
+import { ATTACHMENT_URL_PREFIX, writeAttachmentFile, deleteAttachmentFileIfExists } from "./hotfix-ui/attachmentStorage";
 
 const CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS = 3;
 
@@ -82,19 +85,13 @@ function readHotfixCreationRelations(
   issueType: string,
   formData: FormData,
 ): HotfixCreationRelations {
-  const relateIncidents = String(formData.get("relateIncidents") ?? "no") === "yes";
-  const relateRcas = String(formData.get("relateRcas") ?? "no") === "yes";
-  const relateProject = String(formData.get("relateProject") ?? "no") === "yes";
   const submittedIncidentIds = uniqueFormIds(formData, "incidentRelationIds");
   const submittedRcaIds = uniqueFormIds(formData, "rcaRelationIds");
   const submittedProjectId = String(formData.get("projectRelationId") ?? "").trim();
 
   if (
     issueType !== "Hotfix" &&
-    (relateIncidents ||
-      relateRcas ||
-      relateProject ||
-      submittedIncidentIds.length > 0 ||
+    (submittedIncidentIds.length > 0 ||
       submittedRcaIds.length > 0 ||
       submittedProjectId !== "")
   ) {
@@ -103,14 +100,10 @@ function readHotfixCreationRelations(
   if (issueType !== "Hotfix") {
     return { incidentIds: [], rcaIds: [], projectId: null };
   }
-  if (relateProject && !submittedProjectId) {
-    throw new IssueCreationValidationError("請選擇關聯專案。");
-  }
-
   return {
-    incidentIds: relateIncidents ? submittedIncidentIds : [],
-    rcaIds: relateRcas ? submittedRcaIds : [],
-    projectId: relateProject ? submittedProjectId : null,
+    incidentIds: submittedIncidentIds,
+    rcaIds: submittedRcaIds,
+    projectId: submittedProjectId || null,
   };
 }
 
@@ -237,7 +230,7 @@ export async function createIssueForActor(
 
   const rawTitle = String(formData.get("title") || "").trim();
   const title = issueType === "Hotfix" ? normalizeHotfixTitleForStorage(rawTitle) : rawTitle;
-  const description = String(formData.get("description") || "");
+  const submittedDescription = String(formData.get("description") || "");
   const systemName = String(formData.get("systemName") || "");
   const environment = String(formData.get("environment") || "");
   const riskLevel = String(formData.get("riskLevel") || "");
@@ -245,6 +238,23 @@ export async function createIssueForActor(
   const dueDateRaw = String(formData.get("dueDate") || "");
   const hotfixPriority = String(formData.get("hotfixPriority") || "");
   const hotfixCreationRelations = readHotfixCreationRelations(issueType, formData);
+
+  const preparedRichTextImages: Array<{ pendingId: string; storedFileName: string; fileName: string; mimeType: string }> = [];
+  const richTextImagesToWrite: Array<{ pendingId: string; fileName: string; mimeType: string; bytes: Buffer }> = [];
+  let description = issueType === "Hotfix" ? sanitizeRichTextValue(submittedDescription, { allowPending: true }) : submittedDescription;
+  if (issueType === "Hotfix") {
+    const pendingIds = pendingRichTextImageIds(description);
+    for (const pendingId of pendingIds) {
+      const file = formData.get(`richTextImage:${pendingId}`);
+      if (!(file instanceof File) || file.size === 0) throw new IssueCreationValidationError("待上傳圖片已遺失，請重新選擇圖片");
+      const bytes = Buffer.from(await file.arrayBuffer());
+      validateRichTextImage({ fileName: file.name, mimeType: file.type, bytes });
+      richTextImagesToWrite.push({ pendingId, fileName: file.name, mimeType: file.type, bytes });
+    }
+  }
+  const descriptionForValidation = issueType === "Hotfix"
+    ? replacePendingRichTextImages(description, new Map(richTextImagesToWrite.map((item) => [item.pendingId, `${ATTACHMENT_URL_PREFIX}${item.pendingId}`])))
+    : description;
 
   // 系統名稱值域收斂：前端已改為固定四項下拉選單，但一律不信任——非空值必須落在
   // SYSTEM_NAME_OPTIONS 內，偽造其他 systemName（含既有歷史工單的舊系統名稱）一律拒絕。
@@ -286,7 +296,7 @@ export async function createIssueForActor(
   if (submitForApproval) {
     const baseFields = {
       title,
-      description,
+      description: descriptionForValidation,
       systemName,
       environment,
       riskLevel,
@@ -313,6 +323,29 @@ export async function createIssueForActor(
   // 不得依查詢回傳順序任意挑選（見該函式內完整規則說明）。
   const versionToStart = await resolveUniqueAutoStartVersionForIssueType(issueType);
 
+  // 正式 Hotfix 的「建立工單」語意是同一 transaction 內完成第 1 關並進入主管簽核。
+  // 若目前找不到唯一可啟動的 Published Workflow（沒有版本或多個 Definition 衝突），舊行為
+  // 會靜默建立 workflowVersionId=null 的 legacy Issue，畫面卻回報「已送簽」，最後形成沒有
+  // ApprovalRecord、沒有責任人、所有人只能檢視的無主工單。正式送出必須 fail closed；只有
+  // 明確按「暫存」仍可保留草稿。這裡不建立第二套 stage mapping，也不修改 Workflow 定義。
+  if (issueType === "Hotfix" && submitForApproval && !versionToStart) {
+    throw new IssueCreationValidationError(
+      "目前無法取得唯一可用的 Hotfix 正式流程，工單尚未建立。請聯絡系統管理員確認 Workflow 設定。",
+    );
+  }
+
+  try {
+    for (const image of richTextImagesToWrite) {
+      preparedRichTextImages.push({ ...image, storedFileName: await writeAttachmentFile(image.bytes) });
+    }
+    if (issueType === "Hotfix") {
+      description = replacePendingRichTextImages(description, new Map(preparedRichTextImages.map((item) => [item.pendingId, `${ATTACHMENT_URL_PREFIX}${item.storedFileName}`])));
+    }
+  } catch (error) {
+    await Promise.all(preparedRichTextImages.map((item) => deleteAttachmentFileIfExists(item.storedFileName)));
+    throw error;
+  }
+
   // 工單編號根因修正：取號（IssueKeySequence 原子遞增）與 Issue 建立必須在同一 transaction
   // 內，任一步失敗整組回滾，該號碼視為從未配發，不會留下「號碼已消耗但沒有對應工單」的
   // 缺口以外的副作用（號碼本身因回滾而不算數）。只對可判斷為暫時性交易衝突的錯誤
@@ -328,15 +361,20 @@ export async function createIssueForActor(
     .filter((row) => row.fieldValue !== "");
 
   let issue!: Awaited<ReturnType<typeof runCreateIssueTransaction>>;
-  for (let attempt = 1; ; attempt++) {
-    try {
-      issue = await runCreateIssueTransaction();
-      break;
-    } catch (err) {
-      if (attempt >= CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS || !isTransientTransactionConflict(err)) {
-        throw err;
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        issue = await runCreateIssueTransaction();
+        break;
+      } catch (err) {
+        if (attempt >= CREATE_ISSUE_TRANSACTION_MAX_ATTEMPTS || !isTransientTransactionConflict(err)) {
+          throw err;
+        }
       }
     }
+  } catch (error) {
+    await Promise.all(preparedRichTextImages.map((item) => deleteAttachmentFileIfExists(item.storedFileName)));
+    throw error;
   }
 
   async function runCreateIssueTransaction() {
@@ -368,6 +406,16 @@ export async function createIssueForActor(
           waitingRole,
         },
       });
+
+      for (const image of preparedRichTextImages) {
+        await tx.evidence.create({ data: {
+          issueId: created.id,
+          type: image.mimeType,
+          title: image.fileName,
+          url: `${ATTACHMENT_URL_PREFIX}${image.storedFileName}`,
+          description: encodeAttachmentMeta({ stageKey: "draft", uploaderUserId: actor.id, uploaderName: actor.name }),
+        } });
+      }
 
       // 欄位值必須與 Issue 同一 transaction 寫入：下方送簽時關卡 Requirement 會讀取這些
       // 欄位，若留到 transaction 之外寫入，送簽當下會看到「欄位還不存在」而誤判為未填。

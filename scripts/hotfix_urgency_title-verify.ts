@@ -78,13 +78,14 @@ async function main() {
   check("[12] 選最低顯示非阻擋季度上版提醒", createSource.includes("此項目原則上可評估改走季度上版"));
   check("[13] 緊急程度 Badge 同時有文字、aria-label 與 Hover title", tableSource.includes("緊急程度：") && tableSource.includes("aria-label") && tableSource.includes("title={urgency.description}"));
 
-  const headers = ["緊急程度", "工單編號", "工單類型", "系統名稱", "標題", "申請人", "到期日", "目前階段", "承接團隊", "執行人", "等待角色", "操作"];
-  const headerPositions = headers.map((header) => tableSource.indexOf(`>${header}</th>`));
-  check("[14] Hotfix 清單欄位順序正確且第一欄為緊急程度", headerPositions.every((position, index) => position >= 0 && (index === 0 || position > headerPositions[index - 1])));
+  const hotfixTable = tableSource.slice(tableSource.indexOf("function HotfixDesktopTable"), tableSource.indexOf("function HotfixCards"));
+  const headers = ["緊急程度", "Hotfix 單號", "事項", "申請人", "目前狀態", "到期日", "操作"];
+  const headerPositions = headers.map((header) => hotfixTable.indexOf(header));
+  check("[14] Hotfix 清單七欄順序正確且第一欄為緊急程度", headerPositions.every((position, index) => position >= 0 && (index === 0 || position > headerPositions[index - 1])) && !["工單類型", "承接團隊", "執行人", "等待角色"].some((header) => hotfixTable.includes(`>${header}</th>`)));
   check("[15] 過長標題省略並提供 Tooltip", tableSource.includes('title={displayTitle}') && tableSource.includes("truncate"));
   check(
     "[16] 搜尋 ViewModel 的 title 直接源自正式儲存的 issue.title",
-    listSource.includes("title: issue.title") && listSource.includes("row.title.toLocaleLowerCase"),
+    listSource.includes("title: issue.title") && listSource.includes("matchesHotfixSearch(row") && fs.readFileSync("src/lib/hotfix-list/viewModel.ts", "utf8").includes("row.issueKey, row.title, row.systemName"),
   );
   check(
     "[17] Hotfix／季度專案／事件通報／RCA 保留四個獨立清單入口",

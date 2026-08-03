@@ -118,7 +118,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
       </p>
 
       {!isResponsible ? (
-        <p className="mt-3 text-xs text-gray-400">僅{roleLabel}可簽核，此頁為唯讀。{expectedApproverLabel ? `目前應由：${expectedApproverLabel}` : ""}</p>
+        <p className="mt-3 text-xs text-gray-400">僅{roleLabel}可執行簽核。{expectedApproverLabel ? `目前應由：${expectedApproverLabel}` : ""}</p>
       ) : (
         <>
           <ActionErrorText message={error} code={errorCode} itemKey={issueId} />

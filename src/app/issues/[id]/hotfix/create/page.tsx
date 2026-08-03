@@ -67,7 +67,7 @@ export default async function HotfixCreatePage({ params }: { params: { id: strin
         />
       ) : (
         <section className="ui-card p-4">
-          <p className="text-sm text-gray-500">僅原始填單人可編輯此階段，此頁為唯讀。</p>
+          <p className="text-sm text-gray-500">僅原始填單人可編輯此階段。</p>
         </section>
       )}
       side={<AttachmentSection issueId={params.id} items={attachments} readOnly={!isResponsible} canUpload={isResponsible} />}

@@ -69,7 +69,12 @@ async function main() {
   check("[3] 通知直接使用 actionHref 進操作頁且查看不會清除", bell.includes("href={task.actionHref}") && !/mark.*read|clearNotification/i.test(bell));
   check("[4] 有待辦時通知持續循環、展開暫停且尊重 reduced motion", bell.includes('tasks.length > 0 && !open') && css.includes("2.4s ease-in-out infinite") && css.includes("prefers-reduced-motion") && css.includes(".animate-notification-bell"));
   check("[4a] 通知標題依使用者姓名與待辦數動態顯示", bell.includes('`${userName}，輪到你處理了`') && bell.includes('`${userName}，目前沒有待處理事項`') && bell.includes("共 {tasks.length} 件待處理事項"));
-  check("[4b] 每筆通知顯示明確動作文字", bell.includes("{task.issueKey} 等待你{task.actionLabel}"));
+  check(
+    "[4b] 每筆通知顯示共用 View Model 的正式通知標題、動作與申請人／單號",
+    bell.includes("{task.notificationTitle}") &&
+      bell.includes("{task.actionLabel}") &&
+      bell.includes("{task.applicantName} · {task.issueKey}"),
+  );
 
   const users = await prisma.user.findMany({ where: { isActive: true }, select: { id: true } });
   const issues = await prisma.issue.findMany({
@@ -103,22 +108,20 @@ async function main() {
   const issuePage = source("src/app/issues/page.tsx");
   const issueTable = source("src/components/IssueTable.tsx");
   const filters = source("src/components/FilterBar.tsx");
-  const hotfixStart = issueTable.indexOf('mode === "hotfix"');
-  const hotfixReturn = issueTable.indexOf("\n    return (", hotfixStart);
-  const quarterlyReturn = issueTable.indexOf("\n  return (", hotfixReturn + 1);
-  const hotfixTableSection = issueTable.slice(hotfixStart, quarterlyReturn);
+  const hotfixStart = issueTable.indexOf("function HotfixDesktopTable");
+  const hotfixEnd = issueTable.indexOf("function HotfixCards", hotfixStart);
+  const hotfixTableSection = issueTable.slice(hotfixStart, hotfixEnd);
   const expectedHeaders = [
-    "緊急程度", "工單編號", "工單類型", "系統名稱", "標題", "申請人",
-    "到期日", "目前階段", "承接團隊", "執行人", "等待角色", "操作",
+    "緊急程度", "Hotfix 單號", "事項", "申請人", "目前狀態", "到期日", "操作",
   ];
-  check("[7] 所有 Hotfix 關卡共用返回新版 /issues", shell.includes('const listHref = backHref.startsWith("/issues?") ? backHref : "/issues"') && shell.includes("← 工單清單"));
+  check("[7] 所有 Hotfix 關卡共用工作管理返回與麵包屑", shell.includes('<Link href="/work-management"') && shell.includes("← 回工作管理") && shell.includes("<AppPageBreadcrumb"));
   check("[8] 篩選預設不 render panel，點擊才展開", filters.includes("{open && (") && filters.includes('aria-label="進階篩選"'));
   check("[9] 篩選有清除、取消、套用且保存在 URL", ordered(filters, ["清除全部", "取消", "套用篩選"]) && filters.includes("URLSearchParams") && filters.includes("router.push"));
   check("[10] 篩選支援外部點擊與 Esc 關閉", filters.includes("closeOnOutsideClick") && filters.includes('event.key === "Escape"'));
   check("[11] /issues 只查詢 Hotfix 與季度專案", issuePage.includes('{ issueType: "Hotfix" }') && issuePage.includes('changeSubType: "QUARTERLY_RELEASE"') && !issuePage.includes('label: "事件通報"') && !issuePage.includes('label: "RCA"'));
   check("[12] /issues 不再 render 舊通用清單", !issueTable.includes('mode = "all"') && !issueTable.includes("狀態燈號</th>") && !issueTable.includes("逾期天數"));
-  check("[13] Hotfix 表頭完全符合指定 12 欄", ordered(hotfixTableSection, expectedHeaders) && (hotfixTableSection.match(/<th /g) ?? []).length === 12);
-  check("[14] 操作欄固定有查看，確有待辦才顯示前往處理", issueTable.includes("查看") && issueTable.includes("{issue.actionHref && issue.actionKind && (") && issueTable.includes("前往處理"));
+  check("[13] Hotfix 表頭完全符合指定七欄", ordered(hotfixTableSection, expectedHeaders) && (hotfixTableSection.match(/<th /g) ?? []).length === 2 && hotfixTableSection.includes(".map((header)"));
+  check("[14] Desktop 與 Mobile 共用單一語意操作按鈕", issueTable.includes("issue.hotfixAction && <IssueActionButton action={issue.hotfixAction}") && issueTable.includes("<IssueActionButton action={issue.hotfixAction} fullWidth />") && !hotfixTableSection.includes("QuarterlyActionCell"));
   check("[15] 事件通報與 RCA 使用獨立路由", fs.existsSync(path.join(ROOT, "src/app/incidents/page.tsx")) && fs.existsSync(path.join(ROOT, "src/app/rca/page.tsx")) && nav.includes('href: "/incidents"') && nav.includes('href: "/rca"'));
 
   console.log("\n=== 無留言結案 ===");

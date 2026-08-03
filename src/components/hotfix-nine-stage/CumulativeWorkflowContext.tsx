@@ -9,13 +9,15 @@ import {
   type ExecutionFieldDef,
 } from "@/lib/hotfix-ui/executionFields";
 import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
+import WorkflowHistoryTimeline, { type WorkflowHistoryEntry } from "./WorkflowHistoryTimeline";
+import { getHistoryPlainText, isRichTextValue } from "@/lib/rich-text/value";
 
 const APPROVAL_LABELS: Record<string, string> = {
-  pendingBusinessApproval: "申請人主管核准",
-  pendingRdLeadApproval: "RD 修正與自測／RD 主管核准",
-  pendingQaLeadApproval: "QA 驗證／QA 主管核准",
-  pendingDeploymentApproval: "OP 上版前確認／主管核准",
-  opCompleted: "正式環境部署紀錄／OP 主管上版後確認",
+  pendingBusinessApproval: "申請人直屬主管簽核",
+  pendingRdLeadApproval: "RD 主管簽核",
+  pendingQaLeadApproval: "QA 主管簽核",
+  pendingDeploymentApproval: "OP 上版前確認",
+  opCompleted: "OP 主管上版後確認",
 };
 
 const FIELD_DEFS: Record<string, readonly ExecutionFieldDef[]> = {
@@ -28,8 +30,39 @@ const FIELD_DEFS: Record<string, readonly ExecutionFieldDef[]> = {
 function decisionLabel(decision: string): string {
   if (decision === "APPROVED") return "同意";
   if (decision === "REJECTED") return "駁回";
-  if (decision === "CANCELLED") return "已取消";
+  if (decision === "CANCELLED") return "取消";
   return "等待核准";
+}
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  IssueCreated: "建立工單",
+  IssueWorkflowStarted: "啟動簽核流程",
+  StatusChange: "更新流程狀態",
+  IssueClaimedByTeam: "承接目前關卡",
+  IssueExecutorAssigned: "指派執行人",
+  IssueExecutorReassigned: "重新指派執行人",
+  FieldChange: "更新工作內容",
+  ApprovalRequested: "送出簽核",
+  ApprovalApproved: "完成簽核",
+  IssueWorkflowAdvanced: "推進流程",
+  IssueWorkflowStageCompleted: "完成流程",
+  SUBMIT_FOR_APPROVAL: "送出主管簽核",
+  PREVIEW_SUBMIT: "送出主管簽核",
+  ASSIGN_EXECUTOR: "指派執行人",
+};
+
+function parseFieldChanges(summary: string): Array<{ label: string; before: string; after: string }> {
+  const source = summary.replace(/^更新欄位：/, "");
+  const changes: Array<{ label: string; before: string; after: string }> = [];
+  const pattern = /([^：；]+)：「([\s\S]*?)」→「([\s\S]*?)」(?=；[^：；]+：「|$)/g;
+  for (const match of source.matchAll(pattern)) {
+    changes.push({
+      label: getHistoryPlainText(match[1]) || "欄位異動",
+      before: getHistoryPlainText(match[2]) || "（空白）",
+      after: getHistoryPlainText(match[3]) || "（空白）",
+    });
+  }
+  return changes;
 }
 
 function readSnapshot(value: string | undefined): Record<string, string> {
@@ -37,10 +70,7 @@ function readSnapshot(value: string | undefined): Record<string, string> {
   try {
     const parsed = JSON.parse(value) as { values?: Record<string, unknown> };
     if (!parsed.values || typeof parsed.values !== "object") return {};
-    return Object.fromEntries(
-      Object.entries(parsed.values)
-        .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-    );
+    return Object.fromEntries(Object.entries(parsed.values).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   } catch {
     return {};
   }
@@ -49,18 +79,16 @@ function readSnapshot(value: string | undefined): Record<string, string> {
 export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: { ctx?: HotfixPageContext; legacyIssueId?: string }) {
   const issueId = ctx?.issue.id ?? legacyIssueId;
   if (!issueId) return null;
-  const [records, snapshots, history, auditLogs] = await Promise.all([
+
+  const [issue, records, snapshots, history, auditEvents] = await Promise.all([
+    prisma.issue.findUnique({
+      where: { id: issueId },
+      include: { assignedTeam: true, currentWorkflowStage: true },
+    }),
     prisma.approvalRecord.findMany({
       where: { issueId },
       orderBy: [{ requestedAt: "asc" }, { revisionNo: "asc" }],
-      include: {
-        requestedBy: true,
-        approver: true,
-        approverTeam: true,
-        expectedApprover: true,
-        delegatedFrom: true,
-        supersededBy: true,
-      },
+      include: { requestedBy: true, approver: true, approverTeam: true },
     }),
     prisma.issueFieldValue.findMany({ where: { issueId } }),
     prisma.issueWorkflowStageHistory.findMany({
@@ -70,109 +98,79 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
     }),
     prisma.auditLog.findMany({
       where: { entityType: "Issue", entityId: issueId },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
       include: { actor: true },
     }),
   ]);
+  if (!issue) return null;
 
   const actorIds = Array.from(new Set(history.map((row) => row.actorUserId)));
   const actors = actorIds.length ? await prisma.user.findMany({ where: { id: { in: actorIds } } }) : [];
   const actorNames = new Map(actors.map((actor) => [actor.id, actor.name]));
   const snapshotByRecord = new Map<string, Record<string, string>>();
-  const legacyCurrentValues = Object.fromEntries(
-    snapshots
-      .filter((row) => !row.fieldKey.startsWith("workflowSubmission:"))
-      .map((row) => [row.fieldKey, row.fieldValue]),
+  const currentValues = Object.fromEntries(
+    snapshots.filter((row) => !row.fieldKey.startsWith("workflowSubmission:")).map((row) => [row.fieldKey, row.fieldValue]),
   );
   for (const row of snapshots.filter((item) => item.fieldKey.startsWith("workflowSubmission:"))) {
     const recordId = row.fieldKey.split(":").at(-1);
     if (recordId) snapshotByRecord.set(recordId, readSnapshot(row.fieldValue));
   }
 
-  if (records.length === 0 && history.length <= 1 && auditLogs.length === 0) return null;
+  const timeline: Array<WorkflowHistoryEntry & { timestamp: number }> = [];
+  for (const record of records) {
+    const stageLabel = APPROVAL_LABELS[record.relatedStageKey] ?? "主管簽核";
+    const actorName = record.approver?.name ?? record.requestedBy.name;
+    const teamName = record.approverTeam?.name ?? issue.assignedTeam?.name ?? "尚未指派";
+    const values = snapshotByRecord.get(record.id) ?? currentValues;
+    const detailFields = (FIELD_DEFS[record.relatedStageKey] ?? []).filter((field) => values[field.key]?.trim());
+    const detailParts = detailFields.filter((field) => !field.richText).map((field) => `${field.label}：${displayExecutionValue(values[field.key])}`);
+    const richDetails = detailFields.filter((field) => field.richText).map((field) => ({
+      label: field.label,
+      value: isRichTextValue(values[field.key]) ? values[field.key] : getHistoryPlainText(values[field.key]),
+    }));
+    if (record.decisionComment?.trim()) detailParts.unshift(`簽核意見：${record.decisionComment.trim()}`);
+    const happenedAt = record.decidedAt ?? record.requestedAt;
+    timeline.push({
+      id: `approval-${record.id}`,
+      timestamp: happenedAt.getTime(),
+      primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${stageLabel}－${decisionLabel(record.decision)}」，執行人：${actorName}，團隊：${teamName}，流程階段：${stageLabel}。`,
+      meta: `${formatDateTime(happenedAt)} · ${actorName}`,
+      technicalCode: `APPROVAL_${record.decision}`,
+      detail: getHistoryPlainText(detailParts.join("\n")) || null,
+      richDetails,
+    });
+  }
 
-  return (
-    <>
-      {records.length > 0 && (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-gray-800">前序關卡紀錄</h2>
-          <p className="mt-1 text-xs text-gray-500">只顯示已正式提交的內容；最近一筆預設展開，舊輪次與駁回紀錄均保留。</p>
-          <div className="mt-3 space-y-2">
-            {records.map((record, index) => {
-              const fields = FIELD_DEFS[record.relatedStageKey] ?? [];
-              // 舊 Preview 資料建立於提交快照功能之前，才使用目前欄位作唯讀相容顯示；
-              // 新送出紀錄一律有 record-id 快照，不會在補正時被草稿覆蓋。
-              const values = snapshotByRecord.get(record.id) ?? legacyCurrentValues;
-              const populated = fields.filter((field) => values[field.key]?.trim());
-              return (
-                <details key={record.id} open={index === records.length - 1} className="rounded-md border border-gray-200">
-                  <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-gray-800">
-                    {APPROVAL_LABELS[record.relatedStageKey] ?? "主管核准"} · 第 {record.revisionNo} 次提交 · {decisionLabel(record.decision)}
-                  </summary>
-                  <div className="border-t border-gray-100 px-3 py-3">
-                    <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                      <div><dt className="text-xs text-gray-400">執行人／提交人</dt><dd>{record.requestedBy.name}</dd></div>
-                      <div><dt className="text-xs text-gray-400">提交時間</dt><dd>{formatDateTime(record.requestedAt)}</dd></div>
-                      <div><dt className="text-xs text-gray-400">核准結果</dt><dd>{decisionLabel(record.decision)}</dd></div>
-                      <div><dt className="text-xs text-gray-400">核准人</dt><dd>{record.approver?.name ?? "等待核准"}</dd></div>
-                      <div><dt className="text-xs text-gray-400">核准身分／團隊</dt><dd>{record.approverTeam?.name ?? record.approvalAuthorityType ?? "—"}</dd></div>
-                      <div><dt className="text-xs text-gray-400">核准時間</dt><dd>{formatDateTime(record.decidedAt)}</dd></div>
-                      <div><dt className="text-xs text-gray-400">是否代理核准</dt><dd>{record.approvalAuthorityType === "DELEGATE" ? "是" : "否"}</dd></div>
-                      <div><dt className="text-xs text-gray-400">原應核准人</dt><dd>{record.delegatedFrom?.name ?? record.expectedApprover?.name ?? "—"}</dd></div>
-                      <div className="sm:col-span-2"><dt className="text-xs text-gray-400">核准意見／駁回原因</dt><dd className="whitespace-pre-wrap">{record.decisionComment || "—"}</dd></div>
-                      <div className="sm:col-span-2"><dt className="text-xs text-gray-400">後續補正狀態</dt><dd>{record.supersededBy ? `已補正並第 ${record.supersededBy.revisionNo} 次送出` : record.decision === "REJECTED" ? "等待補正" : "—"}</dd></div>
-                    </dl>
-                    {populated.length > 0 && (
-                      <dl className="mt-4 grid gap-3 border-t border-gray-100 pt-3 sm:grid-cols-2">
-                        {populated.map((field) => (
-                          <div key={field.key}>
-                            <dt className="text-xs text-gray-400">{field.label}</dt>
-                            <dd className="mt-0.5 whitespace-pre-wrap text-sm text-gray-800">{displayExecutionValue(values[field.key])}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    )}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-        </section>
-      )}
+  for (const row of history) {
+    const actorName = actorNames.get(row.actorUserId) ?? "系統使用者";
+    const teamName = row.assignedTeamAfter?.name ?? issue.assignedTeam?.name ?? "尚未指派";
+    const action = row.fromStage ? `${row.fromStage.label}前往${row.toStage.label}` : `進入${row.toStage.label}`;
+    timeline.push({
+      id: `history-${row.id}`,
+      timestamp: row.executedAt.getTime(),
+      primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${action}」，執行人：${actorName}，團隊：${teamName}，流程階段：${row.toStage.label}。`,
+      meta: `${formatDateTime(row.executedAt)} · ${actorName}`,
+      technicalCode: row.reasonCode || row.transitionType,
+    });
+  }
 
-      {history.length > 1 && (
-        <section className="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-gray-800">流程歷程</h2>
-          <ol className="mt-3 space-y-2">
-            {history.map((row) => (
-              <li key={row.id} className="border-l-2 border-gray-200 pl-3 text-sm text-gray-700">
-                <p>{row.fromStage ? `${row.fromStage.label} → ` : ""}{row.toStage.label}</p>
-                <p className="text-xs text-gray-400">
-                  {formatDateTime(row.executedAt)} · {actorNames.get(row.actorUserId) ?? "系統使用者"}
-                  {row.assignedTeamAfter ? ` · ${row.assignedTeamAfter.name}` : ""}
-                </p>
-                {row.reasonCode && <p className="mt-0.5 whitespace-pre-wrap text-xs text-gray-500">{row.reasonCode}</p>}
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
+  for (const event of auditEvents) {
+    const stageEntry = [...history].reverse().find((row) => row.executedAt <= event.createdAt);
+    const stageLabel = stageEntry?.toStage.label ?? issue.currentWorkflowStage?.label ?? "Hotfix 建立工單";
+    const teamName = stageEntry?.assignedTeamAfter?.name ?? issue.assignedTeam?.name ?? "尚未指派";
+    const actionLabel = AUDIT_ACTION_LABELS[event.actionType] ?? "更新工單紀錄";
+    const fieldChanges = event.actionType === "FieldChange" ? parseFieldChanges(event.summary) : [];
+    timeline.push({
+      id: `event-${event.id}`,
+      timestamp: event.createdAt.getTime(),
+      primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${actionLabel}」，執行人：${event.actor?.name ?? "系統"}，團隊：${teamName}，流程階段：${stageLabel}。`,
+      meta: `${formatDateTime(event.createdAt)} · ${event.actor?.name ?? "系統"}`,
+      technicalCode: event.reasonCode || event.actionType,
+      detail: fieldChanges.length ? null : getHistoryPlainText(event.summary),
+      fieldChanges,
+    });
+  }
 
-      <section className="rounded-lg border border-gray-200 bg-white p-4" aria-label="歷程與 Audit Log">
-        <h2 className="text-sm font-semibold text-gray-800">歷程與 Audit Log</h2>
-        {auditLogs.length === 0 ? (
-          <p className="mt-2 text-sm text-gray-400">尚無 Audit Log。</p>
-        ) : (
-          <ol className="mt-3 space-y-2">
-            {auditLogs.map((row) => (
-              <li key={row.id} className="border-l-2 border-gray-200 pl-3 text-sm text-gray-700">
-                <p className="font-medium">{row.summary}</p>
-                <p className="mt-0.5 text-xs text-gray-400">{formatDateTime(row.createdAt)} · {row.actor?.name ?? "系統"} · {row.actionType}</p>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-    </>
-  );
+  const entries = timeline.sort((left, right) => right.timestamp - left.timestamp).map(({ timestamp: _timestamp, ...entry }) => entry);
+  return <WorkflowHistoryTimeline entries={entries} />;
 }

@@ -14,8 +14,10 @@ import { resolveIssueDetailHref } from "../issue-detail-href";
 export interface GovernanceRelationCandidate {
   id: string;
   issueKey: string;
+  title: string;
   label: string;
   searchText: string;
+  detailHref: string;
 }
 
 export interface GovernanceRelationCandidates {
@@ -219,27 +221,29 @@ export async function listGovernanceRelationCandidatesForActor(
         issue.riskLevel || "未分級",
         formatDate(issue.createdAt),
       ].join("｜");
-      incidents.push({ id: issue.id, issueKey: issue.issueKey, label, searchText: label });
+      incidents.push({ id: issue.id, issueKey: issue.issueKey, title: issue.title, label, searchText: `${label}｜${businessStatus(issue)}`, detailHref: resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey: issue.currentWorkflowStage?.stageKey, workflowStatus: issue.workflowStatus }) });
     } else if (kind === "rca") {
       const incidentKeys = incidentKeysByRca.get(issue.id) ?? [];
       const label = [
         issue.issueKey,
+        issue.title,
         issue.systemName || "—",
         incidentKeys.length > 0 ? incidentKeys.join("、") : "尚未關聯事件",
         businessStatus(issue),
       ].join("｜");
-      rcas.push({ id: issue.id, issueKey: issue.issueKey, label, searchText: label });
+      rcas.push({ id: issue.id, issueKey: issue.issueKey, title: issue.title, label, searchText: label, detailHref: resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey: issue.currentWorkflowStage?.stageKey, workflowStatus: issue.workflowStatus }) });
     } else if (kind === "hotfix") {
       const label = [issue.issueKey, issue.systemName || "—", issue.title, businessStatus(issue)].join("｜");
-      hotfixes.push({ id: issue.id, issueKey: issue.issueKey, label, searchText: label });
+      hotfixes.push({ id: issue.id, issueKey: issue.issueKey, title: issue.title, label, searchText: label, detailHref: resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey: issue.currentWorkflowStage?.stageKey, workflowStatus: issue.workflowStatus }) });
     } else if (kind === "project") {
       const label = [
         issue.issueKey,
         issue.title,
         quarterLabel(issue.dueDate, issue.createdAt),
         issue.systemName || "—",
+        businessStatus(issue),
       ].join("｜");
-      projects.push({ id: issue.id, issueKey: issue.issueKey, label, searchText: label });
+      projects.push({ id: issue.id, issueKey: issue.issueKey, title: issue.title, label, searchText: label, detailHref: resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey: issue.currentWorkflowStage?.stageKey, workflowStatus: issue.workflowStatus }) });
     }
   }
   return { incidents, rcas, hotfixes, projects };

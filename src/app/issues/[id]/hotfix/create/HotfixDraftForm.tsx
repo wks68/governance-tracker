@@ -10,6 +10,8 @@ import TeamApplicantSelector from "@/components/team-applicant/TeamApplicantSele
 import type { ApplicantOption } from "@/lib/team-applicant/teamApplicantService";
 import type { IssueCreationScope } from "@/lib/team-applicant/issueCreationScope";
 import HotfixUrgencyHelp from "@/components/hotfix-nine-stage/HotfixUrgencyHelp";
+import RiskLevelHelp from "@/components/hotfix-nine-stage/RiskLevelHelp";
+import RichTextEditor from "@/components/rich-text/RichTextEditor";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
@@ -45,6 +47,7 @@ export default function HotfixDraftForm({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [richTextBusy, setRichTextBusy] = useState(false);
 
   function set<K extends keyof DraftValues>(key: K, v: string) {
     setValues((prev) => ({ ...prev, [key]: v }));
@@ -107,7 +110,7 @@ export default function HotfixDraftForm({
           <label className={labelCls}>
             問題現象<span className="ml-1 text-danger">*</span>
           </label>
-          <textarea rows={3} value={values.description} onChange={(e) => set("description", e.target.value)} disabled={isPending} className={inputCls} />
+          <RichTextEditor name="description" issueId={issueId} value={values.description} onChange={(value) => set("description", value)} onBusyChange={setRichTextBusy} required disabled={isPending} minHeight={240} placeholder="請描述正式環境發生什麼問題，或加入至少一張問題截圖" />
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
@@ -138,7 +141,7 @@ export default function HotfixDraftForm({
           </div>
           <div>
             <label className={labelCls}>
-              風險等級<span className="ml-1 text-danger">*</span>
+              風險等級（= 影響程度）<span className="ml-1 text-danger">*</span><RiskLevelHelp />
             </label>
             <select value={values.riskLevel} onChange={(e) => set("riskLevel", e.target.value)} disabled={isPending} className={inputCls}>
               <option value="">請選擇</option>
@@ -179,7 +182,7 @@ export default function HotfixDraftForm({
       <div className="mt-4 flex gap-2">
         <button
           type="button"
-          disabled={isPending || scope.blockedReason !== null}
+          disabled={isPending || richTextBusy || scope.blockedReason !== null}
           onClick={() => run(saveHotfixDraftAction, "已暫存")}
           className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
         >
@@ -187,7 +190,7 @@ export default function HotfixDraftForm({
         </button>
         <button
           type="button"
-          disabled={isPending || scope.blockedReason !== null}
+          disabled={isPending || richTextBusy || scope.blockedReason !== null}
           onClick={() => run(submitHotfixDraftAction)}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-40"
         >

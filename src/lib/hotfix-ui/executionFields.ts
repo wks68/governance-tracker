@@ -12,6 +12,7 @@ import { writeAuditLog } from "../audit";
 import { evaluateActorEligibilityForStage, assertActorIsCurrentExecutor } from "../workflowExecutionService";
 import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError, WorkflowExecutionValidationError } from "../workflow-execution/types";
 import { ENVIRONMENTS } from "../constants";
+import { hasMeaningfulRichTextContent, sanitizeRichTextValue } from "../rich-text/value";
 
 export interface ExecutionFieldDef {
   key: string;
@@ -19,6 +20,7 @@ export interface ExecutionFieldDef {
   type: "text" | "textarea" | "select" | "datetime-local";
   required: boolean;
   options?: readonly string[];
+  richText?: boolean;
 }
 
 export const OP_OPERATION_TYPE_OPTIONS = [
@@ -43,17 +45,17 @@ export const OP_MONITORING_METHOD_OPTIONS = [
 
 export const RD_FIX_FIELDS: readonly ExecutionFieldDef[] = [
   { key: "rdFixVersion", label: "修正版本／Branch／Commit", type: "text", required: true },
-  { key: "rdFixDescription", label: "修正內容說明", type: "textarea", required: true },
-  { key: "rdSelfTestResult", label: "自測結果", type: "textarea", required: true },
-  { key: "rdImpactScope", label: "影響範圍確認（系統／模組／使用者影響與嚴重程度）", type: "textarea", required: true },
+  { key: "rdFixDescription", label: "修正內容說明", type: "textarea", required: true, richText: true },
+  { key: "rdSelfTestResult", label: "自測結果", type: "textarea", required: true, richText: true },
+  { key: "rdImpactScope", label: "影響範圍確認（系統／模組／使用者影響與嚴重程度）", type: "textarea", required: true, richText: true },
 ];
 
 export const QA_VERIFY_FIELDS: readonly ExecutionFieldDef[] = [
-  { key: "qaTestScope", label: "測試範圍", type: "textarea", required: true },
+  { key: "qaTestScope", label: "測試範圍", type: "textarea", required: true, richText: true },
   { key: "qaTestEnvironment", label: "測試環境", type: "text", required: true },
   { key: "qaTestResult", label: "驗證結果", type: "select", required: true, options: ["驗證通過", "驗證不通過"] },
-  { key: "qaDefectNotes", label: "缺陷觀察紀錄", type: "textarea", required: false },
-  { key: "qaRecommendation", label: "QA 建議", type: "textarea", required: false },
+  { key: "qaDefectNotes", label: "缺陷觀察紀錄", type: "textarea", required: false, richText: true },
+  { key: "qaRecommendation", label: "QA 建議", type: "textarea", required: false, richText: true },
 ];
 
 export const OP_DEPLOY_FIELDS: readonly ExecutionFieldDef[] = [
@@ -105,6 +107,10 @@ export const OP_RESULT_FIELDS: readonly ExecutionFieldDef[] = [
   { key: "opPostMonitoringDetail", label: "部署後監控異常說明", type: "textarea", required: false },
 ];
 
+for (const field of [...OP_DEPLOY_FIELDS, ...OP_RESULT_FIELDS]) {
+  if (field.type === "textarea") (field as ExecutionFieldDef).richText = true;
+}
+
 const FIELDS_BY_STAGE_KEY: Record<string, readonly ExecutionFieldDef[]> = {
   rdInProgress: RD_FIX_FIELDS,
   qaInProgress: QA_VERIFY_FIELDS,
@@ -155,8 +161,9 @@ export async function saveExecutionFieldValues(input: { issueId: string; actorId
   if (entries.length === 0) return;
 
   await prisma.$transaction(async (tx) => {
-    for (const [fieldKey, fieldValue] of entries) {
+    for (const [fieldKey, rawValue] of entries) {
       const def = defs.find((d) => d.key === fieldKey)!;
+      const fieldValue = def.richText ? sanitizeRichTextValue(rawValue) : rawValue;
       await tx.issueFieldValue.upsert({
         where: { issueId_fieldKey: { issueId: input.issueId, fieldKey } },
         create: { issueId: input.issueId, fieldKey, fieldLabel: def.label, fieldValue },
@@ -176,7 +183,7 @@ export async function saveExecutionFieldValues(input: { issueId: string; actorId
 
 // 送主管簽核前的必填檢查（不信任前端 required 屬性，伺服端重新檢查一次）。
 export function missingRequiredFields(stageKey: string, values: Record<string, string>): ExecutionFieldDef[] {
-  return executionFieldsForStageKey(stageKey).filter((d) => d.required && !values[d.key]?.trim());
+  return executionFieldsForStageKey(stageKey).filter((d) => d.required && (d.richText ? !hasMeaningfulRichTextContent(values[d.key]) : !values[d.key]?.trim()));
 }
 
 export function parseMultiValue(value: string | undefined): string[] {
@@ -194,7 +201,8 @@ function isPositiveInteger(value: string | undefined): boolean {
 }
 
 function requireValue(values: Record<string, string>, key: string, label: string, issues: string[]) {
-  if (!values[key]?.trim()) issues.push(`${label}為必填`);
+  const field = [...OP_DEPLOY_FIELDS, ...OP_RESULT_FIELDS].find((item) => item.key === key);
+  if (field?.richText ? !hasMeaningfulRichTextContent(values[key]) : !values[key]?.trim()) issues.push(`${label}為必填`);
 }
 
 export function validateExecutionSubmission(stageKey: string, values: Record<string, string>): string[] {

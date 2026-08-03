@@ -5,6 +5,7 @@
 import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
 import { WorkflowExecutionAccessDeniedError, WorkflowExecutionStateError } from "../workflow-execution/types";
+import { sanitizeRichTextValue } from "../rich-text/value";
 
 export const CLOSURE_SUMMARY_FIELD_KEY = "closureSummary";
 export const CLOSURE_FOLLOWUP_FIELD_KEY = "closureFollowUpNotes";
@@ -28,17 +29,19 @@ async function requireClosureOwnership(issueId: string, actorId: string) {
 
 export async function saveClosureSummary(input: { issueId: string; actorId: string; summary: string; followUpNotes: string }): Promise<void> {
   await requireClosureOwnership(input.issueId, input.actorId);
+  const summary = sanitizeRichTextValue(input.summary);
+  const followUpNotes = input.followUpNotes ? sanitizeRichTextValue(input.followUpNotes) : "";
   await prisma.$transaction(async (tx) => {
     await tx.issueFieldValue.upsert({
       where: { issueId_fieldKey: { issueId: input.issueId, fieldKey: CLOSURE_SUMMARY_FIELD_KEY } },
-      create: { issueId: input.issueId, fieldKey: CLOSURE_SUMMARY_FIELD_KEY, fieldLabel: "結案摘要", fieldValue: input.summary },
-      update: { fieldValue: input.summary },
+      create: { issueId: input.issueId, fieldKey: CLOSURE_SUMMARY_FIELD_KEY, fieldLabel: "結案摘要", fieldValue: summary },
+      update: { fieldValue: summary },
     });
-    if (input.followUpNotes) {
+    if (followUpNotes) {
       await tx.issueFieldValue.upsert({
         where: { issueId_fieldKey: { issueId: input.issueId, fieldKey: CLOSURE_FOLLOWUP_FIELD_KEY } },
-        create: { issueId: input.issueId, fieldKey: CLOSURE_FOLLOWUP_FIELD_KEY, fieldLabel: "後續觀察追蹤結果", fieldValue: input.followUpNotes },
-        update: { fieldValue: input.followUpNotes },
+        create: { issueId: input.issueId, fieldKey: CLOSURE_FOLLOWUP_FIELD_KEY, fieldLabel: "後續觀察追蹤結果", fieldValue: followUpNotes },
+        update: { fieldValue: followUpNotes },
       });
     }
   });

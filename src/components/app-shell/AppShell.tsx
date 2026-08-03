@@ -27,10 +27,14 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
 import ActionableNotificationBell, { type NotificationTask } from "@/components/ActionableNotificationBell";
 import LogoutButton from "@/components/LogoutButton";
+import {
+  APP_BREADCRUMB_EVENT,
+  APP_BREADCRUMB_REQUEST_EVENT,
+} from "@/components/app-shell/AppPageBreadcrumb";
 
 export interface ShellSettingsAccess {
   people: boolean;
@@ -93,8 +97,10 @@ export default function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileRendered, setMobileRendered] = useState(false);
+  const [pageBreadcrumb, setPageBreadcrumb] = useState<string | null>(null);
   const [workOpen, setWorkOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(pathname.startsWith("/admin") || pathname.startsWith("/settings"));
+  const [liveTasks, setLiveTasks] = useState(tasks);
   const mobileTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const mobilePanelRef = useRef<HTMLDivElement>(null);
@@ -102,8 +108,27 @@ export default function AppShell({
   const visibleSettings = SETTINGS_LINKS.filter((item) => settingsAccess[item.key]);
 
   useEffect(() => {
+    setLiveTasks(tasks);
+  }, [tasks]);
+
+  const handleTasksChange = useCallback((nextTasks: NotificationTask[]) => {
+    setLiveTasks(nextTasks);
+  }, []);
+
+  useEffect(() => {
     setMobileOpen(false);
+    setPageBreadcrumb(null);
   }, [pathname, searchParams]);
+
+  useEffect(() => {
+    function onPageBreadcrumb(event: Event) {
+      const detail = (event as CustomEvent<{ label?: string | null }>).detail;
+      setPageBreadcrumb(detail?.label ?? null);
+    }
+    window.addEventListener(APP_BREADCRUMB_EVENT, onPageBreadcrumb);
+    window.dispatchEvent(new Event(APP_BREADCRUMB_REQUEST_EVENT));
+    return () => window.removeEventListener(APP_BREADCRUMB_EVENT, onPageBreadcrumb);
+  }, []);
 
   useEffect(() => {
     if (mobileOpen) {
@@ -151,7 +176,8 @@ export default function AppShell({
     };
   }, [mobileOpen]);
 
-  const locationLabel = useMemo(() => breadcrumbLabel(pathname, searchParams.get("view")), [pathname, searchParams]);
+  const fallbackLocationLabel = useMemo(() => breadcrumbLabel(pathname, searchParams.get("view")), [pathname, searchParams]);
+  const locationLabel = pageBreadcrumb ?? fallbackLocationLabel;
 
   return (
     <div
@@ -182,7 +208,7 @@ export default function AppShell({
           settingsOpen={settingsOpen}
           visibleSettings={visibleSettings}
           canUseWorkManagement={canUseWorkManagement}
-          taskCount={tasks.length}
+          taskCount={liveTasks.length}
           onToggleWork={() => setWorkOpen((value) => !value)}
           onToggleSettings={() => setSettingsOpen((value) => !value)}
         />
@@ -236,7 +262,7 @@ export default function AppShell({
               settingsOpen={settingsOpen}
               visibleSettings={visibleSettings}
               canUseWorkManagement={canUseWorkManagement}
-              taskCount={tasks.length}
+              taskCount={liveTasks.length}
               onToggleWork={() => setWorkOpen((value) => !value)}
               onToggleSettings={() => setSettingsOpen((value) => !value)}
             />
@@ -244,9 +270,9 @@ export default function AppShell({
         </div>
       )}
 
-      <div className={clsx("min-h-screen transition-[padding] duration-200", collapsed ? "lg:pl-20" : "lg:pl-72")}>
+      <div className={clsx("min-h-screen lg:transition-[padding] lg:duration-200", collapsed ? "lg:pl-20" : "lg:pl-72")}>
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur sm:px-6">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             <button
               ref={mobileTriggerRef}
               type="button"
@@ -272,7 +298,7 @@ export default function AppShell({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <Link
               href="/issues"
               aria-label="搜尋工作事項"
@@ -281,7 +307,12 @@ export default function AppShell({
             >
               <Search className="h-5 w-5" aria-hidden />
             </Link>
-            <ActionableNotificationBell tasks={tasks} userName={user.name} />
+            <ActionableNotificationBell
+              tasks={liveTasks}
+              userName={user.name}
+              actorId={user.id}
+              onTasksChange={handleTasksChange}
+            />
             <UserMenu user={user} />
           </div>
         </header>

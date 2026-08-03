@@ -256,7 +256,8 @@ function runProgressBarChecks() {
   const shellSource = fs.readFileSync("src/components/hotfix-nine-stage/HotfixStageShell.tsx", "utf8");
   check(
     "[19b] 副標題由目前 Workflow 關卡推導（不由頁面各自寫死覆蓋）",
-    shellSource.includes("hotfixStageSubtitle(ctx.runtime.currentStage.stageKey)"),
+    shellSource.includes("hotfixStageSubtitle(ctx!.runtime.currentStage.stageKey)") &&
+      shellSource.includes("const resolvedSubtitle = canHandleCurrentStage"),
   );
 }
 

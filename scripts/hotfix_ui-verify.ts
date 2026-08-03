@@ -235,7 +235,11 @@ function runStaticSourceChecks() {
   const globalsSrc = fs.readFileSync(path.join(REPO_ROOT, "src/app/globals.css"), "utf8");
   const tailwindSrc = fs.readFileSync(path.join(REPO_ROOT, "tailwind.config.ts"), "utf8");
   const zLayoutSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/workflow-execution/WorkflowZLayout.tsx"), "utf8");
+  const equalHeightRowSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/workflow-execution/EqualHeightContentRow.tsx"), "utf8");
   const shellSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/HotfixStageShell.tsx"), "utf8");
+  const currentFlowSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/hotfix-nine-stage/CurrentHotfixFlowCard.tsx"), "utf8");
+  const expandableSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/ui/ExpandableContentBlock.tsx"), "utf8");
+  const scrollChevronSrc = fs.readFileSync(path.join(REPO_ROOT, "src/components/ui/ScrollDownChevron.tsx"), "utf8");
   check(
     "[11b] Workflow 完成色集中於正式 semantic tokens",
     [
@@ -247,10 +251,17 @@ function runStaticSourceChecks() {
     ].every((token) => globalsSrc.includes(token)) && tailwindSrc.includes('"workflow-complete"'),
   );
   check(
-    "[11c] Z 型布局使用桌面 7／5 欄並保留手機單欄閱讀順序",
-    zLayoutSrc.includes("grid-cols-1") && zLayoutSrc.includes("lg:grid-cols-12") &&
-      zLayoutSrc.includes("lg:col-span-7") && zLayoutSrc.includes("lg:col-span-5") &&
-      shellSrc.includes("CurrentResponsibilityCard") && shellSrc.includes("CurrentStageGuidanceCard"),
+    "[11c] Z 型布局共用 50／50 等高列，手機維持相同 DOM 閱讀順序",
+    zLayoutSrc.includes("EqualHeightContentRow") &&
+      equalHeightRowSrc.includes("grid-cols-1") && equalHeightRowSrc.includes("md:grid-cols-2") &&
+      equalHeightRowSrc.includes("items-stretch") && equalHeightRowSrc.includes("[&>section]:h-full") &&
+      shellSrc.includes("CurrentHotfixFlowCard") && !shellSrc.includes("CurrentStageGuidanceCard"),
+  );
+  check(
+    "[11c-2] 目前 Hotfix 流程只有三項，下一關沿用 nineStage 動態名稱並正確處理終態",
+    (currentFlowSrc.match(/<dt/g) ?? []).length === 3 &&
+      currentFlowSrc.includes("nineStageLabelOfIndex(view.currentIndex + 1)") &&
+      currentFlowSrc.includes("流程已完成") && currentFlowSrc.includes("流程已取消"),
   );
 
   const activeStates = getNineStageVisualStates({ currentIndex: 5, cancelled: false, cancelledAtIndex: null, terminalComplete: false });
@@ -297,6 +308,14 @@ function runStaticSourceChecks() {
         ".animate-stage-line-fill",
         ".animate-stage-current-enter",
       ].every((className) => globalsSrc.includes(className)),
+  );
+  check(
+    "[11h] 長內容與 Scroll Chevron 具 ARIA、條件式顯示及 reduced-motion",
+    expandableSrc.includes("aria-expanded={expanded}") && expandableSrc.includes("aria-controls={contentId}") &&
+      expandableSrc.includes("閱讀更多") && expandableSrc.includes("顯示更少") &&
+      scrollChevronSrc.includes("scrollHeight > window.innerHeight + 180") &&
+      scrollChevronSrc.includes('aria-label="向下查看更多內容"') &&
+      [".animate-tooltip-in", ".animate-expand-hint-once", ".animate-scroll-chevron"].every((className) => globalsSrc.includes(className)),
   );
 }
 

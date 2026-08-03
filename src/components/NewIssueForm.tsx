@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createIssueAction } from "@/lib/actions";
 import { ActionErrorText } from "@/components/ActionResultBanner";
@@ -16,17 +16,27 @@ import HotfixGovernanceRelationFields from "@/components/issue-relations/HotfixG
 import type { GovernanceRelationCandidates } from "@/lib/issue-relations/viewService";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import RichTextEditor from "@/components/rich-text/RichTextEditor";
+import RiskLevelHelp from "@/components/hotfix-nine-stage/RiskLevelHelp";
+import {
+  issueCreateDraftStorageKey,
+  parseClientIssueDraft,
+  snapshotClientIssueDraft,
+} from "@/lib/hotfix-ui/createDraft";
+import { parseRichTextValue } from "@/lib/rich-text/value";
 
 const inputCls = "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none";
 const labelCls = "mb-1 block text-sm font-medium text-gray-700";
 
 export default function NewIssueForm({
+  actorId,
   scope,
   initialApplicants,
   relationCandidates,
   initialIssueType,
   initialChangeSubType,
 }: {
+  actorId: string;
   scope: IssueCreationScope;
   initialApplicants?: ApplicantOption[];
   relationCandidates: GovernanceRelationCandidates;
@@ -39,37 +49,109 @@ export default function NewIssueForm({
   const [teamId, setTeamId] = useState(scope.fixedTeamId ?? "");
   const [applicantId, setApplicantId] = useState(scope.fixedApplicant?.id ?? "");
   const [hotfixPriority, setHotfixPriority] = useState("");
+  const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [activeOperation, setActiveOperation] = useState<"draft" | "create" | null>(null);
+  const operationRef = useRef<"draft" | "create" | null>(null);
   const initialStatus = getWorkflow(issueType)[0]?.key ?? "";
   const template = getVisibleFieldTemplate(issueType, initialStatus);
   const isHotfix = issueType === "Hotfix";
+  const draftStorageKey = issueCreateDraftStorageKey(actorId, initialIssueType);
 
-  // 雙重提交流程修正：兩個按鈕都送同一份表單，差別只在 submitForApproval。
-  //
-  // 失敗時刻意不清空表單、不離開本頁——使用者已填的內容全部保留，只顯示服務層回傳的
-  // 中文訊息（例如申請人尚未設定直屬主管），使用者可改選申請人後重按，或改按「暫存」。
-  // 送出期間按鈕一律 disabled（防連點）；但這只是體驗上的保護，真正的重複送出防護在
-  // 服務層：整個建立＋送簽是單一 transaction，且已離開草稿的工單不會再被推進第二次。
-  function submit(submitForApproval: boolean) {
+  useEffect(() => {
+    if (!isHotfix) return;
+    const draft = parseClientIssueDraft(window.localStorage.getItem(draftStorageKey));
+    if (!draft || draft.fields.issueType?.[0] !== initialIssueType) return;
+
+    setTeamId(draft.fields.teamId?.[0] ?? teamId);
+    setApplicantId(draft.fields.applicantId?.[0] ?? applicantId);
+    setHotfixPriority(draft.fields.hotfixPriority?.[0] ?? "");
+    // Pending image nodes cannot survive a browser restart because their File/ObjectURL is
+    // intentionally not persisted. Restore the formatted text while removing those stale nodes,
+    // so reopening a draft never renders a broken blob image or attempts a formal upload.
+    setDescription(JSON.stringify(parseRichTextValue(draft.fields.description?.[0] ?? "")));
+    setDraftNotice("已還原此瀏覽器先前暫存的草稿；圖片需重新選擇後才能正式建立。");
+
+    const form = formRef.current;
+    if (!form) return;
+    const controlled = new Set(["issueType", "teamId", "applicantId", "hotfixPriority", "description"]);
+    for (const [name, values] of Object.entries(draft.fields)) {
+      if (controlled.has(name)) continue;
+      const controls = Array.from(form.elements).filter((element): element is HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement =>
+        element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement,
+      ).filter((element) => element.name === name);
+      for (const control of controls) {
+        if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) {
+          control.checked = values.includes(control.value);
+        } else if (values[0] !== undefined) {
+          control.value = values[0];
+        }
+      }
+    }
+    // The storage key already includes actor + issue type, so this effect must run only once for
+    // the mounted creation screen. Subsequent controlled changes must never be overwritten.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftStorageKey, initialIssueType, isHotfix]);
+
+  async function saveClientDraft() {
     const formEl = formRef.current;
-    if (!formEl) return;
-    if (submitForApproval && !formEl.reportValidity()) return;
+    if (!formEl || operationRef.current) return;
+    operationRef.current = "draft";
+    setActiveOperation("draft");
+    setDraftNotice(null);
+    try {
+      // Only Hotfix changed to browser-local draft semantics. Other issue types retain their
+      // existing server draft behavior and canonical redirect.
+      if (!isHotfix) {
+        const formData = new FormData(formEl);
+        formData.set("submitForApproval", "false");
+        const result = await createIssueAction(formData);
+        if (!result.ok) {
+          setError(result.message);
+          setErrorCode(result.code);
+          return;
+        }
+        router.push(result.data!.redirectTo);
+        return;
+      }
+      const draft = snapshotClientIssueDraft(new FormData(formEl));
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      setDraftNotice("草稿已暫存於此瀏覽器；尚未建立 Hotfix，也未啟動簽核流程。");
+    } catch {
+      setDraftNotice("瀏覽器無法保存草稿，表單內容仍保留在目前頁面。");
+    } finally {
+      operationRef.current = null;
+      setActiveOperation(null);
+    }
+  }
+
+  async function createIssue(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formEl = formRef.current;
+    if (!formEl || operationRef.current || !formEl.reportValidity()) return;
+    operationRef.current = "create";
+    setActiveOperation("create");
 
     const formData = new FormData(formEl);
-    formData.set("submitForApproval", String(submitForApproval));
+    formData.set("submitForApproval", "true");
     setError(null);
     setErrorCode(null);
-    startTransition(async () => {
+    setDraftNotice(null);
+    try {
       const result = await createIssueAction(formData);
       if (!result.ok) {
         setError(result.message);
         setErrorCode(result.code);
         return;
       }
+      window.localStorage.removeItem(draftStorageKey);
       router.push(result.data!.redirectTo);
-    });
+    } finally {
+      operationRef.current = null;
+      setActiveOperation(null);
+    }
   }
 
   return (
@@ -85,11 +167,12 @@ export default function NewIssueForm({
         </Link>
       </div>
 
-      <form ref={formRef} onSubmit={(e) => e.preventDefault()} className="space-y-6">
+      <form ref={formRef} onSubmit={createIssue} className="space-y-6">
         {issueType === "ChangeRelease" && (
           <input type="hidden" name="changeSubType" value={initialChangeSubType ?? "QUARTERLY_RELEASE"} />
         )}
         <ActionErrorText message={error} code={errorCode} />
+        {draftNotice && <p role="status" className="rounded-md border border-primary/20 bg-primary-muted px-3 py-2 text-sm text-primary">{draftNotice}</p>}
         <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -117,6 +200,7 @@ export default function NewIssueForm({
             applicantId={applicantId}
             onTeamIdChange={setTeamId}
             onApplicantIdChange={setApplicantId}
+            disabled={activeOperation !== null}
             initialApplicants={initialApplicants}
             fixedTeamId={scope.fixedTeamId}
             fixedApplicant={scope.fixedApplicant}
@@ -144,13 +228,7 @@ export default function NewIssueForm({
               {isHotfix ? "問題現象" : "問題現象／需求說明"}
               <span className="ml-1 text-danger">*</span>
             </label>
-            <textarea
-              name="description"
-              required
-              rows={3}
-              placeholder={isHotfix ? "請描述正式環境發生什麼問題" : "請描述問題現象或需求內容"}
-              className={inputCls}
-            />
+            {isHotfix ? <RichTextEditor name="description" value={description} onChange={setDescription} required minHeight={240} placeholder="請描述正式環境發生什麼問題，或加入至少一張問題截圖" disabled={activeOperation !== null} /> : <textarea name="description" required rows={3} placeholder="請描述問題現象或需求內容" className={inputCls} />}
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -181,7 +259,7 @@ export default function NewIssueForm({
             </div>
             <div>
               <label className={labelCls}>
-                風險等級（= 影響程度）<span className="ml-1 text-danger">*</span>
+                風險等級（= 影響程度）<span className="ml-1 text-danger">*</span>{isHotfix && <RiskLevelHelp />}
               </label>
               <select name="riskLevel" required className={inputCls} defaultValue="">
                 <option value="">請選擇</option>
@@ -191,11 +269,6 @@ export default function NewIssueForm({
                   </option>
                 ))}
               </select>
-              {isHotfix && (
-                <p className="mt-1 text-xs text-gray-400">
-                  高：影響主要服務、營運流程、資料正確性或資安風險／中：影響部分功能或特定使用者／低：影響有限，但需修正
-                </p>
-              )}
             </div>
             {isHotfix ? (
               <div>
@@ -260,19 +333,18 @@ export default function NewIssueForm({
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              disabled={isPending || scope.blockedReason !== null}
-              onClick={() => submit(false)}
+              disabled={activeOperation !== null || scope.blockedReason !== null}
+              onClick={() => { void saveClientDraft(); }}
               className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              暫存
+              {activeOperation === "draft" ? "暫存中…" : "暫存"}
             </button>
             <button
-              type="button"
-              disabled={isPending || scope.blockedReason !== null}
-              onClick={() => submit(true)}
+              type="submit"
+              disabled={activeOperation !== null || scope.blockedReason !== null}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {isPending ? "建立中…" : "建立工單"}
+              {activeOperation === "create" ? "建立中…" : "建立工單"}
             </button>
             <a href="/issues" className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
               取消

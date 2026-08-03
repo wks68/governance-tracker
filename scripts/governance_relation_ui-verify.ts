@@ -20,7 +20,6 @@ import {
 } from "../src/lib/issue-relations/viewService";
 import {
   createIssueForActor,
-  IssueCreationValidationError,
 } from "../src/lib/issueCreation";
 
 const FORMAL_DEV_DB = "/workspaces/governance-tracker/prisma/dev.db";
@@ -106,7 +105,6 @@ function hotfixForm(input: {
   incidentIds?: string[];
   rcaIds?: string[];
   projectId?: string;
-  relateProject?: boolean;
 }): FormData {
   const form = new FormData();
   form.set("issueType", "Hotfix");
@@ -120,9 +118,6 @@ function hotfixForm(input: {
   form.set("dueDate", "2026-12-31");
   form.set("teamId", input.teamId);
   form.set("applicantId", input.applicantId);
-  form.set("relateIncidents", input.incidentIds?.length ? "yes" : "no");
-  form.set("relateRcas", input.rcaIds?.length ? "yes" : "no");
-  form.set("relateProject", input.relateProject || input.projectId ? "yes" : "no");
   for (const id of input.incidentIds ?? []) {
     form.append("incidentRelationIds", id);
   }
@@ -258,17 +253,24 @@ async function main(): Promise<void> {
     "src/components/issue-relations/HotfixGovernanceRelationFields.tsx",
     "utf8",
   );
-  check(
-    "[2] 事件／RCA 使用 checkbox 多選，專案使用單一 select",
-    createFieldsSource.includes('type="checkbox"') &&
-      createFieldsSource.includes('name="projectRelationId"') &&
-      createFieldsSource.includes("<select"),
+  const selectorSource = fs.readFileSync(
+    "src/components/issue-relations/GovernanceRelationSelector.tsx",
+    "utf8",
   );
   check(
-    "[3] 切回否會清除尚未提交的三類選擇",
-    createFieldsSource.includes("setIncidentIds(new Set())") &&
-      createFieldsSource.includes("setRcaIds(new Set())") &&
-      createFieldsSource.includes('setProjectId("")'),
+    "[2] 事件／RCA 使用多選，季度專案維持單選 cardinality",
+    selectorSource.includes('incident: {') &&
+      selectorSource.includes('rca: {') &&
+      selectorSource.includes('project: {') &&
+      selectorSource.includes('inputName: "projectRelationId", multiple: false'),
+  );
+  check(
+    "[3] 建立頁無是否關聯 Radio，已選紀錄可在提交前移除",
+    !createFieldsSource.includes("relateIncidents") &&
+      !createFieldsSource.includes("relateRcas") &&
+      !createFieldsSource.includes("relateProject") &&
+      selectorSource.includes("移除 ${item.issueKey}") &&
+      selectorSource.includes("filter((entry) => entry.id !== item.id)"),
   );
   check(
     "[4] 候選資料排除取消紀錄、已結案專案與既有 draft Hotfix",
@@ -283,23 +285,17 @@ async function main(): Promise<void> {
   );
 
   const missingProjectTitle = "RELUI missing required project";
-  await expectError(
-    "[5] 選是但未選專案時 Server 拒絕建立",
-    IssueCreationValidationError,
-    () =>
-      createIssueForActor(
-        admin,
-        hotfixForm({
-          teamId: kenMembership.teamId,
-          applicantId: ken.id,
-          title: missingProjectTitle,
-          relateProject: true,
-        }),
-      ),
+  const withoutRelations = await createIssueForActor(
+    admin,
+    hotfixForm({ teamId: kenMembership.teamId, applicantId: ken.id, title: missingProjectTitle }),
   );
   check(
-    "[5b] 未選專案不留下部分 Hotfix",
-    (await prisma.issue.count({ where: { title: missingProjectTitle } })) === 0,
+    "[5] 未選季度專案仍可建立 Hotfix",
+    withoutRelations.id.length > 0,
+  );
+  check(
+    "[5b] 未選任何治理紀錄不會建立孤兒 Relation",
+    (await getDirectIssueRelationsForActor(admin.id, withoutRelations.id)).length === 0,
   );
 
   const created = await createIssueForActor(

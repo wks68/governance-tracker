@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CircleAlert, X } from "lucide-react";
+import { BellRing, CircleAlert, X } from "lucide-react";
 import {
   createContext,
   useCallback,
@@ -27,10 +27,20 @@ interface ToastEntry extends MappedActionError {
   id: number;
   actionHref?: string;
   actionLabel?: string;
+  tone?: "error" | "info";
 }
 
 interface AppToastContextValue {
   notifyActionError: (input: ActionErrorInput) => void;
+  notifyWorkflowTask: (input: WorkflowTaskToastInput) => void;
+}
+
+export interface WorkflowTaskToastInput {
+  notificationId: string;
+  title: string;
+  description: string;
+  actionHref: string;
+  actionLabel: string;
 }
 
 const AppToastContext = createContext<AppToastContextValue | null>(null);
@@ -67,6 +77,7 @@ export default function AppToastProvider({
       const entry: ToastEntry = {
         ...mapped,
         id: nextIdRef.current++,
+        tone: "error",
         ...(mapped.missingSupervisor && canManageResponsibility
           ? { actionHref: "/settings/approval-governance", actionLabel: "前往權責設定" }
           : {}),
@@ -76,8 +87,22 @@ export default function AppToastProvider({
     [canManageResponsibility],
   );
 
+  const notifyWorkflowTask = useCallback((input: WorkflowTaskToastInput) => {
+    const entry: ToastEntry = {
+      id: nextIdRef.current++,
+      code: input.notificationId,
+      title: input.title,
+      description: input.description,
+      missingSupervisor: false,
+      tone: "info",
+      actionHref: input.actionHref,
+      actionLabel: input.actionLabel,
+    };
+    setToasts((current) => [entry, ...current].slice(0, ACTION_ERROR_TOAST_LIMIT));
+  }, []);
+
   return (
-    <AppToastContext.Provider value={{ notifyActionError }}>
+    <AppToastContext.Provider value={{ notifyActionError, notifyWorkflowTask }}>
       {children}
       <div
         className="pointer-events-none fixed left-4 right-4 top-20 z-[90] flex flex-col gap-2 sm:left-auto sm:right-5 sm:w-[min(27.5rem,calc(100vw-2.5rem))]"
@@ -161,11 +186,11 @@ function ActionErrorToast({ toast, onDismiss }: { toast: ToastEntry; onDismiss: 
       onMouseLeave={handleMouseLeave}
       onFocusCapture={pause}
       onBlurCapture={handleBlur}
-      className={`app-toast-enter pointer-events-auto relative overflow-hidden rounded-xl border border-danger/25 bg-surface p-4 pr-11 shadow-overlay transition-opacity duration-[400ms] ${fading ? "opacity-0" : "opacity-100"}`}
+      className={`app-toast-enter pointer-events-auto relative overflow-hidden rounded-xl border bg-surface p-4 pr-11 shadow-overlay transition-opacity duration-[400ms] ${toast.tone === "info" ? "border-primary/25" : "border-danger/25"} ${fading ? "opacity-0" : "opacity-100"}`}
     >
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-danger-muted text-danger">
-          <CircleAlert className="h-5 w-5" aria-hidden />
+        <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full ${toast.tone === "info" ? "bg-primary-muted text-primary" : "bg-danger-muted text-danger"}`}>
+          {toast.tone === "info" ? <BellRing className="h-5 w-5" aria-hidden /> : <CircleAlert className="h-5 w-5" aria-hidden />}
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-text-primary">{toast.title}</p>
@@ -179,9 +204,9 @@ function ActionErrorToast({ toast, onDismiss }: { toast: ToastEntry; onDismiss: 
       </div>
       <button
         type="button"
-        aria-label="關閉錯誤通知"
+        aria-label={toast.tone === "info" ? "關閉工作通知" : "關閉錯誤通知"}
         onClick={() => onDismiss(toast.id)}
-        className="absolute right-2.5 top-2.5 rounded-lg p-1.5 text-text-muted hover:bg-danger-muted hover:text-danger"
+        className={`absolute right-2.5 top-2.5 rounded-lg p-1.5 text-text-muted ${toast.tone === "info" ? "hover:bg-primary-muted hover:text-primary" : "hover:bg-danger-muted hover:text-danger"}`}
       >
         <X className="h-4 w-4" aria-hidden />
       </button>
