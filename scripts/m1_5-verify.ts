@@ -127,8 +127,8 @@ function runPureLogicTests() {
 
   check(
     "APPROVAL_TYPES 值域正確",
-    APPROVAL_TYPES.length === 5 &&
-      ["BUSINESS_APPROVAL", "RD_LEAD_APPROVAL", "QA_LEAD_APPROVAL", "DEPLOYMENT_APPROVAL", "RISK_EXCEPTION_APPROVAL"].every(
+    APPROVAL_TYPES.length === 6 &&
+      ["BUSINESS_APPROVAL", "RD_LEAD_APPROVAL", "QA_LEAD_APPROVAL", "DEPLOYMENT_APPROVAL", "RISK_EXCEPTION_APPROVAL", "INCIDENT_CLOSURE_CONFIRMATION"].every(
         (v) => (APPROVAL_TYPES as readonly string[]).includes(v),
       ),
   );

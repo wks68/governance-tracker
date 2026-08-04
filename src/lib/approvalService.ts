@@ -42,8 +42,21 @@ type Tx = Prisma.TransactionClient;
 
 export const RESUBMITTABLE_DECISIONS = ["REJECTED", "CANCELLED"] as const;
 
-// 需送核前置風險檢核的 approvalType；BUSINESS_APPROVAL 無風險檢核模板。
+// 需送核前置風險檢核的 approvalType；BUSINESS_APPROVAL 無風險檢核模板。刻意與下方
+// TEAM_TARGET_APPROVAL_TYPES 分開維護：兩者語意不同（一個決定要不要跑風險檢核模板，
+// 一個決定核准責任目標是團隊還是直屬主管），Incident 的 INCIDENT_CLOSURE_CONFIRMATION
+// 沒有風險檢核模板，故不納入本集合，避免非預期要求風險檢核。
 const RISK_CHECK_GATED_TYPES: ReadonlySet<ApprovalType> = new Set(["RD_LEAD_APPROVAL", "QA_LEAD_APPROVAL", "DEPLOYMENT_APPROVAL"]);
+
+// 核准責任目標為「Team Lead」（approverTeamId＝Issue.assignedTeamId）的 approvalType 集合，
+// 供 checkApprovalRecordConsistency／resolveExpectedAuthorityForCreation 共用；BUSINESS_APPROVAL
+// 及其他未列入者維持既有「直屬主管」責任目標解析路徑不變。
+const TEAM_TARGET_APPROVAL_TYPES: ReadonlySet<ApprovalType> = new Set([
+  "RD_LEAD_APPROVAL",
+  "QA_LEAD_APPROVAL",
+  "DEPLOYMENT_APPROVAL",
+  "INCIDENT_CLOSURE_CONFIRMATION",
+]);
 
 // ---------------------------------------------------------------------------
 // 錯誤類型：呼叫端可用 instanceof 分辨拒絕原因，不得吞掉錯誤改為靜默略過。
@@ -70,6 +83,7 @@ const NO_ELIGIBLE_APPROVER_MESSAGES: Record<string, string> = {
   RD_LEAD_APPROVAL: "目前承接團隊沒有其他可核准此工單的 RD 主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
   QA_LEAD_APPROVAL: "目前承接團隊沒有其他可核准此工單的 QA 主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
   DEPLOYMENT_APPROVAL: "目前承接團隊沒有其他可核准此工單的 OP 主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
+  INCIDENT_CLOSURE_CONFIRMATION: "目前事件受理團隊沒有其他可確認結案的主管或授權代理人。請至『團隊』設定其他團隊主管，或至『核准治理設定』設定核准代理人。",
 };
 
 export class NoEligibleApproverError extends Error {
@@ -173,7 +187,7 @@ export function checkApprovalRecordConsistency(r: ApprovalRecordConsistencyInput
   }
 
   // 核准責任目標：由 approvalType 決定，PENDING 與已決策皆須維持，不隨實際核准途徑改變。
-  const isTeamLeadType = r.approvalType === "RD_LEAD_APPROVAL" || r.approvalType === "QA_LEAD_APPROVAL" || r.approvalType === "DEPLOYMENT_APPROVAL";
+  const isTeamLeadType = isApprovalType(r.approvalType) && TEAM_TARGET_APPROVAL_TYPES.has(r.approvalType);
   const isBusinessType = r.approvalType === "BUSINESS_APPROVAL";
   if (isBusinessType) {
     if (!r.supervisorAssignmentId) issues.push("approvalType=BUSINESS_APPROVAL 時 supervisorAssignmentId（核准責任目標）不得為空");
@@ -492,7 +506,7 @@ async function resolveExpectedAuthorityForCreation(
   const issue = await tx.issue.findUnique({ where: { id: issueId } });
   if (!issue) throw new ApprovalValidationError(["issueId 對應的 Issue 不存在"]);
 
-  const isTeamLeadType = RISK_CHECK_GATED_TYPES.has(approvalType);
+  const isTeamLeadType = TEAM_TARGET_APPROVAL_TYPES.has(approvalType);
   const teamId = isTeamLeadType ? issue.assignedTeamId : null;
   if (isTeamLeadType && !teamId) {
     throw new ApprovalValidationError(["Issue 尚未指派處理團隊（assignedTeamId 為 null），無法解析核准資格"]);

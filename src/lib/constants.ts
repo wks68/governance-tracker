@@ -148,7 +148,10 @@ export function isSystemResponsibilityType(value: string): value is SystemRespon
 // RD/QA/OP 接單流程新增：Team.domain 值域（見 prisma/schema.prisma Team model 註解）。
 // 與 SYSTEM_RESPONSIBILITY_TYPES 刻意分開宣告——後者是「System＋Team 配對」的自動路由設定，
 // 語意上不是 Team 本身的固定屬性；Team.domain 才是 Team 本身領域的正式判斷來源，兩者不得混用。
-export const TEAM_DOMAINS = ["RD", "QA", "OP", "BUSINESS", "OTHER"] as const;
+// Incident 事件通報流程新增：INCIDENT＝事件受理窗口／系統負責人團隊（承接與分級）、
+// SECURITY＝資安推動小組（RCA 啟動判定與後續 RCA 完整性審查共用同一個團隊）。純新增值域，
+// 不影響既有 RD/QA/OP/BUSINESS/OTHER 的既有判斷邏輯。
+export const TEAM_DOMAINS = ["RD", "QA", "OP", "BUSINESS", "OTHER", "INCIDENT", "SECURITY"] as const;
 export type TeamDomain = (typeof TEAM_DOMAINS)[number];
 export function isTeamDomain(value: string): value is TeamDomain {
   return (TEAM_DOMAINS as readonly string[]).includes(value);
@@ -183,6 +186,11 @@ export const APPROVAL_TYPES = [
   "QA_LEAD_APPROVAL",
   "DEPLOYMENT_APPROVAL",
   "RISK_EXCEPTION_APPROVAL",
+  // Incident 事件通報流程新增：事件受理窗口／系統負責人確認事件結案。走既有「Team Lead
+  // 核准」模式（approverTeamId＝Issue.assignedTeamId，事件受理團隊全程未再變動），純新增值域。
+  // RCA 啟動判定的資安推動小組確認改走獨立的 capability-gated 動作（非 ApprovalRecord），
+  // 見 src/lib/incident-ui/incidentAssignmentService.ts 說明。
+  "INCIDENT_CLOSURE_CONFIRMATION",
 ] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 export function isApprovalType(value: string): value is ApprovalType {

@@ -186,6 +186,17 @@ export async function returnIssueToStage(input: ExecuteTransitionInput) {
   return prisma.$transaction((tx) => executeTransitionCore(tx, input, "RETURN"));
 }
 
+// Incident 事件通報流程新增：與 executeIssueTransitionInTx 同一個「呼叫端已在自己開啟的
+// transaction 內完成資格重新驗證＋寫入，緊接著執行同一個 Transition」理由，差別只在
+// kind＝RETURN（例如退回補件、技術單位無法承接退回重新指派、恢復結果未通過退回處理）。
+// 沿用同一顆 executeTransitionCore，不建立第二套 Transition 執行邏輯。
+export async function returnIssueToStageInTx(tx: Tx, input: ExecuteTransitionInput) {
+  if (!input.reasonCode?.trim()) {
+    throw new WorkflowExecutionBlockedError([{ code: "REASON_CODE_REQUIRED", message: "RETURN 必須填寫 reasonCode" }]);
+  }
+  return executeTransitionCore(tx, input, "RETURN");
+}
+
 // 相容已發布且尚未重建的 Hotfix workflow：舊版本沒有 opCompleted → opDeploying 的
 // RETURN 邊。這個受限入口只處理「上版後主管已駁回」這一種情況，仍在 transaction 內
 // 重新驗證目前關卡、核准人、核准結果、同一 workflow 目標關卡，並寫入 History/AuditLog。
