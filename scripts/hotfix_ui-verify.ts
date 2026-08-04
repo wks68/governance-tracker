@@ -250,10 +250,13 @@ function runStaticSourceChecks() {
     ].every((token) => globalsSrc.includes(token)) && tailwindSrc.includes('"workflow-complete"'),
   );
   check(
-    "[11c] Z 型布局共用 50／50 雙欄，手機維持相同 DOM 閱讀順序，高度依內容自然決定（不強制 stretch）",
+    "[11c] Z 型布局共用 50／50 雙欄，手機維持相同 DOM 閱讀順序；預設高度依內容自然決定（不強制 stretch），僅頂列（Hotfix 基本資訊｜目前 Hotfix 流程）明確 equalHeight 撐滿卡片高度",
     zLayoutSrc.includes("EqualHeightContentRow") &&
       equalHeightRowSrc.includes("grid-cols-1") && equalHeightRowSrc.includes("md:grid-cols-2") &&
-      !equalHeightRowSrc.includes("items-stretch") && !equalHeightRowSrc.includes("h-full") &&
+      equalHeightRowSrc.includes("equalHeight = false") &&
+      equalHeightRowSrc.includes('equalHeight ? "items-stretch" : "items-start"') &&
+      zLayoutSrc.includes("<EqualHeightContentRow left={topLeft} right={topRight} equalHeight />") &&
+      zLayoutSrc.includes("<EqualHeightContentRow left={contentLeft} right={contentRight} />") &&
       shellSrc.includes("CurrentHotfixFlowCard") && !shellSrc.includes("CurrentStageGuidanceCard"),
   );
   check(

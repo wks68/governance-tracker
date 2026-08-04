@@ -37,18 +37,17 @@ export default async function HotfixApprovalRdPage({ params }: { params: { id: s
       backHref="/issues?view=hotfix"
       ctx={ctx}
       main={<ExecutionFieldsReadOnly fields={RD_FIX_FIELDS} values={rdValues} title="RD 修正內容（正式提交快照）" />}
-      side={<div className="space-y-5">
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-        {review ? <ApprovalReviewPanel
+      approval={review ? <ApprovalReviewPanel
         issueId={params.id}
         approvalRecordId={review.approvalRecordId}
+        stageLabel="RD 主管簽核"
         roleLabel="RD 主管"
         requestedByName={review.requestedByName}
         requestedAt={review.requestedAt}
         isResponsible={review.isResponsible}
         expectedApproverLabel={review.expectedApproverLabel}
-        /> : <MissingApprovalRecordNotice />}
-      </div>}
+      /> : <MissingApprovalRecordNotice />}
+      attachments={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
     />
   );
 }

@@ -149,6 +149,7 @@ export default async function HotfixOpPage({ params }: { params: { id: string } 
             <ApprovalReviewPanel
               issueId={params.id}
               approvalRecordId={postApprovalReview.approvalRecordId}
+              stageLabel="OP 上版結果確認"
               roleLabel="維運主管"
               requestedByName={postApprovalReview.requestedByName}
               requestedAt={postApprovalReview.requestedAt}

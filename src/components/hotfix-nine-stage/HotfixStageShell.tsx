@@ -15,6 +15,7 @@ import CurrentHotfixFlowCard from "./CurrentHotfixFlowCard";
 import { loadCancelledFromNineStageIndex } from "@/lib/hotfix-ui/pageContext";
 import type { GovernanceRelationView } from "@/lib/issue-relations/viewService";
 import { evaluateCurrentActorTask } from "@/lib/workflow-execution/responsibilityService";
+import { buildApprovalReviewViewData } from "@/lib/hotfix-ui/pageContext";
 import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
 import { formatDateTime } from "@/lib/datetime";
@@ -30,6 +31,8 @@ export default async function HotfixStageShell({
   headerActions,
   main,
   side,
+  approval,
+  attachments,
   children,
 }: {
   title: string;
@@ -52,13 +55,18 @@ export default async function HotfixStageShell({
   relationViewOverride?: GovernanceRelationView | null;
   /** 當前頁面專屬的次要操作，與共用操作一起置於頁面右上角。 */
   headerActions?: React.ReactNode;
-  /** 左下：目前關卡的主要工作或唯讀快照。未提供時沿用 children，便於既有頁面漸進收斂。 */
+  /** 主要送簽／執行內容快照，固定全寬呈現。未提供時沿用 children，便於既有頁面漸進收斂。 */
   main?: React.ReactNode;
-  /** 右下：附件、佐證與本階段行動。 */
+  /** 舊制右欄內容；提供 approval／attachments 的頁面不應再使用，僅供尚未遷移的頁面相容。 */
   side?: React.ReactNode;
+  /** 主管簽核：獨立全寬區塊，固定位於治理關聯之後、附件之前。 */
+  approval?: React.ReactNode;
+  /** 附件：獨立全寬區塊，固定位於主管簽核之後、簽核紀錄歷程之前。 */
+  attachments?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   const task = ctx ? await evaluateCurrentActorTask(ctx.issue.id, ctx.actor.id) : null;
+  const approvalReview = ctx ? await buildApprovalReviewViewData(ctx) : null;
   const canHandleCurrentStage = ctx
     ? ctx.runtime.currentStage.stageKey === "draft"
       ? await canActorEditHotfixDraft(ctx.issue.id, ctx.actor.id)
@@ -86,6 +94,10 @@ export default async function HotfixStageShell({
       : null;
   const currentTodo = task?.businessStatusLabel ?? (cancelled ? "已取消" : terminalComplete ? "已結案" : "—");
   const waitingOn = task?.waitingRoleLabel ?? "—";
+  // 主管簽核關卡的 waitingOn 只有角色名稱（例如「申請人直屬主管」），實際核准人姓名沿用既有
+  // buildApprovalReviewViewData 已解析出的 expectedApproverLabel（僅在有待核准紀錄時非
+  // null，等同已在該關卡），不在此另行判斷。
+  const waitingOnName = approvalReview?.expectedApproverLabel ?? null;
   const enteredAt = ctx?.runtime.pendingApproval?.requestedAt ? formatDateTime(ctx.runtime.pendingApproval.requestedAt) : null;
 
   return (
@@ -127,15 +139,16 @@ export default async function HotfixStageShell({
           terminalComplete,
           currentTodo,
           waitingOn,
+          waitingOnName,
           actionKind: task?.action ?? null,
           enteredAt,
         }} />}
         contentLeft={main ?? children}
-        contentRight={side}
-        after={<div className="space-y-5">
-          {relationView && <GovernanceRelationsCard view={relationView} presentation="hotfix-flow" hotfixCurrentStageLabel={currentStageLabel} />}
-          {cumulativeContext}
-        </div>}
+        contentRight={approval || attachments ? undefined : side}
+        governance={relationView && <GovernanceRelationsCard view={relationView} presentation="hotfix-flow" hotfixCurrentStageLabel={currentStageLabel} />}
+        approval={approval}
+        attachments={attachments}
+        after={cumulativeContext}
       />
     </div>
   );

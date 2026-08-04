@@ -116,18 +116,17 @@ export default async function HotfixApprovalRequesterPage({ params }: { params: 
         rcaCount={countOf("rca")}
         projectCount={countOf("project")}
       />}
-      side={<div className="space-y-5">
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-        {review ? <ApprovalReviewPanel
+      approval={review ? <ApprovalReviewPanel
         issueId={params.id}
         approvalRecordId={review.approvalRecordId}
+        stageLabel="申請人直屬主管簽核"
         roleLabel="申請人直屬主管"
         requestedByName={review.requestedByName}
         requestedAt={review.requestedAt}
         isResponsible={review.isResponsible}
         expectedApproverLabel={review.expectedApproverLabel}
-        /> : <MissingApprovalRecordNotice />}
-      </div>}
+      /> : <MissingApprovalRecordNotice />}
+      attachments={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
     />
   );
 }

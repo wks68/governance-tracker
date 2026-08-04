@@ -37,18 +37,17 @@ export default async function HotfixApprovalQaPage({ params }: { params: { id: s
       backHref="/issues?view=hotfix"
       ctx={ctx}
       main={<ExecutionFieldsReadOnly fields={QA_VERIFY_FIELDS} values={qaValues} title="QA 驗證內容（正式提交快照）" />}
-      side={<div className="space-y-5">
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-        {review ? <ApprovalReviewPanel
+      approval={review ? <ApprovalReviewPanel
         issueId={params.id}
         approvalRecordId={review.approvalRecordId}
+        stageLabel="QA 主管簽核"
         roleLabel="QA 主管"
         requestedByName={review.requestedByName}
         requestedAt={review.requestedAt}
         isResponsible={review.isResponsible}
         expectedApproverLabel={review.expectedApproverLabel}
-        /> : <MissingApprovalRecordNotice />}
-      </div>}
+      /> : <MissingApprovalRecordNotice />}
+      attachments={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
     />
   );
 }

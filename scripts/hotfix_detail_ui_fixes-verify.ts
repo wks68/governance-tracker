@@ -91,9 +91,12 @@ const requesterPage = source("src/app/issues/[id]/hotfix/approval/requester/page
 test("申請人直屬主管簽核頁移除無資料的送簽內容靜態卡", () => {
   assert.ok(!requesterPage.includes("送簽內容"));
 });
-test("移除 main 卡後不再產生等高強制留白（EqualHeightContentRow 自然高度）", () => {
+test("main／side 雙欄預設仍為自然高度（不強制 stretch）；僅 Hotfix 基本資訊｜目前 Hotfix 流程頂列明確選用 equalHeight 撐滿卡片高度", () => {
   const equalHeightRow = source("src/components/workflow-execution/EqualHeightContentRow.tsx");
-  assert.ok(!equalHeightRow.includes("items-stretch") && !equalHeightRow.includes("h-full"));
+  const zLayout = source("src/components/workflow-execution/WorkflowZLayout.tsx");
+  assert.ok(equalHeightRow.includes("equalHeight = false"));
+  assert.ok(equalHeightRow.includes('equalHeight ? "items-stretch" : "items-start"'));
+  assert.ok(zLayout.includes("<EqualHeightContentRow left={contentLeft} right={contentRight} />"));
 });
 
 console.log("\n=== 目前責任卡與治理關聯版面 ===");

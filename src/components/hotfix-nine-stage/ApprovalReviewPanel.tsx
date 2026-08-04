@@ -69,6 +69,8 @@ function RejectModal({ onCancel, onConfirm, isPending, title }: { onCancel: () =
 export interface ApprovalReviewPanelProps {
   issueId: string;
   approvalRecordId: string;
+  /** 簽核關卡名稱，例如「申請人直屬主管簽核」。 */
+  stageLabel: string;
   roleLabel: string;
   requestedByName: string;
   requestedAt: string;
@@ -77,7 +79,7 @@ export interface ApprovalReviewPanelProps {
   onDoneRedirectTo?: string;
 }
 
-export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLabel, requestedByName, requestedAt, isResponsible, expectedApproverLabel }: ApprovalReviewPanelProps) {
+export default function ApprovalReviewPanel({ issueId, approvalRecordId, stageLabel, roleLabel, requestedByName, requestedAt, isResponsible, expectedApproverLabel }: ApprovalReviewPanelProps) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -111,14 +113,30 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, roleLab
   }
 
   return (
-    <section id="approval-section" className="rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-gray-800">主管簽核</h2>
-      <p className="mt-1 text-xs text-gray-500">
-        由 {requestedByName} 於 {formatDateTime(requestedAt)} 送出，等待{roleLabel}簽核。
-      </p>
+    <section id="approval-section" className="ui-card p-5 sm:p-6">
+      <h2 className="text-base font-semibold text-text-primary">主管簽核</h2>
+      <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-xs font-medium text-text-muted">簽核關卡</dt>
+          <dd className="mt-1 font-medium text-text-primary">{stageLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-text-muted">應核准人</dt>
+          <dd className="mt-1 font-medium text-text-primary">{expectedApproverLabel ?? roleLabel}</dd>
+          <dd className="mt-0.5 text-xs text-text-secondary">{roleLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-text-muted">送簽人</dt>
+          <dd className="mt-1 font-medium text-text-primary">{requestedByName}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-text-muted">送簽時間</dt>
+          <dd className="mt-1 font-medium text-text-primary">{formatDateTime(requestedAt)}</dd>
+        </div>
+      </dl>
 
       {!isResponsible ? (
-        <p className="mt-3 text-xs text-gray-400">僅{roleLabel}可執行簽核。{expectedApproverLabel ? `目前應由：${expectedApproverLabel}` : ""}</p>
+        <p className="mt-4 text-xs text-gray-400">僅{roleLabel}可執行簽核。</p>
       ) : (
         <>
           <ActionErrorText message={error} code={errorCode} itemKey={issueId} />

@@ -57,18 +57,17 @@ export default async function HotfixApprovalOpPage({ params }: { params: { id: s
         </p>
       )}
       </div>}
-      side={<div className="space-y-5">
-        <AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />
-        {review ? <ApprovalReviewPanel
+      approval={review ? <ApprovalReviewPanel
         issueId={params.id}
         approvalRecordId={review.approvalRecordId}
+        stageLabel="OP 主管上版前核准"
         roleLabel="OP 主管"
         requestedByName={review.requestedByName}
         requestedAt={review.requestedAt}
         isResponsible={review.isResponsible}
         expectedApproverLabel={review.expectedApproverLabel}
-        /> : <MissingApprovalRecordNotice />}
-      </div>}
+      /> : <MissingApprovalRecordNotice />}
+      attachments={<AttachmentSection issueId={params.id} items={attachments} readOnly canUpload={false} />}
     />
   );
 }

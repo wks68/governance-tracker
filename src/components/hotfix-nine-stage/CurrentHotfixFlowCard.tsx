@@ -12,6 +12,9 @@ export interface CurrentHotfixFlowView {
   currentTodo: string;
   /** 目前等待哪個角色／團隊／執行人，同樣沿用既有 resolver，不自行以角色名稱判斷。 */
   waitingOn: string;
+  /** 主管簽核關卡時的實際核准人姓名（沿用既有 buildApprovalReviewViewData 解析結果），
+   *  非核准關卡或尚無法解析出單一人選時為 null，只顯示 waitingOn 角色文字，不捏造姓名。 */
+  waitingOnName?: string | null;
   /** 目前登入者對這張工單的既有 actionability 結果；null 代表沒有 Workflow Runtime 可判斷。 */
   actionKind: IssueActionKind | null;
   /** 目前這一關送出／進入的時間；沒有可用資料時不顯示，不捏造。 */
@@ -62,7 +65,14 @@ export default function CurrentHotfixFlowCard({ view }: { view: CurrentHotfixFlo
         </div>
         <div>
           <dt className="text-xs font-medium text-text-muted">目前等待人員／執行人</dt>
-          <dd className="mt-1 font-medium text-text-primary">{view.waitingOn}</dd>
+          {view.waitingOnName ? (
+            <dd className="mt-1">
+              <div className="font-semibold text-text-primary">{view.waitingOnName}</div>
+              <div className="mt-0.5 text-xs text-text-secondary">{view.waitingOn}</div>
+            </dd>
+          ) : (
+            <dd className="mt-1 font-medium text-text-primary">{view.waitingOn}</dd>
+          )}
         </div>
         {view.enteredAt && (
           <div>

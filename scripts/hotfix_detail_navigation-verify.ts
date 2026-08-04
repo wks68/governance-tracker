@@ -90,7 +90,15 @@ check("基本資訊使用新欄位且移除實際建立者", ["Hotfix 單編號"
 check("目前流程整合目前階段、目前處理部門、目前待辦、等待人員／執行人與下一關，並動態解析終態", ["目前階段", "目前處理部門", "目前待辦", "目前等待人員／執行人", "下一關"].every((label) => currentFlow.includes(label)) && currentFlow.includes("view.currentTodo") && currentFlow.includes("view.waitingOn") && currentFlow.includes("nineStageLabelOfIndex(view.currentIndex + 1)") && currentFlow.includes("流程已完成") && currentFlow.includes("流程已取消"));
 check("目前流程的操作按鈕沿用既有 actionability resolver 與 hotfix-list 同一套 variant 判斷，不自行以角色名稱判斷", currentFlow.includes("resolveHotfixListAction") && currentFlow.includes("IssueActionKind") && !/role\s*===|roleLabel\s*===/.test(currentFlow));
 check("本關卡引導與舊唯讀工作卡已移除", !fs.existsSync(path.join(ROOT, "src/components/hotfix-nine-stage/CurrentStageGuidanceCard.tsx")) && !fs.existsSync(path.join(ROOT, "src/components/hotfix-nine-stage/CurrentResponsibilityCard.tsx")) && !shell.includes("本關卡引導") && !shell.includes("唯讀工作內容"));
-check("Z 型列於平板以上採等寬雙欄，高度依內容自然決定，不強制 stretch 等高", zLayout.includes("EqualHeightContentRow") && equalHeightRow.includes("md:grid-cols-2") && !equalHeightRow.includes("items-stretch") && !equalHeightRow.includes("h-full"));
+check(
+  "Z 型列於平板以上採等寬雙欄；預設高度依內容自然決定，僅「Hotfix 基本資訊｜目前 Hotfix 流程」頂列明確 equalHeight 撐滿卡片高度，其餘雙欄列不受影響",
+  zLayout.includes("EqualHeightContentRow") &&
+    equalHeightRow.includes("md:grid-cols-2") &&
+    equalHeightRow.includes("equalHeight = false") &&
+    equalHeightRow.includes('equalHeight ? "items-stretch" : "items-start"') &&
+    zLayout.includes("<EqualHeightContentRow left={topLeft} right={topRight} equalHeight />") &&
+    zLayout.includes("<EqualHeightContentRow left={contentLeft} right={contentRight} />"),
+);
 check("長內容元件提供 ARIA、閱讀更多與顯示更少", expandable.includes("aria-expanded={expanded}") && expandable.includes("aria-controls={contentId}") && expandable.includes("閱讀更多") && expandable.includes("顯示更少") && expandable.includes("line-clamp-5"));
 check("關聯區塊以 Hotfix 主體與三類正式治理關聯呈現且不使用線性 A/B/C", relationPresentation.includes("治理關聯與追蹤") && ["本次 Hotfix", "關聯事件通報", "關聯 RCA", "所屬季度專案", "尚未關聯"].every((label) => relationPresentation.includes(label)) && ["本單來源與後續處理", "A. 從哪裡來", "B. 目前處理", "C. 後續追蹤", "尚未安排"].every((label) => !relationPresentation.includes(label)) && relationPresentation.includes('presentation === "hotfix-flow"') && relationPresentation.includes('presentation !== "hotfix-flow"'));
 check("簽核歷程使用可讀標題，UI 不顯示 Audit Log", historyTimeline.includes("簽核紀錄歷程") && !historyTimeline.includes("Audit Log") && cumulative.includes("prisma.auditLog.findMany"));

@@ -9,15 +9,87 @@ import {
   type ExecutionFieldDef,
 } from "@/lib/hotfix-ui/executionFields";
 import type { HotfixPageContext } from "@/lib/hotfix-ui/pageContext";
+import { getClaimDomainForStageKey } from "@/lib/workflow-execution/hotfixDomainMap";
 import WorkflowHistoryTimeline, { type WorkflowHistoryEntry } from "./WorkflowHistoryTimeline";
 import { getHistoryPlainText, isRichTextValue } from "@/lib/rich-text/value";
 
-const APPROVAL_LABELS: Record<string, string> = {
+// 正式關卡「流程關卡」顯示名稱——與 WorkflowStage.label（DB 實際儲存值，不同建置腳本或
+// 環境可能出現不一致字串，例如舊資料曾混用「待審核批准」而非正式語意）完全脫鉤，一律以
+// stageKey 為準對應到單一正式中文名稱，避免畫面出現與正式語意不符的技術字串。
+const HOTFIX_STAGE_LABELS: Record<string, string> = {
+  draft: "Hotfix建立工單",
   pendingBusinessApproval: "申請人直屬主管簽核",
-  pendingRdLeadApproval: "RD 主管簽核",
-  pendingQaLeadApproval: "QA 主管簽核",
-  pendingDeploymentApproval: "OP 上版前確認",
-  opCompleted: "OP 主管上版後確認",
+  pendingRdTriage: "待 RD 團隊接單",
+  pendingRdClaim: "RD 團隊已接單待指派",
+  rdInProgress: "RD修正與自測",
+  pendingRdLeadApproval: "RD主管簽核",
+  pendingQaTriage: "待 QA 團隊接單",
+  pendingQaClaim: "QA 團隊已接單待指派",
+  qaInProgress: "QA驗證",
+  pendingQaLeadApproval: "QA主管簽核",
+  pendingOpTriage: "待 OP 團隊接單",
+  pendingOpClaim: "OP 團隊已接單待指派",
+  opPreparing: "OP上版作業",
+  pendingDeploymentApproval: "OP主管上版前核准",
+  opDeploying: "OP上版執行中",
+  opCompleted: "OP主管上版後確認",
+  pendingReporterConfirmation: "原申請人確認結案",
+  reporterConfirming: "原申請人確認結案中",
+  closed: "已結案",
+  cancelled: "已取消",
+};
+export function hotfixStageLabel(stageKey: string | undefined | null, fallbackRawLabel?: string): string {
+  if (!stageKey) return fallbackRawLabel ?? "—";
+  return HOTFIX_STAGE_LABELS[stageKey] ?? fallbackRawLabel ?? stageKey;
+}
+
+const APPROVAL_PENDING_STAGE_KEYS = new Set([
+  "pendingBusinessApproval",
+  "pendingRdLeadApproval",
+  "pendingQaLeadApproval",
+  "pendingDeploymentApproval",
+  "opCompleted",
+]);
+
+// 「案件狀態」與「流程關卡」是兩種不同語意，不可互相借用：狀態是使用者角度的業務狀態
+// （例如「草稿」「待主管核准」），關卡是流程節點名稱（例如「Hotfix建立工單」「申請人直屬
+// 主管簽核」）——與 src/lib/workflow-execution/responsibilityService.ts 的 BASE_STATUS_LABEL
+// 語意對應（該檔案未匯出常數且為本輪禁改檔案，僅在此重複同一組唯讀顯示文字，不改變其
+// 判斷邏輯）。所有等待主管核准的關卡一律顯示「待主管核准」，不得混用「待審核批准」等
+// 非正式字樣。pendingXxxClaim 幾個接單關卡狀態需內嵌動態團隊名稱，不落在此靜態表中，
+// 沿用 hotfixStageLabel 的關卡名稱作為近似狀態顯示。
+const HOTFIX_STATUS_LABELS: Record<string, string> = {
+  draft: "草稿",
+  pendingBusinessApproval: "待主管核准",
+  pendingRdTriage: "待 RD 團隊接單",
+  rdInProgress: "RD 修正與自測中",
+  pendingRdLeadApproval: "待主管核准",
+  pendingQaTriage: "待 QA 團隊接單",
+  qaInProgress: "QA 驗證中",
+  pendingQaLeadApproval: "待主管核准",
+  pendingOpTriage: "待 OP 團隊接單",
+  opPreparing: "OP 上版準備中",
+  pendingDeploymentApproval: "待主管核准",
+  opDeploying: "OP 上版執行中",
+  opCompleted: "待主管核准",
+  pendingReporterConfirmation: "待申請人確認結案",
+  reporterConfirming: "待申請人確認結案",
+  closed: "已結案",
+  cancelled: "已取消",
+};
+export function hotfixStageStatusLabel(stageKey: string | undefined | null): string {
+  if (!stageKey) return "—";
+  return HOTFIX_STATUS_LABELS[stageKey] ?? hotfixStageLabel(stageKey);
+}
+
+// 「角色」顯示：核准人職稱，不含「簽核」等關卡動作字樣（與 HOTFIX_STAGE_LABELS 的關卡
+// 名稱分開維護，兩者語意不同——一個是「這一關叫什麼」，一個是「誰的職責」）。
+const APPROVAL_ROLE_LABELS: Record<string, string> = {
+  pendingBusinessApproval: "申請人直屬主管",
+  pendingRdLeadApproval: "RD 主管",
+  pendingQaLeadApproval: "QA 主管",
+  pendingDeploymentApproval: "OP 主管",
+  opCompleted: "OP 主管",
 };
 
 const FIELD_DEFS: Record<string, readonly ExecutionFieldDef[]> = {
@@ -50,6 +122,59 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   PREVIEW_SUBMIT: "送出主管簽核",
   ASSIGN_EXECUTOR: "指派執行人",
 };
+
+// Workflow History 的動作動詞：一律以 reasonCode／transitionType 對應正式語意，不得直接
+// 顯示「{原關卡}前往{新關卡}」這類由原始 Stage.label 組出的技術字串。
+const HISTORY_ACTION_VERBS: Record<string, string> = {
+  HOTFIX_TICKET_SUBMITTED: "送出主管簽核",
+  SUBMIT_FOR_APPROVAL: "送出主管簽核",
+  PREVIEW_SUBMIT: "送出主管簽核",
+  ISSUE_CREATED_AUTO_START: "啟動簽核流程",
+  SUPERVISOR_APPROVED: "主管核准後推進",
+  REASSIGN_EXECUTOR: "重新指派執行人",
+  REPORTER_CLAIM_FOR_CLOSURE: "申請人認領結案確認",
+  REPORTER_CONFIRMED_CLOSE: "申請人確認結案",
+};
+function historyActionVerb(row: { reasonCode: string | null; transitionType: string }): string {
+  const code = row.reasonCode || row.transitionType;
+  if (HISTORY_ACTION_VERBS[code]) return HISTORY_ACTION_VERBS[code];
+  if (row.transitionType === "RETURNED") return "退回";
+  if (row.transitionType === "REASSIGNED") return "重新指派";
+  if (row.transitionType === "CANCELLED") return "取消流程";
+  if (row.transitionType === "ENTERED") return "啟動簽核流程";
+  return "推進流程";
+}
+
+export interface NextResponsible {
+  name: string | null;
+  role: string;
+}
+
+// 下一位正式責任人：一律沿用既有 ApprovalRecord（核准人／預期核准人）或既有申請人資料
+// 解析，不得硬編姓名、不得另寫查詢規則。無法唯一解析姓名時只顯示角色，不臆測人名。
+// 匯出供 targeted verify 直接以真實 DB 資料單元測試，不需另外組出完整 collapsed timeline。
+export function resolveNextResponsible(
+  toStageKey: string,
+  executedAt: Date,
+  records: Array<{ relatedStageKey: string; requestedAt: Date; approver: { name: string } | null; expectedApprover: { name: string } | null }>,
+  issue: { reporter: string },
+): NextResponsible | null {
+  if (APPROVAL_PENDING_STAGE_KEYS.has(toStageKey)) {
+    const role = APPROVAL_ROLE_LABELS[toStageKey] ?? "主管";
+    const candidates = records.filter((r) => r.relatedStageKey === toStageKey);
+    if (candidates.length === 0) return { name: null, role };
+    const closest = candidates.reduce((best, current) =>
+      Math.abs(current.requestedAt.getTime() - executedAt.getTime()) < Math.abs(best.requestedAt.getTime() - executedAt.getTime()) ? current : best,
+    );
+    return { name: closest.approver?.name ?? closest.expectedApprover?.name ?? null, role };
+  }
+  const claimDomain = getClaimDomainForStageKey(toStageKey);
+  if (claimDomain) return { name: null, role: `${claimDomain} 團隊主管` };
+  if (toStageKey === "pendingReporterConfirmation" || toStageKey === "reporterConfirming") {
+    return { name: issue.reporter || null, role: "原申請人" };
+  }
+  return null;
+}
 
 function parseFieldChanges(summary: string): Array<{ label: string; before: string; after: string }> {
   const source = summary.replace(/^更新欄位：/, "");
@@ -204,7 +329,7 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
     prisma.approvalRecord.findMany({
       where: { issueId },
       orderBy: [{ requestedAt: "asc" }, { revisionNo: "asc" }],
-      include: { requestedBy: true, approver: true, approverTeam: true },
+      include: { requestedBy: true, approver: true, approverTeam: true, expectedApprover: true },
     }),
     prisma.issueFieldValue.findMany({ where: { issueId } }),
     prisma.issueWorkflowStageHistory.findMany({
@@ -234,7 +359,7 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
 
   const timeline: RawTimelineEntry[] = [];
   for (const record of records) {
-    const stageLabel = APPROVAL_LABELS[record.relatedStageKey] ?? "主管簽核";
+    const stageLabel = hotfixStageLabel(record.relatedStageKey, "主管簽核");
     const actorName = record.approver?.name ?? record.requestedBy.name;
     const teamName = record.approverTeam?.name ?? issue.assignedTeam?.name ?? "尚未指派";
     const values = snapshotByRecord.get(record.id) ?? currentValues;
@@ -263,24 +388,35 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
 
   for (const row of history) {
     const actorName = actorNames.get(row.actorUserId) ?? "系統使用者";
-    const teamName = row.assignedTeamAfter?.name ?? issue.assignedTeam?.name ?? "尚未指派";
-    const action = row.fromStage ? `${row.fromStage.label}前往${row.toStage.label}` : `進入${row.toStage.label}`;
+    const fromStageLabel = row.fromStage ? hotfixStageLabel(row.fromStage.stageKey, row.fromStage.label) : null;
+    const toStageLabel = hotfixStageLabel(row.toStage.stageKey, row.toStage.label);
+    const verb = historyActionVerb(row);
+    const nextResponsible = resolveNextResponsible(row.toStage.stageKey, row.executedAt, records, issue);
+    const detailLines = [
+      `${hotfixStageStatusLabel(row.fromStage?.stageKey)} → ${hotfixStageStatusLabel(row.toStage.stageKey)}`,
+      fromStageLabel ? `${fromStageLabel} → ${toStageLabel}` : `進入 ${toStageLabel}`,
+    ];
+    if (nextResponsible) {
+      if (nextResponsible.name) detailLines.push(`下一位責任人：${nextResponsible.name}`);
+      detailLines.push(`角色：${nextResponsible.role}`);
+    }
     timeline.push({
       id: `history-${row.id}`,
       timestamp: row.executedAt.getTime(),
       actorId: row.actorUserId,
       actorName,
-      stageLabel: row.toStage.label,
+      stageLabel: toStageLabel,
       technicalCode: row.reasonCode || row.transitionType,
-      technicalLabel: action,
-      primary: `Hotfix（${issue.issueKey}）「${issue.title}」執行「${action}」，執行人：${actorName}，團隊：${teamName}，流程階段：${row.toStage.label}。`,
+      technicalLabel: verb,
+      primary: `${actorName} ${verb}`,
       meta: `${formatDateTime(row.executedAt)} · ${actorName}`,
+      detail: detailLines.join("\n"),
     });
   }
 
   for (const event of auditEvents) {
     const stageEntry = [...history].reverse().find((row) => row.executedAt <= event.createdAt);
-    const stageLabel = stageEntry?.toStage.label ?? issue.currentWorkflowStage?.label ?? "Hotfix 建立工單";
+    const stageLabel = hotfixStageLabel(stageEntry?.toStage.stageKey ?? issue.currentWorkflowStage?.stageKey, "Hotfix建立工單");
     const teamName = stageEntry?.assignedTeamAfter?.name ?? issue.assignedTeam?.name ?? "尚未指派";
     const actionLabel = AUDIT_ACTION_LABELS[event.actionType] ?? "更新工單紀錄";
     const fieldChanges = event.actionType === "FieldChange" ? parseFieldChanges(event.summary) : [];
