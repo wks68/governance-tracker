@@ -3,7 +3,11 @@ import { listActionableTasksForActor, type ActionableIssueTask } from "./actiona
 
 export type WorkflowTaskNotificationType =
   | "HOTFIX_SUPERVISOR_APPROVAL_REQUIRED"
-  | "HOTFIX_ACTION_REQUIRED";
+  | "HOTFIX_ACTION_REQUIRED"
+  // Incident 事件通報流程新增：與 Hotfix 版本語意對應（核准類 vs 一般待辦類），文字另外
+  // 分流（見下方 notificationTitle／message 組裝），不影響既有 Hotfix 兩種既有型別。
+  | "INCIDENT_APPROVAL_REQUIRED"
+  | "INCIDENT_ACTION_REQUIRED";
 
 /**
  * In-app notification view model.
@@ -72,30 +76,48 @@ export async function resolveWorkflowTaskNotificationsForActor(
 
   return tasks.map((task) => {
     const applicantName = applicantByIssueId.get(task.issueId) ?? "申請人";
+    const isIncident = task.issueType === "Incident";
     const supervisorApproval =
-      task.action === "APPROVE" && task.summary.stageKey === "pendingBusinessApproval";
+      !isIncident && task.action === "APPROVE" && task.summary.stageKey === "pendingBusinessApproval";
+    const incidentApproval = isIncident && (task.action === "APPROVE" || task.action === "ENTER_WORK");
     const sourceRecordId = task.summary.actionSourceId;
     const enteredAt = sourceRecordId
       ? requestedAtByApprovalId.get(sourceRecordId)?.toISOString() ?? task.enteredAt?.toISOString() ?? null
       : task.enteredAt?.toISOString() ?? null;
 
+    const notificationType: WorkflowTaskNotificationType = isIncident
+      ? incidentApproval
+        ? "INCIDENT_APPROVAL_REQUIRED"
+        : "INCIDENT_ACTION_REQUIRED"
+      : supervisorApproval
+        ? "HOTFIX_SUPERVISOR_APPROVAL_REQUIRED"
+        : "HOTFIX_ACTION_REQUIRED";
+    const notificationTitle = isIncident
+      ? incidentApproval
+        ? "事件通報待確認"
+        : "新的事件通報待辦"
+      : supervisorApproval
+        ? "Hotfix 待主管核准"
+        : "新的 Hotfix 待辦";
+    const message = isIncident
+      ? `${task.issueKey} 正在等待你${task.actionLabel}。`
+      : supervisorApproval
+        ? `${applicantName} 建立了 ${task.issueKey}，目前等待你的主管核准。`
+        : `${task.issueKey} 正在等待你${task.actionLabel}。`;
+
     return {
       notificationId: notificationIdFor(actorId, task),
-      notificationType: supervisorApproval
-        ? "HOTFIX_SUPERVISOR_APPROVAL_REQUIRED"
-        : "HOTFIX_ACTION_REQUIRED",
+      notificationType,
       sourceRecordId,
       recipientUserId: actorId,
       issueId: task.issueId,
       issueKey: task.issueKey,
       issueTitle: task.title,
       applicantName,
-      notificationTitle: supervisorApproval ? "Hotfix 待主管核准" : "新的 Hotfix 待辦",
-      message: supervisorApproval
-        ? `${applicantName} 建立了 ${task.issueKey}，目前等待你的主管核准。`
-        : `${task.issueKey} 正在等待你${task.actionLabel}。`,
+      notificationTitle,
+      message,
       actionKind: task.action,
-      actionLabel: supervisorApproval ? "查看並核准" : task.actionLabel,
+      actionLabel: !isIncident && supervisorApproval ? "查看並核准" : task.actionLabel,
       actionHref: task.actionHref,
       currentStageLabel: task.currentStageLabel,
       enteredAt,

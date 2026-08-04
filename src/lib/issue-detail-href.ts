@@ -1,4 +1,5 @@
 import { hotfixRoute, routeForStageKey } from "./hotfix-ui/nineStage";
+import { incidentRoute, isKnownIncidentStageKey } from "./incident-ui/incidentStage";
 
 export interface IssueDetailHrefSource {
   id: string;
@@ -18,9 +19,17 @@ export function genericIssueDetailHref(issueId: string): string {
  *
  * Hotfix 有正式 runtime 時只委派 nineStage.routeForStageKey，絕不重複 stage mapping；
  * 舊制 Hotfix 沒有 currentWorkflowStage 可解析，進完整九階段唯讀 summary；舊制終態進 close。
- * 非 Hotfix 保留既有通用詳情路由。
+ * Incident 有正式 runtime 時進 incident-ui/incidentStage 唯一的動態詳情頁；其餘 issueType
+ * 保留既有通用詳情路由。
  */
 export function resolveIssueDetailHref(issue: IssueDetailHrefSource): string {
+  if (issue.issueType === "Incident") {
+    if (issue.currentStageKey && isKnownIncidentStageKey(issue.currentStageKey)) {
+      return incidentRoute(issue.id);
+    }
+    return genericIssueDetailHref(issue.id);
+  }
+
   if (issue.issueType !== "Hotfix") return genericIssueDetailHref(issue.id);
 
   if (issue.currentStageKey) {

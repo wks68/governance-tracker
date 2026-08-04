@@ -49,6 +49,9 @@ import { NoEligibleApproverError } from "./approvalService";
 import { TeamManagementValidationError, TeamManagementStateError, TeamManagementAccessDeniedError } from "./team-applicant/teamManagementService";
 import { IssueDeletionValidationError, IssueDeletionStateError, IssueDeletionAccessDeniedError } from "./issue-management/issueDeletionService";
 import { IssueCreationValidationError } from "./issueCreation";
+import { IncidentCreationValidationError } from "./incident-ui/incidentCreation";
+import { IncidentPageNotApplicableError } from "./incident-ui/pageContext";
+import { IncidentRcaNotClosedError } from "./incident-ui/incidentClosureService";
 import {
   IssueRelationAccessDeniedError,
   IssueRelationConflictError,
@@ -107,6 +110,9 @@ const KNOWN_DOMAIN_ERRORS = [
   IssueRelationConflictError,
   IssueRelationNotFoundError,
   IssueRelationValidationError,
+  IncidentCreationValidationError,
+  IncidentPageNotApplicableError,
+  IncidentRcaNotClosedError,
 ] as const;
 
 export function toActionResult(err: unknown, fallbackMessage = "操作失敗，請稍後再試"): ActionResult<never> {

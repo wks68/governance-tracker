@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireCurrentUser } from "@/lib/auth";
 import { resolveIssueCreationScope, listSelectableApplicants } from "@/lib/team-applicant/issueCreationScope";
 import NewIssueForm from "@/components/NewIssueForm";
@@ -15,6 +16,11 @@ const CREATE_TYPE_MAP = {
 } as const;
 
 export default async function NewIssuePage({ searchParams }: { searchParams: { type?: string } }) {
+  // Incident 事件通報流程新增：F01 需要的欄位（事件類型／建議事件等級／通報來源等）與通用
+  // NewIssueForm 完全不同，改走自己的專屬建立頁（見 incident-ui/incidentCreation.ts），
+  // 不強塞進既有通用建立表單。其餘既有 issueType（Hotfix／季度專案）維持原本路徑不變。
+  if (searchParams.type === "incident") redirect("/issues/incident/new");
+
   const currentUser = await requireCurrentUser();
   const selected = searchParams.type && searchParams.type in CREATE_TYPE_MAP
     ? CREATE_TYPE_MAP[searchParams.type as keyof typeof CREATE_TYPE_MAP]

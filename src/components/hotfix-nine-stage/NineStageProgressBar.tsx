@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, CircleX } from "lucide-react";
-import { NINE_STAGES } from "@/lib/hotfix-ui/nineStage";
+import { NINE_STAGES, type NineStageDef } from "@/lib/hotfix-ui/nineStage";
 
 interface StoredProgressState {
   currentIndex: number | null;
@@ -22,13 +22,17 @@ export function getNineStageVisualStates({
   cancelled,
   cancelledAtIndex,
   terminalComplete,
+  stages = NINE_STAGES,
 }: {
   currentIndex: number | null;
   cancelled: boolean;
   cancelledAtIndex: number | null;
   terminalComplete: boolean;
+  /** 預設為 Hotfix 既有 NINE_STAGES；其他 issueType（例如 Incident）可傳入自己的九階段定義，
+   *  不建立第二套狀態機邏輯，只是換一份階段清單。 */
+  stages?: readonly NineStageDef[];
 }): WorkflowStageVisualState[] {
-  return NINE_STAGES.map((stage) => {
+  return stages.map((stage) => {
     const completed = terminalComplete || (
       cancelled
         ? cancelledAtIndex !== null && stage.index < cancelledAtIndex
@@ -46,18 +50,27 @@ export default function NineStageProgressBar({
   cancelled = false,
   cancelledAtIndex = null,
   terminalComplete = false,
+  stages = NINE_STAGES,
+  ariaLabel = "Hotfix 九階段流程進度",
+  storageKeyPrefix = "dms-workflow-progress",
 }: {
   issueId: string;
   currentIndex: number | null;
   cancelled?: boolean;
   cancelledAtIndex?: number | null;
   terminalComplete?: boolean;
+  /** 預設為 Hotfix 既有 NINE_STAGES；Incident 等其他 issueType 傳入自己的九階段定義。 */
+  stages?: readonly NineStageDef[];
+  ariaLabel?: string;
+  /** sessionStorage key 前綴；不同 issueType 用不同前綴避免同一 issueId（理論上不會撞，
+   *  但仍防禦性隔離）互相覆蓋轉場動畫暫存狀態。 */
+  storageKeyPrefix?: string;
 }) {
   const [transition, setTransition] = useState<ProgressTransition | null>(null);
   const processedSnapshotRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const storageKey = `dms-workflow-progress:${issueId}`;
+    const storageKey = `${storageKeyPrefix}:${issueId}`;
     const nextState: StoredProgressState = { currentIndex, terminalComplete, cancelled };
     const snapshot = `${storageKey}:${JSON.stringify(nextState)}`;
     // React Strict Mode may run the same effect twice in development. Ignore
@@ -92,11 +105,11 @@ export default function NineStageProgressBar({
       // Storage may be unavailable in hardened browser modes. The static state
       // remains fully usable; only the one-shot transition enhancement is lost.
     }
-  }, [cancelled, currentIndex, issueId, terminalComplete]);
+  }, [cancelled, currentIndex, issueId, terminalComplete, storageKeyPrefix]);
 
   const newlyCompleted = new Set<number>();
   if (transition?.kind === "complete") {
-    newlyCompleted.add(NINE_STAGES.length);
+    newlyCompleted.add(stages.length);
   } else if (
     transition?.kind === "forward" &&
     transition.previous.currentIndex !== null &&
@@ -106,7 +119,7 @@ export default function NineStageProgressBar({
       newlyCompleted.add(index);
     }
   }
-  const visualStates = getNineStageVisualStates({ currentIndex, cancelled, cancelledAtIndex, terminalComplete });
+  const visualStates = getNineStageVisualStates({ currentIndex, cancelled, cancelledAtIndex, terminalComplete, stages });
 
   return (
     <div className="w-full" data-workflow-progress-state={terminalComplete ? "closed" : cancelled ? "cancelled" : "active"}>
@@ -123,15 +136,15 @@ export default function NineStageProgressBar({
         </div>
       )}
 
-      <ol className="flex w-full items-start justify-between" aria-label="Hotfix 九階段流程進度">
-        {NINE_STAGES.map((stage, index) => {
+      <ol className="flex w-full items-start justify-between" aria-label={ariaLabel}>
+        {stages.map((stage, index) => {
           const visualState = visualStates[index];
           const isCompleted = visualState === "completed";
           const isCurrent = visualState === "current";
           const isNewlyCompleted = newlyCompleted.has(stage.index);
           const isNewCurrent = transition !== null && transition.kind !== "complete" && isCurrent;
           const leftCompleted = index > 0 && (isCompleted || isCurrent || terminalComplete);
-          const rightCompleted = index < NINE_STAGES.length - 1 && isCompleted;
+          const rightCompleted = index < stages.length - 1 && isCompleted;
           const animateLeftLine = newlyCompleted.has(stage.index - 1);
           const animateRightLine = isNewlyCompleted;
           const stateLabel = isCompleted ? "已完成" : isCurrent ? "目前階段" : cancelled ? "取消後未執行" : "尚未進入";
@@ -178,7 +191,7 @@ export default function NineStageProgressBar({
                 <div
                   className={[
                     "h-0.5 flex-1 origin-left",
-                    index === NINE_STAGES.length - 1 ? "invisible" : rightCompleted ? "bg-workflow-complete-line" : "bg-border",
+                    index === stages.length - 1 ? "invisible" : rightCompleted ? "bg-workflow-complete-line" : "bg-border",
                     animateRightLine ? "animate-stage-line-fill" : "",
                   ].join(" ")}
                 />
