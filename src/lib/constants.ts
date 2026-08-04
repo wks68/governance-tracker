@@ -47,6 +47,10 @@ export function roleLabel(key: string): string {
   return ROLES.find((r) => r.key === key)?.label ?? key;
 }
 
+export function isRoleKey(value: string): value is RoleKey {
+  return ROLES.some((r) => r.key === value);
+}
+
 export type StatusLight = "Red" | "Yellow" | "Blue" | "Green" | "Gray";
 
 export const STATUS_LIGHT_META: Record<StatusLight, { label: string; desc: string; badgeClass: string; dotClass: string }> = {
@@ -98,15 +102,20 @@ export const RISK_LEVELS = ["高", "中", "低"];
 export const PRIORITIES = ["P1", "P2", "P3", "P4"];
 export const ALERT_LEVELS = ["Critical", "Warning", "Info"];
 
-export const SYSTEM_NAME_EXAMPLES = [
-  "MyDMS",
-  "Jarvis AI",
-  "Token Provider",
-  "DMS 平台",
-  "GitLab",
-  "MariaDB",
-  "Grafana",
-];
+// 建立工單頁欄位收斂：系統名稱不再是自由文字（原本是 datalist 建議值，使用者可自行輸入
+// 任意字串），改為固定值域的下拉選單。這是全系統唯一一份系統名稱清單，建立頁、編輯頁、
+// Preview fixture 與驗證腳本一律引用本常數，不得在各頁面各自硬編碼一份。
+//
+// 既有歷史工單的舊系統名稱（Token Provider／DMS 平台／GitLab／MariaDB／Grafana 等）不因
+// 本次調整被批次覆寫或刪除——詳情頁與列表頁一律原樣顯示 Issue.systemName；只有「新建」與
+// 「可編輯」表單受此值域限制，舊值不會出現在任何下拉選項中。
+export const SYSTEM_NAME_OPTIONS = ["MyDMS", "Jarvis AI", "Community", "APP Center"] as const;
+
+export type SystemName = (typeof SYSTEM_NAME_OPTIONS)[number];
+
+export function isValidSystemName(value: string): value is SystemName {
+  return (SYSTEM_NAME_OPTIONS as readonly string[]).includes(value);
+}
 
 export const ISSUE_TYPE_PREFIX: Record<string, string> = {
   Hotfix: "HOTFIX",
@@ -117,4 +126,122 @@ export const ISSUE_TYPE_PREFIX: Record<string, string> = {
   ChangeRelease: "CHG",
   MonitoringInventory: "MON",
   BackupRecoveryTest: "BAK",
+};
+
+// ---------------------------------------------------------------------------
+// M1 新增：以 String 欄位模擬固定值域者（SQLite 不支援原生 enum），
+// 集中於此提供 TypeScript 層的 literal union type 及驗證函式，避免值域散落各處。
+// ---------------------------------------------------------------------------
+
+export const TEAM_MEMBERSHIP_ROLES = ["MEMBER", "LEAD"] as const;
+export type TeamMembershipRole = (typeof TEAM_MEMBERSHIP_ROLES)[number];
+export function isTeamMembershipRole(value: string): value is TeamMembershipRole {
+  return (TEAM_MEMBERSHIP_ROLES as readonly string[]).includes(value);
+}
+
+export const SYSTEM_RESPONSIBILITY_TYPES = ["RD", "QA", "OP", "OTHER"] as const;
+export type SystemResponsibilityType = (typeof SYSTEM_RESPONSIBILITY_TYPES)[number];
+export function isSystemResponsibilityType(value: string): value is SystemResponsibilityType {
+  return (SYSTEM_RESPONSIBILITY_TYPES as readonly string[]).includes(value);
+}
+
+// RD/QA/OP 接單流程新增：Team.domain 值域（見 prisma/schema.prisma Team model 註解）。
+// 與 SYSTEM_RESPONSIBILITY_TYPES 刻意分開宣告——後者是「System＋Team 配對」的自動路由設定，
+// 語意上不是 Team 本身的固定屬性；Team.domain 才是 Team 本身領域的正式判斷來源，兩者不得混用。
+export const TEAM_DOMAINS = ["RD", "QA", "OP", "BUSINESS", "OTHER"] as const;
+export type TeamDomain = (typeof TEAM_DOMAINS)[number];
+export function isTeamDomain(value: string): value is TeamDomain {
+  return (TEAM_DOMAINS as readonly string[]).includes(value);
+}
+
+export const CHANGE_SUB_TYPES = ["QUARTERLY_RELEASE", "GENERAL_CHANGE"] as const;
+export type ChangeSubType = (typeof CHANGE_SUB_TYPES)[number];
+export function isChangeSubType(value: string): value is ChangeSubType {
+  return (CHANGE_SUB_TYPES as readonly string[]).includes(value);
+}
+
+// 治理紀錄關聯固定值域。資料庫因 SQLite connector 限制使用 String，所有寫入入口必須
+// 先經此型別守衛，且服務層依 relationType 再驗證 source／target 的固定方向。
+export const ISSUE_RELATION_TYPES = [
+  "INCIDENT_TO_RCA",
+  "INCIDENT_TO_HOTFIX",
+  "RCA_TO_HOTFIX",
+  "HOTFIX_TO_PROJECT",
+] as const;
+export type IssueRelationType = (typeof ISSUE_RELATION_TYPES)[number];
+export function isIssueRelationType(value: string): value is IssueRelationType {
+  return (ISSUE_RELATION_TYPES as readonly string[]).includes(value);
+}
+
+// ---------------------------------------------------------------------------
+// M1.5-A 新增：核准治理層固定值域（SQLite 不支援原生 enum，沿用 M1 慣例）。
+// ---------------------------------------------------------------------------
+
+export const APPROVAL_TYPES = [
+  "BUSINESS_APPROVAL",
+  "RD_LEAD_APPROVAL",
+  "QA_LEAD_APPROVAL",
+  "DEPLOYMENT_APPROVAL",
+  "RISK_EXCEPTION_APPROVAL",
+] as const;
+export type ApprovalType = (typeof APPROVAL_TYPES)[number];
+export function isApprovalType(value: string): value is ApprovalType {
+  return (APPROVAL_TYPES as readonly string[]).includes(value);
+}
+
+export const APPROVAL_DECISIONS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"] as const;
+export type ApprovalDecision = (typeof APPROVAL_DECISIONS)[number];
+export function isApprovalDecision(value: string): value is ApprovalDecision {
+  return (APPROVAL_DECISIONS as readonly string[]).includes(value);
+}
+
+// recordStatus：與 decision 分離的獨立生命週期欄位。
+// ACTIVE=目前有效版本；INVALIDATED=原 APPROVED 因內容變更而追溯失效（decision 維持 APPROVED）；
+// SUPERSEDED=因重新送核而不再是目前版本（decision 維持原值，例如 REJECTED/CANCELLED）。
+export const APPROVAL_RECORD_STATUSES = ["ACTIVE", "INVALIDATED", "SUPERSEDED"] as const;
+export type ApprovalRecordStatus = (typeof APPROVAL_RECORD_STATUSES)[number];
+export function isApprovalRecordStatus(value: string): value is ApprovalRecordStatus {
+  return (APPROVAL_RECORD_STATUSES as readonly string[]).includes(value);
+}
+
+// 核准資格來源：DIRECT_SUPERVISOR=業務直屬主管本人核准；TEAM_LEAD=團隊主管本人核准；
+// DELEGATE=有效代理人核准。ApprovalRecord 建立時先填「預期」來源，決策時更新為「實際」來源，
+// 不得依目前組織設定事後反推。
+export const APPROVAL_AUTHORITY_TYPES = ["DIRECT_SUPERVISOR", "TEAM_LEAD", "DELEGATE"] as const;
+export type ApprovalAuthorityType = (typeof APPROVAL_AUTHORITY_TYPES)[number];
+export function isApprovalAuthorityType(value: string): value is ApprovalAuthorityType {
+  return (APPROVAL_AUTHORITY_TYPES as readonly string[]).includes(value);
+}
+
+// StageRiskCheck.answer：資料庫欄位為 nullable String，null 代表「尚未填答」（非可選答案）。
+// 此處固定值域僅涵蓋「已填答」的三種明確答案；null 由呼叫端另行判斷，不納入型別守衛值域。
+export const RISK_CHECK_ANSWERS = ["YES", "NO", "UNKNOWN"] as const;
+export type RiskCheckAnswer = (typeof RISK_CHECK_ANSWERS)[number];
+export function isRiskCheckAnswer(value: string): value is RiskCheckAnswer {
+  return (RISK_CHECK_ANSWERS as readonly string[]).includes(value);
+}
+
+// ---------------------------------------------------------------------------
+// M1.5-B 新增：核准治理健康檢查嚴重度徽章，仿 STATUS_LIGHT_META 寫法。
+// 顏色僅作輔助，文字（label）必須一律同時顯示，不得只靠顏色判讀。
+// ---------------------------------------------------------------------------
+
+export type GovernanceHealthSeverity = "normal" | "warning" | "critical";
+
+export const HEALTH_STATUS_META: Record<GovernanceHealthSeverity, { label: string; badgeClass: string; dotClass: string }> = {
+  normal: {
+    label: "正常",
+    badgeClass: "bg-gov-greenbg text-gov-green border border-success-border",
+    dotClass: "bg-gov-green",
+  },
+  warning: {
+    label: "注意",
+    badgeClass: "bg-gov-yellowbg text-gov-yellow border border-warning-border",
+    dotClass: "bg-gov-yellow",
+  },
+  critical: {
+    label: "異常",
+    badgeClass: "bg-gov-redbg text-gov-red border border-danger-border",
+    dotClass: "bg-gov-red",
+  },
 };

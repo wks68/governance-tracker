@@ -3,16 +3,19 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { transitionStatusAction, sendBackToRdAction } from "@/lib/actions";
+import { ActionErrorText } from "@/components/ActionResultBanner";
 
 export default function WorkflowActions({
   issueId,
   nextStatus,
+  nextStatusLabel,
   prevStatus,
   gatePassed,
   canSendBackToRd,
 }: {
   issueId: string;
   nextStatus: string | null;
+  nextStatusLabel?: string | null;
   prevStatus: string | null;
   gatePassed: boolean;
   canSendBackToRd?: boolean;
@@ -22,17 +25,30 @@ export default function WorkflowActions({
   const [showSendBack, setShowSendBack] = useState(false);
   const [sendBackMessage, setSendBackMessage] = useState("");
   const [sendBackError, setSendBackError] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
 
   function advance() {
     startTransition(async () => {
-      await transitionStatusAction(issueId, "next");
-      router.refresh();
+      setActionError(null);
+      try {
+        await transitionStatusAction(issueId, "next");
+        router.refresh();
+      } catch (error) {
+        console.error("推進關卡失敗：", error);
+        setActionError(error instanceof Error ? error.message : "無法推進至下一關卡");
+      }
     });
   }
   function rollback() {
     startTransition(async () => {
-      await transitionStatusAction(issueId, "back");
-      router.refresh();
+      setActionError(null);
+      try {
+        await transitionStatusAction(issueId, "back");
+        router.refresh();
+      } catch (error) {
+        console.error("退回上一關失敗：", error);
+        setActionError(error instanceof Error ? error.message : "無法退回上一關");
+      }
     });
   }
   function sendBackToRd() {
@@ -44,15 +60,22 @@ export default function WorkflowActions({
     const formData = new FormData();
     formData.set("message", sendBackMessage.trim());
     startTransition(async () => {
-      await sendBackToRdAction(issueId, formData);
-      setSendBackMessage("");
-      setShowSendBack(false);
-      router.refresh();
+      setActionError(null);
+      try {
+        await sendBackToRdAction(issueId, formData);
+        setSendBackMessage("");
+        setShowSendBack(false);
+        router.refresh();
+      } catch (error) {
+        console.error("發回 RD 失敗：", error);
+        setActionError(error instanceof Error ? error.message : "無法發回 RD");
+      }
     });
   }
 
   return (
     <div className="space-y-2">
+      <ActionErrorText message={actionError} itemKey={issueId} />
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={rollback}
@@ -67,7 +90,7 @@ export default function WorkflowActions({
           title={!gatePassed ? "關卡卡控未通過，請先補齊下方缺漏項目" : undefined}
           className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {nextStatus ? `推進至下一關卡：${nextStatus}` : "已是最終關卡"}
+          {nextStatus ? `推進至下一關卡：${nextStatusLabel ?? nextStatus}` : "已是最終關卡"}
         </button>
         {canSendBackToRd && (
           <button

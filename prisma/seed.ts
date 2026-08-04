@@ -2,9 +2,10 @@
 import { PrismaClient } from "@prisma/client";
 import { calculateStatusLight, suggestWaitingRole } from "../src/lib/statusLight";
 import { evaluateGateRules } from "../src/lib/gateRules";
-import { nextStatusOf, isClosed, getWorkflow } from "../src/lib/workflow";
+import { nextStatusOf, isClosed, getWorkflow, statusLabel } from "../src/lib/workflow";
 import { generateAiSuggestion } from "../src/lib/mockAi";
 import { issueTypeLabel } from "../src/lib/constants";
+import { synchronizeIssueKeySequencesFromExistingIssues } from "../src/lib/issue-key-sequence";
 
 const prisma = new PrismaClient();
 
@@ -70,7 +71,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "王小明",
-    workflowStatus: "OP上版",
+    workflowStatus: "opDeploy",
     dueDate: daysFromNow(1),
     needRca: false,
     needRiskException: false,
@@ -103,7 +104,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "QA",
     ownerName: "林佳穎",
     reporter: "王小明",
-    workflowStatus: "QA放行確認",
+    workflowStatus: "qaRelease",
     dueDate: daysFromNow(3),
     needRca: false,
     needRiskException: false,
@@ -133,7 +134,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "RD",
     ownerName: "陳大文",
     reporter: "陳大文",
-    workflowStatus: "RD自測",
+    workflowStatus: "rdSelfTest",
     dueDate: daysFromNow(5),
     needRca: false,
     needRiskException: false,
@@ -162,7 +163,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "RD",
     ownerName: "陳大文",
     reporter: "資安推動小組",
-    workflowStatus: "初步處置中",
+    workflowStatus: "initialResponse",
     dueDate: daysFromNow(0),
     needRca: false,
     needRiskException: false,
@@ -185,7 +186,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "RD",
     ownerName: "陳大文",
     reporter: "張志豪",
-    workflowStatus: "初步影響判定",
+    workflowStatus: "initialImpact",
     dueDate: daysFromNow(2),
     needRca: false,
     needRiskException: false,
@@ -207,7 +208,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "張志豪",
-    workflowStatus: "已結案",
+    workflowStatus: "closed",
     dueDate: daysFromNow(-3),
     needRca: false,
     needRiskException: false,
@@ -234,7 +235,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "RD",
     ownerName: "陳大文",
     reporter: "王小明",
-    workflowStatus: "分析中",
+    workflowStatus: "analyzing",
     dueDate: daysFromNow(4),
     needRca: false,
     needRiskException: false,
@@ -256,7 +257,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "RD",
     ownerName: "陳大文",
     reporter: "陳大文",
-    workflowStatus: "已結案",
+    workflowStatus: "closed",
     dueDate: daysFromNow(-5),
     needRca: false,
     needRiskException: false,
@@ -285,7 +286,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "資安推動小組",
     ownerName: "資安推動小組",
     reporter: "陳大文",
-    workflowStatus: "待核准",
+    workflowStatus: "pendingApproval",
     dueDate: daysFromNow(2),
     needRca: false,
     needRiskException: false,
@@ -312,7 +313,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "資安推動小組",
     ownerName: "資安推動小組",
     reporter: "資安推動小組",
-    workflowStatus: "追蹤中",
+    workflowStatus: "tracking",
     dueDate: daysFromNow(20),
     needRca: false,
     needRiskException: false,
@@ -342,7 +343,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "QA",
     ownerName: "林佳穎",
     reporter: "林佳穎",
-    workflowStatus: "測試中",
+    workflowStatus: "testing",
     dueDate: daysFromNow(3),
     needRca: false,
     needRiskException: false,
@@ -364,7 +365,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "QA",
     ownerName: "林佳穎",
     reporter: "林佳穎",
-    workflowStatus: "已結案",
+    workflowStatus: "closed",
     dueDate: daysFromNow(-2),
     needRca: false,
     needRiskException: false,
@@ -391,7 +392,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "PM",
     ownerName: "王小明",
     reporter: "王小明",
-    workflowStatus: "上線審核",
+    workflowStatus: "releaseReview",
     dueDate: daysFromNow(6),
     needRca: false,
     needRiskException: false,
@@ -413,7 +414,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "陳大文",
-    workflowStatus: "已結案",
+    workflowStatus: "closed",
     dueDate: daysFromNow(-7),
     needRca: false,
     needRiskException: false,
@@ -441,7 +442,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "資安推動小組",
-    workflowStatus: "生效中",
+    workflowStatus: "active",
     dueDate: null,
     needRca: false,
     needRiskException: false,
@@ -471,7 +472,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "張志豪",
-    workflowStatus: "生效中",
+    workflowStatus: "active",
     dueDate: null,
     needRca: false,
     needRiskException: false,
@@ -501,7 +502,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "王小明",
-    workflowStatus: "草稿",
+    workflowStatus: "draft",
     dueDate: daysFromNow(7),
     needRca: false,
     needRiskException: false,
@@ -525,7 +526,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "張志豪",
-    workflowStatus: "備份確認中",
+    workflowStatus: "backupConfirming",
     dueDate: daysFromNow(1),
     needRca: false,
     needRiskException: false,
@@ -548,7 +549,7 @@ const seedIssues: SeedIssue[] = [
     ownerRole: "OP",
     ownerName: "張志豪",
     reporter: "張志豪",
-    workflowStatus: "已結案",
+    workflowStatus: "closed",
     dueDate: daysFromNow(-10),
     needRca: false,
     needRiskException: false,
@@ -593,6 +594,34 @@ const seedUsers: SeedUser[] = [
   { name: "系統管理員", email: "admin@example.com", department: "資訊部", role: "Admin" },
 ];
 
+// M1.5-C1-A 新增：建立 User 的同時同步建立對應 active UserRole 與 UserRoleHistory（SYSTEM_SEED／C1_SEED_INITIAL_ROLE）。
+// 這是「全新建立」路徑（seed 全新執行時的正常路徑），與既有資料庫的回填（migration 內的 C1_ROLE_BACKFILL）
+// 是兩條不同路徑，reasonCode 刻意不同，避免稽核時混淆「這是回填舊資料還是全新建立」。
+async function createSeedUserWithRole(u: SeedUser) {
+  const effectiveAt = new Date();
+  const user = await prisma.user.create({
+    data: { name: u.name, email: u.email, department: u.department, role: u.role, isActive: true },
+  });
+  const userRole = await prisma.userRole.create({
+    data: { userId: user.id, role: u.role, isActive: true },
+  });
+  await prisma.userRoleHistory.create({
+    data: {
+      userRoleId: userRole.id,
+      userId: user.id,
+      role: u.role,
+      eventType: "ASSIGNED",
+      fromValue: null,
+      toValue: u.role,
+      actorUserId: null,
+      eventSource: "SYSTEM_SEED",
+      reasonCode: "C1_SEED_INITIAL_ROLE",
+      effectiveAt,
+    },
+  });
+  return user;
+}
+
 async function main() {
   console.log("清除既有資料...");
   await prisma.aiSuggestion.deleteMany();
@@ -603,17 +632,31 @@ async function main() {
   await prisma.issue.deleteMany();
   await prisma.workflowStatus.deleteMany();
   await prisma.issueType.deleteMany();
+  await prisma.userRoleHistory.deleteMany();
+  await prisma.userRole.deleteMany();
   await prisma.user.deleteMany();
 
   console.log("建立使用者主檔...");
   const userByName = new Map<string, { id: string; role: string }>();
   for (const u of seedUsers) {
-    const created = await prisma.user.create({
-      data: { name: u.name, email: u.email, department: u.department, role: u.role, isActive: true },
-    });
+    const created = await createSeedUserWithRole(u);
     userByName.set(u.name, { id: created.id, role: created.role });
   }
   const adminUser = userByName.get("系統管理員")!;
+
+  console.log("標記唯一有效 Admin 為 Break-glass...");
+  const activeAdmins = await prisma.user.findMany({
+    where: { isActive: true, userRoles: { some: { role: "Admin", isActive: true } } },
+  });
+  if (activeAdmins.length !== 1) {
+    throw new Error(
+      `C1 Break-glass 初始標記失敗：預期恰好 1 位有效 Admin（isActive=true 且擁有 active UserRole role="Admin"），實際偵測到 ${activeAdmins.length} 位，不得任意挑選，seed 中止。`,
+    );
+  }
+  await prisma.user.update({
+    where: { id: activeAdmins[0].id },
+    data: { isBreakGlassAdmin: true },
+  });
 
   console.log("建立工單類型主檔...");
   const { ISSUE_TYPES } = await import("../src/lib/constants");
@@ -626,7 +669,7 @@ async function main() {
     const steps = getWorkflow(t.key);
     for (let i = 0; i < steps.length; i++) {
       await prisma.workflowStatus.create({
-        data: { issueType: t.key, stepOrder: i + 1, statusKey: steps[i], label: steps[i] },
+        data: { issueType: t.key, stepOrder: i + 1, statusKey: steps[i].key, label: steps[i].label },
       });
     }
   }
@@ -689,7 +732,7 @@ async function main() {
         entityType: "Issue",
         entityId: issue.id,
         actionType: "IssueCreated",
-        summary: `建立工單「${issue.title}」，初始關卡：${s.workflowStatus}（Seed Data）`,
+        summary: `建立工單「${issue.title}」，初始關卡：${statusLabel(s.issueType, s.workflowStatus)}（Seed Data）`,
         actorUserId: adminUser.id,
       },
     });
@@ -750,7 +793,7 @@ async function main() {
         systemName: s.systemName,
         environment: s.environment,
         riskLevel: s.riskLevel,
-        workflowStatus: s.workflowStatus,
+        workflowStatus: statusLabel(s.issueType, s.workflowStatus),
         missingFields: gate.missingFields,
         missingEvidence: gate.missingEvidence,
         evidenceCount: s.evidences.length,
@@ -771,6 +814,15 @@ async function main() {
 
     console.log(`  已建立 ${issue.issueKey}（${light}）：${issue.title}`);
   }
+
+  // 工單編號根因修正：以上 Issue 一律以固定 issueKey 直接寫入（不經過 allocateNextIssueKey），
+  // Migration 套用當下（Fresh DB）Issue 表尚無資料，IssueKeySequence 只會是「已知歷史高水位」
+  // 或 0，與這裡剛灌入的固定編號脫節。灌入完成後在此同步一次，把每個 issueType 的計數器補到
+  // 「這批 seed 資料的最大編號」與「已知歷史高水位」兩者的較大值，之後第一次呼叫
+  // createIssueForActor 才不會撞號。synchronizeIssueKeySequencesFromExistingIssues 只會把
+  // lastValue 往上調，即使本函式重跑（seed 重跑）也不會把既有計數器歸零或往回調。
+  console.log("同步工單編號計數器（IssueKeySequence）...");
+  await synchronizeIssueKeySequencesFromExistingIssues(prisma);
 
   console.log("Seed Data 建立完成！");
 }

@@ -1,68 +1,87 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { roleLabel } from "@/lib/constants";
-import LogoutButton from "./LogoutButton";
+import { listWorkflowTaskNotificationsForActor } from "@/lib/workflowExecutionService";
+import { getUserEffectiveRoles, hasCapability, resolveGovernanceAccessContext } from "@/lib/permissions";
+import { resolveMemberManagementScope } from "@/lib/peopleService";
+import { prisma } from "@/lib/prisma";
+import AppShell from "./app-shell/AppShell";
+import AppToastProvider from "./toast/AppToastProvider";
+import type { ReactNode } from "react";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "治理儀表板" },
-  { href: "/issues", label: "工單清單" },
-  { href: "/issues/new", label: "建立工單" },
-];
-
-export default async function Nav() {
+export default async function Nav({ children }: { children: ReactNode }) {
   const user = await getCurrentUser();
 
   if (!user) {
     return (
-      <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
-          <span className="text-base font-bold text-gray-900">DMS Governance Tracker</span>
-          <Link href="/login" className="text-sm font-medium text-primary hover:text-primary-hover">
-            登入
-          </Link>
+      <AppToastProvider>
+        <div className="min-h-screen bg-background">
+          <header className="border-b border-border bg-surface">
+            <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
+              <span>
+                <span className="block text-base font-bold text-text-primary">DMS WorkHub</span>
+                <span className="block text-xs text-text-muted">DMS 工作管理平台</span>
+              </span>
+              <Link href="/login" className="text-sm font-semibold text-primary hover:text-primary-hover">
+              登入
+              </Link>
+            </div>
+          </header>
+          <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
         </div>
-      </header>
+      </AppToastProvider>
     );
   }
 
-  const navItems = user.role === "Admin" ? [...NAV_ITEMS, { href: "/admin", label: "管理中心" }] : NAV_ITEMS;
+  const [roles, managementScope, governanceAccess, supervisorCount] = await Promise.all([
+    getUserEffectiveRoles(user),
+    resolveMemberManagementScope(user.id),
+    resolveGovernanceAccessContext(user.id),
+    prisma.userSupervisorAssignment.count({
+      where: {
+        supervisorUserId: user.id,
+        isActive: true,
+        isPrimary: true,
+        validFrom: { lte: new Date() },
+        OR: [{ validUntil: null }, { validUntil: { gt: new Date() } }],
+      },
+    }),
+  ]);
+  const canUseWorkManagement = hasCapability(roles, "issue.view");
+  const notificationTasks = canUseWorkManagement
+    ? await listWorkflowTaskNotificationsForActor(user.id)
+    : [];
+  const canManagePeople =
+    managementScope.ledTeamIds.length > 0 ||
+    ["user.create", "user.update", "user.activate", "user.deactivate", "user.assignRole", "user.removeRole"].some(
+      (capability) => hasCapability(roles, capability as Parameters<typeof hasCapability>[1]),
+    );
+  const canManageTeams =
+    managementScope.canManageAllTeams ||
+    managementScope.ledTeamIds.length > 0 ||
+    hasCapability(roles, "team.manageDomain");
+  const canManageResponsibility =
+    governanceAccess.canManageSupervisors ||
+    governanceAccess.canManageTeamLeads ||
+    governanceAccess.canManageAnyDelegation ||
+    governanceAccess.canViewAllGovernance ||
+    governanceAccess.ledTeamIds.length > 0 ||
+    supervisorCount > 0;
 
   return (
-    <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
-        <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="text-base font-bold text-gray-900">
-            DMS Governance Tracker
-          </Link>
-          <nav className="hidden gap-4 md:flex">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="text-sm font-medium text-gray-600 hover:text-primary"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-        </div>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="hidden text-gray-700 sm:inline">
-            {user.name}
-            <span className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600">
-              {roleLabel(user.role)}
-            </span>
-          </span>
-          <LogoutButton />
-        </div>
-      </div>
-      <nav className="flex gap-4 overflow-x-auto border-t border-gray-100 px-4 py-2 md:hidden">
-        {navItems.map((item) => (
-          <Link key={item.href} href={item.href} className="whitespace-nowrap text-sm font-medium text-gray-600">
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-    </header>
+    <AppToastProvider canManageResponsibility={canManageResponsibility}>
+      <AppShell
+        user={{
+          id: user.id,
+          name: user.name,
+          roleLabel: `${roles.map(roleLabel).join("、") || "未指派角色"}${managementScope.ledTeamIds.length > 0 ? " Lead" : ""}`,
+        }}
+        tasks={notificationTasks}
+        canUseWorkManagement={canUseWorkManagement}
+        settingsAccess={{ people: canManagePeople, teams: canManageTeams, responsibility: canManageResponsibility }}
+      >
+        {children}
+      </AppShell>
+    </AppToastProvider>
   );
 }

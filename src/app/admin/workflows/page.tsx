@@ -1,41 +1,55 @@
-import { ISSUE_TYPES } from "@/lib/constants";
-import { getWorkflow } from "@/lib/workflow";
-import { requireAdmin } from "@/lib/auth";
+import { requireCurrentUser } from "@/lib/auth";
+import { listWorkflowDefinitionsForActor, hasWorkflowCapability, WorkflowAccessDeniedError } from "@/lib/workflowService";
+import WorkflowDefinitionTable from "@/components/workflows/WorkflowDefinitionTable";
+import CreateWorkflowDefinitionDrawer from "@/components/workflows/CreateWorkflowDefinitionDrawer";
 
 export const dynamic = "force-dynamic";
 
+// M2-A3 新增：Workflow 定義清單頁（取代原本 MVP 靜態展示頁）。
+//
+// 可見範圍完全由 listWorkflowDefinitionsForActor（workflow.view Capability）決定，
+// 沒有此能力者一律拒絕，不提供部分可見的中間狀態（與 People 領域的「僅所屬 Team」
+// row-level 範圍不同，Workflow 定義管理是全域性的）。
 export default async function WorkflowsAdminPage() {
-  await requireAdmin();
+  const actor = await requireCurrentUser();
+
+  let definitions;
+  try {
+    definitions = await listWorkflowDefinitionsForActor(actor.id);
+  } catch (err) {
+    if (err instanceof WorkflowAccessDeniedError) {
+      return <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">{err.message}</div>;
+    }
+    throw err;
+  }
+
+  const canManageDraft = await hasWorkflowCapability(actor.id, "workflow.manageDraft");
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">流程設定</h1>
-        <p className="mt-0.5 text-sm text-gray-500">
-          MVP 版本以靜態方式呈現各工單類型的流程關卡設定，尚未提供視覺化流程編輯器。
-        </p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Workflow 流程定義</h1>
+          <p className="mt-0.5 text-sm text-gray-500">共 {definitions.length} 個定義。版本發布後不可修改，所有變更皆會寫入 Audit Log。</p>
+        </div>
+        {canManageDraft && <CreateWorkflowDefinitionDrawer />}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {ISSUE_TYPES.map((t) => {
-          const steps = getWorkflow(t.key);
-          return (
-            <div key={t.key} className="rounded-lg border border-gray-200 bg-white p-4">
-              <h2 className="text-sm font-semibold text-gray-800">{t.label}</h2>
-              <ol className="mt-3 space-y-1.5">
-                {steps.map((s, idx) => (
-                  <li key={s} className="flex items-center gap-2 text-sm text-gray-600">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-500">
-                      {idx + 1}
-                    </span>
-                    {s}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          );
-        })}
-      </div>
+      <WorkflowDefinitionTable
+        definitions={definitions.map((d) => ({
+          id: d.id,
+          key: d.key,
+          name: d.name,
+          issueType: d.issueType,
+          isActive: d.isActive,
+          versions: d.versions.map((v) => ({
+            id: v.id,
+            versionNo: v.versionNo,
+            status: v.status,
+            publishedAt: v.publishedAt ? v.publishedAt.toISOString() : null,
+          })),
+        }))}
+      />
     </div>
   );
 }

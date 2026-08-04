@@ -3,6 +3,7 @@
 import { useRef, useTransition } from "react";
 import { EVIDENCE_TYPES } from "@/lib/constants";
 import { addEvidenceAction } from "@/lib/actions";
+import { formatDateTime } from "@/lib/datetime";
 
 interface EvidenceItem {
   id: string;
@@ -36,7 +37,7 @@ export default function EvidenceList({ issueId, evidences }: { issueId: string; 
             <li key={ev.id} className="rounded-md border border-gray-200 p-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">{ev.type}</span>
-                <span className="text-xs text-gray-400">{new Date(ev.createdAt).toLocaleString("zh-TW")}</span>
+                <span className="text-xs text-gray-400">{formatDateTime(ev.createdAt)}</span>
               </div>
               <a href={ev.url} target="_blank" rel="noreferrer" className="mt-1 block font-medium text-primary hover:underline">
                 {ev.title}

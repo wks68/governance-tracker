@@ -1,10 +1,16 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireCurrentUser } from "@/lib/auth";
 import { issueTypeLabel } from "@/lib/constants";
-import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf } from "@/lib/workflow";
+import { getVisibleFieldTemplate, getWorkflow, nextStatusOf, prevStatusOf, statusLabel } from "@/lib/workflow";
 import { evaluateGateRules } from "@/lib/gateRules";
+import {
+  isIssueOnVersionedWorkflow,
+  getIssueWorkflowRuntime,
+  hasExecutionCapability,
+  listSelectablePublishedVersionsForIssueType,
+} from "@/lib/workflowExecutionService";
 import StatusBadge from "@/components/StatusBadge";
 import WorkflowProgress from "@/components/WorkflowProgress";
 import DynamicFieldsEditForm from "@/components/DynamicFieldsEditForm";
@@ -15,11 +21,20 @@ import EvidenceList from "@/components/EvidenceList";
 import CommentList from "@/components/CommentList";
 import AuditLogList from "@/components/AuditLogList";
 import AiAssistantPanel from "@/components/AiAssistantPanel";
+import StartWorkflowPanel from "@/components/workflow-execution/StartWorkflowPanel";
+import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
+import { getUserHasCapability } from "@/lib/permissions";
+import { canApplicantDeleteIssue, loadAdminDeleteImpactSummary } from "@/lib/issue-management/issueDeletionService";
+import DeleteOwnDraftButton from "@/components/hotfix-nine-stage/DeleteOwnDraftButton";
+import AdminPermanentDeleteButton from "@/components/issue-management/AdminPermanentDeleteButton";
+import { formatDate } from "@/lib/datetime";
+import GovernanceRelationsCard from "@/components/issue-relations/GovernanceRelationsCard";
+import { loadGovernanceRelationViewForActor } from "@/lib/issue-relations/viewService";
 
 export const dynamic = "force-dynamic";
 
 export default async function IssueDetailPage({ params }: { params: { id: string } }) {
-  await requireCurrentUser();
+  const currentUser = await requireCurrentUser();
   const issue = await prisma.issue.findUnique({
     where: { id: params.id },
     include: {
@@ -32,11 +47,49 @@ export default async function IssueDetailPage({ params }: { params: { id: string
 
   if (!issue) notFound();
 
+  const onVersionedWorkflow = isIssueOnVersionedWorkflow(issue);
+
+  // ---------------------------------------------------------------------------
+  // Hotfix 一律在 Server Component render 前解析 canonical route：正式 runtime 進既有
+  // stage detail，舊制 Hotfix 進專屬唯讀 summary。非 Hotfix 才繼續渲染本通用詳情頁。
+  // ---------------------------------------------------------------------------
+
+  let runtime: Awaited<ReturnType<typeof getIssueWorkflowRuntime>> | null = null;
+  let startableVersions: Array<{ id: string; versionNo: number; definitionName: string }> = [];
+  let canStartWorkflow = false;
+
+  if (issue.issueType === "Hotfix") {
+    let currentStageKey: string | null = null;
+    if (onVersionedWorkflow) {
+      runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
+      if (runtime.onVersionedWorkflow) currentStageKey = runtime.currentStage.stageKey;
+    }
+    redirect(resolveIssueDetailHref({ id: issue.id, issueType: issue.issueType, currentStageKey, workflowStatus: issue.workflowStatus }));
+  } else if (onVersionedWorkflow) {
+    runtime = await getIssueWorkflowRuntime(issue.id, currentUser.id);
+  } else {
+    canStartWorkflow = await hasExecutionCapability(currentUser.id, "admin.full");
+    if (canStartWorkflow) {
+      const selectable = await listSelectablePublishedVersionsForIssueType(issue.issueType);
+      startableVersions = selectable.map((v) => ({ id: v.id, versionNo: v.versionNo, definitionName: v.workflowDefinition.name }));
+    }
+  }
+
   const auditLogs = await prisma.auditLog.findMany({
     where: { entityType: "Issue", entityId: issue.id },
     orderBy: { createdAt: "desc" },
     include: { actor: true },
   });
+
+  const supportsGovernanceRelations =
+    issue.issueType === "Incident" ||
+    issue.issueType === "RCA" ||
+    issue.issueType === "Hotfix" ||
+    (issue.issueType === "ChangeRelease" &&
+      issue.changeSubType === "QUARTERLY_RELEASE");
+  const relationView = supportsGovernanceRelations
+    ? await loadGovernanceRelationViewForActor(currentUser.id, issue.id)
+    : null;
 
   const fieldsMap: Record<string, string> = {};
   for (const f of issue.fieldValues) fieldsMap[f.fieldKey] = f.fieldValue;
@@ -77,6 +130,12 @@ export default async function IssueDetailPage({ params }: { params: { id: string
 
   const pulse = issue.statusLight === "Red" && issue.alertLevel === "Critical" && !issue.firstResponseAt;
 
+  const [deleteCheck, isAdmin] = await Promise.all([
+    canApplicantDeleteIssue(issue.id, currentUser.id),
+    getUserHasCapability(currentUser, "admin.full"),
+  ]);
+  const adminDeleteSummary = isAdmin ? await loadAdminDeleteImpactSummary(issue.id) : null;
+
   return (
     <div className="space-y-6">
       {/* 6.1 Header */}
@@ -98,12 +157,14 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             >
               編輯
             </Link>
+            {deleteCheck.allowed && <DeleteOwnDraftButton issueId={issue.id} issueKey={issue.issueKey} title={issue.title} />}
+            {isAdmin && adminDeleteSummary && <AdminPermanentDeleteButton issueId={issue.id} summary={adminDeleteSummary} />}
           </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div>
             <div className="text-xs text-gray-400">目前流程狀態</div>
-            <div className="font-medium text-gray-800">{issue.workflowStatus}</div>
+            <div className="font-medium text-gray-800">{statusLabel(issue.issueType, issue.workflowStatus)}</div>
           </div>
           <div>
             <div className="text-xs text-gray-400">負責人</div>
@@ -111,7 +172,7 @@ export default async function IssueDetailPage({ params }: { params: { id: string
           </div>
           <div>
             <div className="text-xs text-gray-400">到期日</div>
-            <div className="font-medium text-gray-800">{issue.dueDate ? new Date(issue.dueDate).toLocaleDateString("zh-TW") : "—"}</div>
+            <div className="font-medium text-gray-800">{formatDate(issue.dueDate)}</div>
           </div>
           <div>
             <div className="text-xs text-gray-400">等待角色</div>
@@ -119,6 +180,8 @@ export default async function IssueDetailPage({ params }: { params: { id: string
           </div>
         </div>
       </div>
+
+      {relationView && <GovernanceRelationsCard view={relationView} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -165,40 +228,49 @@ export default async function IssueDetailPage({ params }: { params: { id: string
             </div>
           </section>
 
-          {/* 6.3 流程進度條 */}
-          <section className="rounded-lg border border-gray-200 bg-white p-5">
-            <h2 className="mb-3 text-sm font-semibold text-gray-700">流程進度</h2>
-            <WorkflowProgress issueType={issue.issueType} currentStatus={issue.workflowStatus} />
-            <div className="mt-4">
-              <WorkflowActions
-                issueId={issue.id}
-                nextStatus={next}
-                prevStatus={prev}
-                gatePassed={gate.passed}
-                canSendBackToRd={
-                  issue.issueType === "Hotfix" && ["QA驗證", "QA放行確認"].includes(issue.workflowStatus)
-                }
-              />
-            </div>
-          </section>
+          <>
+              {/* 6.3 流程進度條（舊版線性流程） */}
+              <section className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">流程進度</h2>
+                <WorkflowProgress issueType={issue.issueType} currentStatus={issue.workflowStatus} />
+                <div className="mt-4">
+                  <WorkflowActions
+                    issueId={issue.id}
+                    nextStatus={next}
+                    nextStatusLabel={next ? statusLabel(issue.issueType, next) : null}
+                    prevStatus={prev}
+                    gatePassed={gate.passed}
+                    canSendBackToRd={
+                      issue.issueType === "Hotfix" && ["qaVerify", "qaRelease"].includes(issue.workflowStatus)
+                    }
+                  />
+                </div>
+                {canStartWorkflow && startableVersions.length > 0 && (
+                  <div className="mt-4 border-t border-gray-100 pt-4">
+                    <p className="mb-2 text-xs text-gray-500">此工單類型已有可選用的新版 Workflow 執行引擎版本：</p>
+                    <StartWorkflowPanel issueId={issue.id} options={startableVersions} />
+                  </div>
+                )}
+              </section>
 
-          {/* 6.5 關卡卡控檢查區 */}
-          <section>
-            <GateCheckPanel gate={gate} nextStatusLabel={next} />
-          </section>
+              {/* 6.5 關卡卡控檢查區 */}
+              <section>
+                <GateCheckPanel gate={gate} nextStatusLabel={next ? statusLabel(issue.issueType, next) : null} />
+              </section>
 
-          {/* 6.4 動態欄位區：直接在本頁填寫目前關卡的動態欄位，不需跳轉 */}
-          <section id="dynamic-fields-section" className="rounded-lg border border-gray-200 bg-white p-5">
-            <h2 className="mb-3 text-sm font-semibold text-gray-700">
-              {issueTypeLabel(issue.issueType)} 專屬欄位（{issue.workflowStatus}）
-            </h2>
-            <DynamicFieldsEditForm
-              issueId={issue.id}
-              template={template}
-              values={fieldsMap}
-              dynamicOptions={dynamicOptions}
-            />
-          </section>
+              {/* 6.4 動態欄位區：直接在本頁填寫目前關卡的動態欄位，不需跳轉 */}
+              <section id="dynamic-fields-section" className="rounded-lg border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">
+                  {issueTypeLabel(issue.issueType)} 專屬欄位（{statusLabel(issue.issueType, issue.workflowStatus)}）
+                </h2>
+                <DynamicFieldsEditForm
+                  issueId={issue.id}
+                  template={template}
+                  values={fieldsMap}
+                  dynamicOptions={dynamicOptions}
+                />
+              </section>
+          </>
 
           {/* 6.6 佐證資料區 */}
           <section className="rounded-lg border border-gray-200 bg-white p-5">

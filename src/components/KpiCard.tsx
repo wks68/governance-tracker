@@ -18,8 +18,8 @@ export default function KpiCard({
       ? "text-gov-blue"
       : "text-gray-900";
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="text-sm text-gray-500">{label}</div>
+    <div className="ui-card p-4">
+      <div className="text-sm font-medium text-text-secondary">{label}</div>
       <div className={clsx("mt-1 text-2xl font-semibold", toneClass)}>{value}</div>
     </div>
   );

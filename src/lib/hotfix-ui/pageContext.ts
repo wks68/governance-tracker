@@ -1,0 +1,176 @@
+// Hotfix 九階段 UI：9 個獨立頁面共用的資料組裝層。只做唯讀查詢＋組裝 ViewModel，不做任何
+// 寫入、不做授權「決定」——授權一律由 workflow-execution／approvalService 於實際送出動作時
+// 現場重新解析（本檔案算出的 canAct 只決定要不要顯示表單／按鈕，不是信任邊界本身）。
+
+import { prisma } from "../prisma";
+import { getIssueWorkflowRuntime, evaluateActorEligibilityForStage, getCurrentExecutorUserId, type IssueWorkflowRuntime } from "../workflowExecutionService";
+import { getUserHasCapability } from "../permissions";
+import { nineStageIndexOfStageKey, isCancelledStageKey } from "./nineStage";
+import { resolveIssueDetailHref } from "../issue-detail-href";
+import { HOTFIX_PRIORITY_FIELD_KEY, resolveHotfixPriority } from "./priority";
+import type { TicketBasicInfoData } from "@/components/hotfix-nine-stage/TicketBasicInfo";
+import type { Issue, User } from "@prisma/client";
+import { getEligibleApproverUserIds } from "../approvalService";
+
+export class HotfixPageNotApplicableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HotfixPageNotApplicableError";
+  }
+}
+
+export interface HotfixPageContext {
+  issue: Issue;
+  actor: User;
+  runtime: Extract<IssueWorkflowRuntime, { onVersionedWorkflow: true }>;
+  nineStageIndex: number | null;
+  cancelled: boolean;
+  ticketBasicInfo: TicketBasicInfoData;
+  /** 若目前關卡不屬於呼叫頁面宣告的 allowedStageKeys，回傳應轉址的正確頁面路徑。 */
+  redirectTo: string | null;
+}
+
+async function loadHotfixPriority(issueId: string): Promise<string | null> {
+  const row = await prisma.issueFieldValue.findUnique({ where: { issueId_fieldKey: { issueId, fieldKey: HOTFIX_PRIORITY_FIELD_KEY } } });
+  return row?.fieldValue ?? null;
+}
+
+// allowedStageKeys：呼叫頁面宣告「自己負責哪些 stageKey」，目前關卡不在此清單內時，
+// redirectTo 會指向正確的 canonical 頁面（其 stage mapping 仍唯一委派 nineStage），呼叫端應立即 redirect()。
+export async function loadHotfixPageContext(issueId: string, actor: User, allowedStageKeys: readonly string[]): Promise<HotfixPageContext> {
+  const issue = await prisma.issue.findUnique({ where: { id: issueId } });
+  if (!issue) throw new HotfixPageNotApplicableError("找不到此工單");
+  if (issue.issueType !== "Hotfix") throw new HotfixPageNotApplicableError("此工單不是 Hotfix 類型");
+
+  const runtime = await getIssueWorkflowRuntime(issueId, actor.id);
+  if (!runtime.onVersionedWorkflow) {
+    throw new HotfixPageNotApplicableError("此 Hotfix 工單尚未啟動新版流程引擎，請回工單詳情頁查看");
+  }
+
+  const stageKey = runtime.currentStage.stageKey;
+  const cancelled = isCancelledStageKey(stageKey);
+  const nineStageIndex = nineStageIndexOfStageKey(stageKey);
+
+  let redirectTo: string | null = null;
+  if (!allowedStageKeys.includes(stageKey)) {
+    redirectTo = resolveIssueDetailHref({ id: issueId, issueType: issue.issueType, currentStageKey: stageKey, workflowStatus: issue.workflowStatus });
+  }
+
+  const [hotfixPriority, team] = await Promise.all([
+    loadHotfixPriority(issueId),
+    issue.assignedTeamId ? prisma.team.findUnique({ where: { id: issue.assignedTeamId } }) : Promise.resolve(null),
+  ]);
+  const ticketBasicInfo: TicketBasicInfoData = {
+    issueKey: issue.issueKey,
+    reporterName: issue.reporter,
+    teamName: team?.name ?? null,
+    environment: issue.environment,
+    title: issue.title,
+    description: issue.description,
+    systemName: issue.systemName,
+    riskLevel: issue.riskLevel,
+    hotfixPriority: resolveHotfixPriority(hotfixPriority, issue.priority).value,
+    dueDate: issue.dueDate ? issue.dueDate.toISOString() : null,
+  };
+
+  return { issue, actor, runtime, nineStageIndex, cancelled, ticketBasicInfo, redirectTo };
+}
+
+// 供「執行頁」（stage1/3/5/7）判斷目前使用者是不是這一關真正的責任角色（僅決定要不要顯示
+// 可編輯表單，實際寫入仍由服務層重新授權）。
+export async function isActorResponsibleForExecutionStage(ctx: HotfixPageContext): Promise<boolean> {
+  const stage = ctx.runtime.currentStage;
+  const result = await evaluateActorEligibilityForStage(
+    prisma,
+    ctx.actor.id,
+    { assignedTeamId: ctx.issue.assignedTeamId },
+    { requiredExecutionRole: stage.requiredExecutionRole, requiredMembershipRole: stage.requiredMembershipRole, stageKey: stage.stageKey },
+  );
+  if (!result.eligible) return false;
+
+  // RD/QA/OP 接單流程新增：團隊成員身分只是必要條件，真正的責任人是承接團隊 Lead 指派的
+  // 執行人本人——尚未指派執行人時（getCurrentExecutorUserId 回傳 null）一律視為非責任人，
+  // 其他團隊成員即使身分合格，仍只能唯讀。僅供 UI 顯示判斷，不構成授權邊界（真正的邊界見
+  // src/lib/workflow-execution/assignmentService.ts 的 assertActorIsCurrentExecutor，
+  // 由實際寫入入口重新驗證）。
+  const executorUserId = await getCurrentExecutorUserId(prisma, ctx.issue.id, stage.stageKey);
+  if (executorUserId === null) return false;
+  return executorUserId === ctx.actor.id;
+}
+
+export interface ApprovalReviewViewData {
+  approvalRecordId: string;
+  requestedByName: string;
+  requestedAt: string;
+  isResponsible: boolean;
+  expectedApproverLabel: string | null;
+}
+
+// 4 個獨立主管簽核頁共用：組出 ApprovalReviewPanel 需要的資料。isResponsible 判斷邏輯與
+// src/lib/hotfix-ui/runtimeView.ts 既有（即將淘汰的舊版單頁）APPROVAL 關卡資格預覽邏輯
+// 完全一致——expectedApproverUserId 唯一時直接比對，多位合格候選人（null）時退回以
+// 「目前處理團隊的 LEAD 身分」預覽近似，實際授權仍一律由 decideApprovalRecord 現場重新
+// 解析，這裡的結果只決定要不要顯示按鈕。
+export async function buildApprovalReviewViewData(ctx: HotfixPageContext): Promise<ApprovalReviewViewData | null> {
+  const record = ctx.runtime.pendingApproval;
+  if (!record) return null;
+
+  const [requestedBy, expectedApprover] = await Promise.all([
+    prisma.user.findUnique({ where: { id: record.requestedByUserId } }),
+    record.expectedApproverUserId ? prisma.user.findUnique({ where: { id: record.expectedApproverUserId } }) : Promise.resolve(null),
+  ]);
+
+  let isResponsible: boolean;
+  if (record.decision !== "PENDING") {
+    isResponsible = false;
+  } else if (record.expectedApproverUserId !== null) {
+    isResponsible = record.expectedApproverUserId === ctx.actor.id;
+  } else {
+    const eligibleApprovers = await getEligibleApproverUserIds(record);
+    isResponsible = eligibleApprovers.includes(ctx.actor.id) && ctx.actor.id !== record.requestedByUserId;
+  }
+
+  return {
+    approvalRecordId: record.id,
+    requestedByName: requestedBy?.name ?? "（未知）",
+    requestedAt: record.requestedAt.toISOString(),
+    isResponsible,
+    expectedApproverLabel: expectedApprover ? expectedApprover.name : record.expectedApproverUserId === null ? "處理團隊的主管（LEAD）" : null,
+  };
+}
+
+// stage1「Hotfix建立工單」的責任角色固定是原始填單人（reporterUserId），不得透過
+// User.role 或團隊成員身分判斷——與其他執行關卡（RD/QA/OP 執行人）判斷方式不同，因此
+// 獨立一個函式，不硬塞進 isActorResponsibleForExecutionStage。
+export function isActorOriginalReporter(ctx: HotfixPageContext): boolean {
+  return !!ctx.issue.reporterUserId && ctx.issue.reporterUserId === ctx.actor.id;
+}
+
+// 送簽核准人規則修正：送簽失敗於「承接團隊沒有其他可核准的主管／代理人」時，錯誤訊息下方
+// 要提供可實際完成設定的入口。這裡只回報「這位使用者按下去會不會被擋」，不決定授權本身——
+// 實際的團隊／治理設定授權仍由各該服務層現場重新判斷。
+export async function loadGovernanceFixLinks(actor: User): Promise<{ canManageTeams: boolean; canManageApprovalGovernance: boolean }> {
+  const [canManageTeams, canManageTeamLeads, canManageDelegation] = await Promise.all([
+    getUserHasCapability(actor, "team.manageMembers"),
+    getUserHasCapability(actor, "governance.manageTeamLeads"),
+    getUserHasCapability(actor, "governance.manageAnyDelegation"),
+  ]);
+  return {
+    canManageTeams: canManageTeams || canManageTeamLeads,
+    canManageApprovalGovernance: canManageDelegation,
+  };
+}
+
+/**
+ * Cancelled is outside the formal nine-stage mapping. Read the final history
+ * edge so the progress UI can preserve only the stages completed before the
+ * cancellation without inventing a second stage mapping.
+ */
+export async function loadCancelledFromNineStageIndex(issueId: string): Promise<number | null> {
+  const cancelledHistory = await prisma.issueWorkflowStageHistory.findFirst({
+    where: { issueId, toStage: { stageKey: "cancelled" } },
+    orderBy: { executedAt: "desc" },
+    include: { fromStage: true },
+  });
+  return cancelledHistory?.fromStage ? nineStageIndexOfStageKey(cancelledHistory.fromStage.stageKey) : null;
+}

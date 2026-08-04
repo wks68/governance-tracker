@@ -2,7 +2,180 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --primary: 0 91 172;
+  --primary-hover: 0 75 141;
+  --primary-foreground: 255 255 255;
+  --primary-muted: 230 240 249;
+  --background: 244 247 251;
+  --surface: 255 255 255;
+  --surface-muted: 248 250 252;
+  --border: 221 227 235;
+  --input: 203 213 225;
+  --text-primary: 30 41 59;
+  --text-secondary: 71 85 105;
+  --text-muted: 100 116 139;
+  --success: 25 135 84;
+  --success-muted: 226 244 234;
+  --warning: 180 112 0;
+  --warning-muted: 255 246 214;
+  --danger: 196 45 62;
+  --danger-muted: 253 232 235;
+  --info: 13 110 253;
+  --info-muted: 231 240 255;
+  --disabled: 226 232 240;
+  --focus-ring: 0 91 172;
+  --workflow-complete: #1f9d68;
+  --workflow-complete-deep: #167a52;
+  --workflow-complete-muted: #e8f6ef;
+  --workflow-complete-line: #57b98f;
+  --workflow-complete-foreground: #ffffff;
+  --action-pending-approval: #6d28d9;
+  --action-pending-approval-hover: #5b21b6;
+  --action-pending-approval-active: #4c1d95;
+  --action-pending-approval-focus: #a78bfa;
+  --action-pending-approval-foreground: #ffffff;
+  --action-pending-work: #245cb8;
+  --action-pending-work-hover: #1e4f9e;
+  --action-pending-work-active: #193f7f;
+  --action-pending-work-focus: #7da7e8;
+  --action-pending-work-foreground: #ffffff;
+  --action-view: #f8fafc;
+  --action-view-hover: #f1f5f9;
+  --action-view-active: #e2e8f0;
+  --action-view-border: #cbd5e1;
+  --action-view-border-hover: #94a3b8;
+  --action-view-foreground: #475569;
+  --action-view-focus: #94a3b8;
+  --shadow-card: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --shadow-overlay: 0 18px 50px rgba(15, 23, 42, 0.18);
+}
+
+.rich-text-content { min-height: inherit; overflow-wrap: anywhere; }
+.rich-text-content p, .rich-text-viewer p { margin: .35rem 0; }
+.rich-text-content ul, .rich-text-viewer ul { list-style: disc; margin: .5rem 0; padding-left: 1.5rem; }
+.rich-text-content ol, .rich-text-viewer ol { list-style: decimal; margin: .5rem 0; padding-left: 1.5rem; }
+.rich-text-content blockquote, .rich-text-viewer blockquote { border-left: 3px solid #cbd5e1; color: #475569; margin: .5rem 0; padding-left: .75rem; }
+.rich-text-content img { height: auto; max-width: 100%; }
+.rich-text-image-node { margin-left: auto; margin-right: auto; }
+.rich-text-image-node.is-selected > img { outline: 2px solid #245cb8; outline-offset: 2px; }
+.rich-text-content .is-editor-empty:first-child::before { color: #94a3b8; content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
+
 html,
 body {
-  background-color: #f8fafc;
+  min-height: 100%;
+  background-color: rgb(var(--background));
+  color: rgb(var(--text-primary));
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+::selection {
+  background: rgb(var(--primary-muted));
+  color: rgb(var(--primary-hover));
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--focus-ring));
+  outline-offset: 2px;
+}
+
+@keyframes notification-bell-wiggle {
+  0%,
+  25%,
+  100% {
+    transform: rotate(0deg);
+  }
+  4% {
+    transform: rotate(-12deg);
+  }
+  8% {
+    transform: rotate(10deg);
+  }
+  12% {
+    transform: rotate(-7deg);
+  }
+  16% {
+    transform: rotate(4deg);
+  }
+  20% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes app-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-toast-enter {
+  animation: app-toast-enter 180ms ease-out;
+}
+
+.animate-notification-bell {
+  animation: notification-bell-wiggle 2.4s ease-in-out infinite;
+  will-change: transform;
+}
+
+@layer components {
+  .ui-card {
+    @apply rounded-xl border border-border bg-surface shadow-card;
+  }
+
+  .ui-input {
+    @apply w-full rounded-lg border border-input bg-surface px-3 py-2 text-sm text-text-primary outline-none transition placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-focus-ring/20 disabled:cursor-not-allowed disabled:bg-disabled/60 disabled:text-text-muted;
+  }
+
+  .ui-button-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary-hover focus-visible:ring-2 focus-visible:ring-focus-ring/30 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .ui-button-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-text-secondary transition hover:border-primary/40 hover:bg-primary-muted hover:text-primary focus-visible:ring-2 focus-visible:ring-focus-ring/20 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .issue-action-button {
+    @apply inline-flex h-10 w-24 min-w-24 max-w-24 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60;
+  }
+}
+
+/* 九階段進度列「目前節點」呼吸提示：尊重使用者的減少動態偏好設定。
+   關閉動畫後仍保留靜態的目前節點樣式（藍框＋藍色圓心），資訊不因此遺失。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-notification-bell,
+  .animate-stage-halo,
+  .animate-stage-core {
+    animation: none !important;
+  }
+  .app-toast-enter {
+    animation: none !important;
+  }
+  .animate-stage-halo {
+    opacity: 0 !important;
+  }
+  .animate-stage-complete-enter,
+  .animate-stage-check-in,
+  .animate-stage-line-fill,
+  .animate-stage-current-enter,
+  .animate-drawer-overlay-in,
+  .animate-drawer-panel-in,
+  .animate-mobile-drawer-panel-in,
+  .animate-dialog-overlay-in,
+  .animate-dialog-content-in,
+  .animate-dialog-overlay-out,
+  .animate-dialog-content-out,
+  .animate-item-enter,
+  .animate-tooltip-in,
+  .animate-expand-hint-once,
+  .animate-scroll-chevron {
+    animation: none !important;
+  }
 }

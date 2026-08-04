@@ -6,42 +6,42 @@ import { evaluateGateRules } from "./gateRules";
 // 用於自動帶入 waitingRole，使用者/Seed 仍可覆寫
 const WAITING_ROLE_MAP: Record<string, Record<string, string>> = {
   Hotfix: {
-    RD修正: "RD",
-    RD自測: "RD",
-    QA驗證: "QA",
-    QA放行確認: "QA",
-    OP上版: "OP",
-    正式環境確認: "OP",
+    rdFix: "RD",
+    rdSelfTest: "RD",
+    qaVerify: "QA",
+    qaRelease: "QA",
+    opDeploy: "OP",
+    prodConfirm: "OP",
   },
   Incident: {
-    初步影響判定: "RD",
-    RCA判定: "PM",
-    驗證中: "QA",
+    initialImpact: "RD",
+    rcaDecision: "PM",
+    verifying: "QA",
   },
   RCA: {
-    分析中: "RD",
-    驗證中: "QA",
+    analyzing: "RD",
+    verifying: "QA",
   },
   RiskException: {
-    風險評估: "資安推動小組",
-    待核准: "DMS主管",
-    驗證中: "QA",
+    riskAssessment: "資安推動小組",
+    pendingApproval: "DMS主管",
+    verifying: "QA",
   },
   QaVerification: {
-    測試中: "QA",
-    複測中: "QA",
-    放行判定: "QA",
+    testing: "QA",
+    retesting: "QA",
+    releaseDecision: "QA",
   },
   ChangeRelease: {
-    上線審核: "DMS主管",
-    正式環境確認: "OP",
+    releaseReview: "DMS主管",
+    prodConfirm: "OP",
   },
   MonitoringInventory: {
-    審核中: "資安推動小組",
+    reviewing: "資安推動小組",
   },
   BackupRecoveryTest: {
-    備份確認中: "OP",
-    驗證中: "QA",
+    backupConfirming: "OP",
+    verifying: "QA",
   },
 };
 

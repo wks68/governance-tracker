@@ -24,28 +24,240 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  ownedIssues    Issue[]    @relation("IssueOwner")
-  reportedIssues Issue[]    @relation("IssueReporter")
-  auditLogs      AuditLog[]
+  // ---- M1.5-C1-A 新增：人員生命週期欄位（見 Plan 檔案 M1.5-C1 Superseding Amendment 章節四） ----
+  // loginIdentifier：本階段只建立欄位，不修改登入流程，不回填、不猜測既有帳號的值。
+  // isBreakGlassAdmin：僅代表資料標記與防誤停用，不代表真正 Break-glass 登入機制已完成。
+  loginIdentifier    String?   @unique
+  isBreakGlassAdmin  Boolean   @default(false)
+  disabledAt         DateTime?
+  disabledByUserId   String?
+  disabledReasonCode String?
+
+  ownedIssues     Issue[]      @relation("IssueOwner")
+  reportedIssues  Issue[]      @relation("IssueReporter")
+  auditLogs       AuditLog[]
+  teamMemberships TeamMember[]
+  userRoles       UserRole[]
+
+  // ---- M1.5-A 新增：核准治理層反向關聯 ----
+  approvalRequestsMade         ApprovalRecord[]           @relation("ApprovalRequestedBy")
+  approvalsDecided             ApprovalRecord[]           @relation("ApprovalApprover")
+  approvalsExpected            ApprovalRecord[]           @relation("ApprovalExpectedApprover")
+  approvalsReceivedAsDelegator ApprovalRecord[]           @relation("ApprovalDelegatedFrom")
+  riskChecksAnswered           StageRiskCheck[]           @relation("RiskCheckAnsweredBy")
+  riskChecksOwned              StageRiskCheck[]           @relation("RiskCheckVerificationOwner")
+  riskChecksResolved           StageRiskCheck[]           @relation("RiskCheckResolvedBy")
+  supervisorAssignmentsAsUser  UserSupervisorAssignment[] @relation("SupervisorAssignmentUser")
+  supervisorAssignmentsAsLead  UserSupervisorAssignment[] @relation("SupervisorAssignmentSupervisor")
+  supervisorAssignmentsCreated UserSupervisorAssignment[] @relation("SupervisorAssignmentCreatedBy")
+  delegationsGranted           ApprovalDelegation[]       @relation("DelegationDelegator")
+  delegationsReceived          ApprovalDelegation[]       @relation("DelegationDelegate")
+  delegationsRevoked           ApprovalDelegation[]       @relation("DelegationRevokedBy")
+  delegationsCreated           ApprovalDelegation[]       @relation("DelegationCreatedBy")
+  issueRelationsCreated        IssueRelation[]            @relation("IssueRelationCreatedBy")
+  issueRelationsRemoved        IssueRelation[]            @relation("IssueRelationRemovedBy")
+
+  // ---- M1.5-C1-A 新增：人員停用 self-relation 與角色/Team 歷程反向關聯 ----
+  disabledBy    User?  @relation("UserDisabledBy", fields: [disabledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  disabledUsers User[] @relation("UserDisabledBy")
+
+  userRoleHistoryAsUser        UserRoleHistory[]       @relation("UserRoleHistoryUser")
+  userRoleHistoryAsActor       UserRoleHistory[]       @relation("UserRoleHistoryActor")
+  teamMembershipHistoryAsUser  TeamMembershipHistory[] @relation("TeamMembershipHistoryUser")
+  teamMembershipHistoryAsActor TeamMembershipHistory[] @relation("TeamMembershipHistoryActor")
 
   @@index([role])
   @@index([isActive])
 }
 
+// 使用者多角色關聯（M1 新增：帳號可同時擁有多個角色；User.role 保留作為既有相容欄位，不刪除、不改名）
+// M1.5-C1-A 新增 isActive／updatedAt：自本次 Superseding Amendment 起，
+// active（isActive=true）UserRole 為唯一正式系統角色授權來源，User.role 僅作 primary role 顯示快取
+// （角色授權來源切換本身屬 C1-B 範圍，本次 C1-A 僅新增欄位與安全回填，不切換服務層查詢邏輯）。
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String // 沿用既有 RoleKey 值域字串（含既有角色與未來新增角色），不另開 DB enum
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User              @relation(fields: [userId], references: [id])
+  history UserRoleHistory[]
+
+  @@unique([userId, role])
+  @@index([userId])
+  @@index([isActive])
+}
+
+// 使用者角色歷程（M1.5-C1-A 新增）：append-only，僅 INSERT，服務層不得提供 update/delete。
+// eventType：ASSIGNED / REMOVED / PRIMARY_CHANGED。eventSource：USER_ACTION / SYSTEM_MIGRATION / SYSTEM_SEED。
+// USER_ACTION 時 actorUserId 必填且 reasonCode 必填；SYSTEM_MIGRATION／SYSTEM_SEED 時 actorUserId 可為 null，
+// reasonCode 使用固定明確值（如 C1_ROLE_BACKFILL／C1_SEED_INITIAL_ROLE）。
+model UserRoleHistory {
+  id          String   @id @default(cuid())
+  userRoleId  String
+  userId      String
+  role        String
+  eventType   String
+  fromValue   String?
+  toValue     String?
+  actorUserId String?
+  eventSource String
+  reasonCode  String
+  effectiveAt DateTime
+  createdAt   DateTime @default(now())
+
+  userRole UserRole @relation(fields: [userRoleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user     User     @relation("UserRoleHistoryUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor    User?    @relation("UserRoleHistoryActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([userRoleId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([eventSource])
+}
+
+// 團隊主檔（M1 新增）
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // ---- RD/QA/OP 接單流程新增：Team 領域正式判斷來源 ----
+  // RD / QA / OP / BUSINESS / OTHER；null＝尚未分類。既有 Team 一律維持 null，不得依名稱字串
+  // （例如 contains("RD")）猜測回填——domain 是業務判斷，只能由被授權者透過
+  // src/lib/teamLeadService.ts 的 setTeamDomain 明確逐筆設定。domain=null 的 Team 不得出現在
+  // 任何「可接單 RD/QA/OP 團隊」清單中（deny-by-default）。
+  domain String?
+
+  // ---- 成員管理權限收斂新增：團隊啟用狀態 ----
+  // 既有團隊一律 true（additive migration，預設值不改變任何既有資料的語意）。
+  // 停用只影響「是否能承接新工作」：不得再被選為建立工單的團隊，也不得接單；
+  // 既有 membership、已承接工單與所有歷史紀錄一律保留不動。
+  isActive Boolean @default(true)
+
+  members        TeamMember[]
+  systemMappings SystemTeamMapping[]
+  assignedIssues Issue[]             @relation("IssueAssignedTeam")
+
+  // ---- M1.5-A 新增 ----
+  approvalRecords     ApprovalRecord[]
+  approvalDelegations ApprovalDelegation[]
+
+  // ---- M1.5-C1-A 新增 ----
+  teamMembershipHistory TeamMembershipHistory[]
+
+  // ---- M2-A 新增 ----
+  workflowStages WorkflowStage[]
+
+  // ---- M2-B 新增：Issue 轉移前後 assignedTeamId 快照歷程 ----
+  stageHistoryAssignedBefore IssueWorkflowStageHistory[] @relation("AssignedTeamBeforeHistory")
+  stageHistoryAssignedAfter  IssueWorkflowStageHistory[] @relation("AssignedTeamAfterHistory")
+
+  @@index([domain])
+}
+
+// 團隊成員身分（M1 新增）：同一帳號可加入多個團隊，並在不同團隊擔任不同身分
+// SQLite connector 不支援原生 enum，沿用既有慣例（如 User.role）改用 String + 註解值域，值域固定為 MEMBER / LEAD
+model TeamMember {
+  id             String   @id @default(cuid())
+  teamId         String
+  userId         String
+  membershipRole String   @default("MEMBER") // MEMBER / LEAD
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  team Team @relation(fields: [teamId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  // ---- M1.5-C1-A 新增 ----
+  history TeamMembershipHistory[]
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+// Team 成員歷程（M1.5-C1-A 新增）：append-only，僅 INSERT，服務層不得提供 update/delete。
+// eventType：JOINED / REMOVED / ROLE_CHANGED。eventSource：USER_ACTION / SYSTEM_MIGRATION / SYSTEM_SEED。
+// JOINED：fromMembershipRole=null、toMembershipRole=加入角色；REMOVED：fromMembershipRole=移除前角色、toMembershipRole=null；
+// ROLE_CHANGED：fromMembershipRole／toMembershipRole 均必填且不得相同（MEMBER↔LEAD 切換，供 teamLeadService 使用）。
+model TeamMembershipHistory {
+  id                 String   @id @default(cuid())
+  teamMemberId       String
+  teamId             String
+  userId             String
+  eventType          String
+  fromMembershipRole String?
+  toMembershipRole   String?
+  actorUserId        String?
+  eventSource        String
+  reasonCode         String
+  effectiveAt        DateTime
+  createdAt          DateTime @default(now())
+
+  teamMember TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user       User       @relation("TeamMembershipHistoryUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor      User?      @relation("TeamMembershipHistoryActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([teamMemberId])
+  @@index([teamId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([eventSource])
+}
+
+// 系統主檔（M1 新增）：與既有 Issue.systemName（自由文字）暫不自動關聯，僅作為受控清單基準，供 M3 起漸進導入
+model System {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teamMappings SystemTeamMapping[]
+}
+
+// 系統對應負責團隊（M1 新增）：同一系統/職能可有多個候選團隊，需有唯一 isPrimary 才能自動路由（見 src/lib/systemTeamRouting.ts）
+// SQLite connector 不支援原生 enum，沿用既有慣例改用 String + 註解值域，值域固定為 RD / QA / OP / OTHER
+model SystemTeamMapping {
+  id                 String   @id @default(cuid())
+  systemId           String
+  responsibilityType String // RD / QA / OP / OTHER
+  teamId             String
+  isPrimary          Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  system System @relation(fields: [systemId], references: [id])
+  team   Team   @relation(fields: [teamId], references: [id])
+
+  @@index([systemId, responsibilityType])
+}
+
+// 計畫變更子分類（M1 新增）：僅 ChangeRelease 工單類型使用，其餘工單類型必須為 null
+// SQLite connector 不支援原生 enum，沿用既有慣例改用 String + 註解值域，值域固定為 QUARTERLY_RELEASE / GENERAL_CHANGE
+
 // 工單主表（原「工作單/議題」）
 model Issue {
-  id          String  @id @default(cuid())
-  issueKey    String  @unique // 工單編號，例如 HOTFIX-0001
-  issueType   String // Hotfix / Incident / RCA / RiskException / QaVerification / ChangeRelease / MonitoringInventory / BackupRecoveryTest
+  id        String @id @default(cuid())
+  issueKey  String @unique // 工單編號，例如 HOTFIX-0001
+  issueType String // Hotfix / Incident / RCA / RiskException / QaVerification / ChangeRelease / MonitoringInventory / BackupRecoveryTest
 
   title       String
-  description String  @default("")
+  description String @default("")
 
-  systemName  String  @default("")
-  environment String  @default("") // Production / Staging / UAT / Dev
+  systemName  String @default("")
+  environment String @default("") // Production / Staging / UAT / Dev
 
-  riskLevel   String  @default("") // 高 / 中 / 低
-  priority    String  @default("") // P1 / P2 / P3 / P4
+  riskLevel String @default("") // 高 / 中 / 低
+  priority  String @default("") // P1 / P2 / P3 / P4
 
   ownerRole      String  @default("")
   ownerName      String  @default("")
@@ -56,36 +268,97 @@ model Issue {
   workflowStatus String // 目前流程關卡（中文狀態名稱）
   statusLight    String @default("Green") // Red / Yellow / Blue / Green / Gray
 
-  dueDate     DateTime?
+  dueDate DateTime?
 
-  needRca            Boolean @default(false)
-  needRiskException  Boolean @default(false)
-  impactProduction   Boolean @default(false)
+  needRca           Boolean @default(false)
+  needRiskException Boolean @default(false)
+  impactProduction  Boolean @default(false)
 
   evidenceStatus String @default("缺漏") // 齊備 / 部分缺漏 / 缺漏
   blockReason    String @default("")
   waitingRole    String @default("")
   nextStep       String @default("")
 
-  alertLevel      String @default("") // Critical / Warning / Info（主要給 Monitoring Inventory 使用）
+  alertLevel      String    @default("") // Critical / Warning / Info（主要給 Monitoring Inventory 使用）
   firstResponseAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // ---- M1 新增（皆為 nullable，既有資料維持 null，不回填、不猜測） ----
+  assignedTeamId String? // 目前處理團隊（非永久擁有），M3 起由 SystemTeamMapping 自動路由或授權人員手動指派
+  stageEnteredAt DateTime? // 進入目前關卡的時間；既有資料維持 null，新工單於建立時設定，M3 起每次合法關卡轉換更新
+  changeSubType  String? // QUARTERLY_RELEASE / GENERAL_CHANGE；僅 ChangeRelease 使用，其餘工單類型必須為 null
+
+  // ---- M2-A 新增（皆為 nullable，既有 19 筆正式基準 Issue 不遷移，維持 null） ----
+  workflowVersionId      String? // 實際執行版本來源；新流程授權與 transition 判斷一律以此為準，不讀 workflowStatus
+  currentWorkflowStageId String? // 目前階段來源；workflowStatus 僅為相容顯示快取
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   closedAt  DateTime?
 
-  owner        User?             @relation("IssueOwner", fields: [ownerUserId], references: [id])
-  reporterUser User?             @relation("IssueReporter", fields: [reporterUserId], references: [id])
-  fieldValues  IssueFieldValue[]
-  comments     Comment[]
-  evidences    Evidence[]
+  owner         User?             @relation("IssueOwner", fields: [ownerUserId], references: [id])
+  reporterUser  User?             @relation("IssueReporter", fields: [reporterUserId], references: [id])
+  assignedTeam  Team?             @relation("IssueAssignedTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  fieldValues   IssueFieldValue[]
+  comments      Comment[]
+  evidences     Evidence[]
   aiSuggestions AiSuggestion[]
+
+  // ---- M1.5-A 新增：核准治理層不得因 Issue 刪除而連動刪除，關聯側以 Restrict 保護（見 ApprovalRecord/StageRiskCheck 定義） ----
+  approvalRecords ApprovalRecord[]
+  stageRiskChecks StageRiskCheck[]
+
+  // ---- M2-A 新增：Workflow 版本化資料不得因 Issue 刪除而連動刪除，反之亦然，一律 Restrict ----
+  workflowVersion      WorkflowVersion?            @relation("IssueWorkflowVersion", fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currentWorkflowStage WorkflowStage?              @relation("IssueCurrentStage", fields: [currentWorkflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  workflowStageHistory IssueWorkflowStageHistory[]
+  outgoingRelations    IssueRelation[]             @relation("IssueRelationSource")
+  incomingRelations    IssueRelation[]             @relation("IssueRelationTarget")
 
   @@index([issueType])
   @@index([workflowStatus])
   @@index([statusLight])
   @@index([ownerUserId])
   @@index([reporterUserId])
+  @@index([assignedTeamId])
+  @@index([workflowVersionId])
+  @@index([currentWorkflowStageId])
+}
+
+// 治理紀錄之間的類型化關聯。固定方向與 relationType 的合法組合由服務層強制驗證：
+// Incident → RCA、Incident → Hotfix、RCA → Hotfix、Hotfix → 季度 ChangeRelease。
+// SQLite 沿用專案既有慣例以受控 String 保存固定值域；解除以 removedAt 非 null 表示，
+// 永不 hard delete 或重新啟用舊資料列。有效關聯唯一性由 additive migration 中的
+// SQLite partial unique indexes 保護，Schema 只宣告可跨資料庫沿用的一般索引。
+model IssueRelation {
+  id            String    @id @default(cuid())
+  sourceIssueId String
+  targetIssueId String
+  relationType  String
+  createdById   String
+  createdAt     DateTime  @default(now())
+  removedById   String?
+  removedAt     DateTime?
+  removalReason String?
+
+  sourceIssue Issue @relation("IssueRelationSource", fields: [sourceIssueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  targetIssue Issue @relation("IssueRelationTarget", fields: [targetIssueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   User  @relation("IssueRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  removedBy   User? @relation("IssueRelationRemovedBy", fields: [removedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([sourceIssueId])
+  @@index([targetIssueId])
+  @@index([relationType])
+  @@index([removedAt])
+}
+
+// 工單編號持久化計數器（一 issueType 一列）。issueType 直接沿用 Issue.issueType 的實際值
+// 作主鍵（例如 "Hotfix"），不另建一套 prefix 字串主鍵——顯示用前綴唯一來源仍是
+// ISSUE_TYPE_PREFIX（src/lib/constants.ts）。lastValue 只允許往上（原子遞增或
+// 「同步」時取更大值覆蓋），刪除 Issue 一律不得回頭調降，見 src/lib/issue-key-sequence/。
+model IssueKeySequence {
+  issueType String   @id
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
 }
 
 // 工作單類型主檔（MVP 以靜態常數搭配此表展示用途）
@@ -156,11 +429,16 @@ model Comment {
 model AuditLog {
   id          String   @id @default(cuid())
   actorUserId String?
-  actionType  String // IssueCreated / StatusChange / FieldChange / CommentAdded / EvidenceAdded / AiSuggestion / RoleChange / AccountStatusChange
+  actionType  String // IssueCreated / StatusChange / FieldChange / CommentAdded / EvidenceAdded / AiSuggestion / RoleChange / AccountStatusChange / TeamReassigned ...
   entityType  String // Issue / User
   entityId    String
   summary     String
   createdAt   DateTime @default(now())
+
+  // ---- M1 新增（皆為 nullable）：供團隊指派等「原值→新值＋原因代碼」事件結構化保存，通用於未來各類異動原因記錄 ----
+  fromValue  String?
+  toValue    String?
+  reasonCode String?
 
   actor User? @relation(fields: [actorUserId], references: [id])
 
@@ -181,4 +459,328 @@ model AiSuggestion {
   issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
   @@index([issueId])
+}
+
+// ============================================================================
+// M1.5-A 新增：核准治理層（ApprovalRecord / StageRiskCheck / UserSupervisorAssignment /
+// ApprovalDelegation）。本輪僅新增獨立資料表，不變更既有模型的既有欄位與資料。
+//
+// 固定值域欄位沿用既有 M1 慣例：Schema 使用 String，TypeScript 於 src/lib/constants.ts
+// 集中以 as const + literal union type + 型別守衛驗證，deny-by-default。
+//
+// 治理與稽核紀錄不得因刪除 User / Team / Issue 而連動遺失或消失：所有關聯一律使用
+// onDelete: Restrict（自我關聯之 supersedes 例外使用 NoAction，避免自我參照的多重刪除
+// 路徑衝突），不使用 Cascade、不使用 SetNull。
+// ============================================================================
+
+// 直屬主管關聯（M1.5-A 新增）：以獨立關聯表表示，保留歷史、支援生效區間，
+// 不新增 User.supervisorUserId 自關聯欄位。
+// 有效性與唯一 primary 判斷、循環偵測均由服務層（src/lib/permissions.ts、
+// src/lib/timeWindow.ts）強制驗證，SQLite 無法以條件式唯一索引表達。
+model UserSupervisorAssignment {
+  id               String    @id @default(cuid())
+  userId           String // 被管理人／開單人
+  supervisorUserId String // 直屬主管
+  validFrom        DateTime
+  validUntil       DateTime? // null = 尚未設定終止日；有效性採半開區間 [validFrom, validUntil)
+  isPrimary        Boolean   @default(true)
+  isActive         Boolean   @default(true)
+  createdByUserId  String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user            User             @relation("SupervisorAssignmentUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supervisor      User             @relation("SupervisorAssignmentSupervisor", fields: [supervisorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy       User             @relation("SupervisorAssignmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalRecords ApprovalRecord[]
+
+  @@index([userId, isActive])
+  @@index([supervisorUserId])
+}
+
+// 核准代理（M1.5-A 新增）：approvalType 為必填，不允許 null 代表全部類型；
+// 不支援代理人再次轉代理、不允許循環代理，由服務層（src/lib/permissions.ts）強制驗證。
+model ApprovalDelegation {
+  id               String    @id @default(cuid())
+  delegatorUserId  String
+  delegateUserId   String
+  teamId           String? // RD/QA/OP LEAD 代理必填；BUSINESS_APPROVAL 可為 null
+  approvalType     String // BUSINESS_APPROVAL / RD_LEAD_APPROVAL / QA_LEAD_APPROVAL / DEPLOYMENT_APPROVAL / RISK_EXCEPTION_APPROVAL（必填，不代表全部類型）
+  validFrom        DateTime
+  validUntil       DateTime // 必填；有效性仍採半開區間語意（now < validUntil）
+  isActive         Boolean   @default(true)
+  reason           String    @default("")
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revocationReason String?
+  createdByUserId  String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  delegator       User             @relation("DelegationDelegator", fields: [delegatorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  delegate        User             @relation("DelegationDelegate", fields: [delegateUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  team            Team?            @relation(fields: [teamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revokedBy       User?            @relation("DelegationRevokedBy", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy       User             @relation("DelegationCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalRecords ApprovalRecord[]
+
+  @@index([delegateUserId, isActive])
+  @@index([delegatorUserId])
+}
+
+// 通用核准紀錄（M1.5-A 新增；M1.5-A3 修正「核准目標」與「實際核准途徑」語意分離）。
+// decision：PENDING / APPROVED / REJECTED / CANCELLED（不使用 INVALIDATED）。
+// recordStatus：ACTIVE / INVALIDATED / SUPERSEDED。
+//   - 原 APPROVED 紀錄因內容變更而失效：decision 保留 APPROVED，recordStatus 改 INVALIDATED。
+//   - 原 REJECTED/CANCELLED 紀錄因重新送核而不再是目前版本：decision 保留原值，recordStatus 改 SUPERSEDED。
+// supersedesApprovalRecordId 為 @unique，形成單一取代路徑（一對一自我關聯），不得分岔。
+// 實際「同一 issueId+approvalType+relatedStageKey 僅一筆 ACTIVE+PENDING」的唯一性，
+// 另由 migration 內手動追加的 partial unique index 於 DB 層保護（schema 語法無法表達條件式唯一索引），
+// 變更本 model 時務必同步檢查該 index 是否仍需調整。
+//
+// M1.5-A3：supervisorAssignmentId／approverTeamId 是「核准責任目標」（依 approvalType 決定，
+// PENDING 建立時即寫入、決策後仍保留、全生命週期不變），approvalAuthorityType／approvalDelegationId／
+// delegatedFromUserId 是「實際核准途徑」（PENDING 時尚未發生，一律為 null；只有 APPROVED／REJECTED
+// 決策完成時才由 src/lib/approvalService.ts 依決策當下的 DB 狀態現場解析寫入，不得預先任選一種途徑）。
+model ApprovalRecord {
+  id                         String    @id @default(cuid())
+  issueId                    String
+  approvalType               String // BUSINESS_APPROVAL / RD_LEAD_APPROVAL / QA_LEAD_APPROVAL / DEPLOYMENT_APPROVAL / RISK_EXCEPTION_APPROVAL
+  relatedStageKey            String // 對應 Hotfix 主流程關卡 key，見 src/lib/hotfixWorkflow.ts
+  requestedByUserId          String // 將該階段成果正式送交核准的人（見 src/lib/approvalService.ts 對各 approvalType 的定義）
+  requestedAt                DateTime  @default(now())
+  approverUserId             String? // 實際完成核准/退回者，決定時才填入
+  approverTeamId             String? // 核准責任目標（技術主管核准：應核准團隊）；BUSINESS_APPROVAL 恆為 null
+  expectedApproverUserId     String? // 唯一合格核准人時才填入，供 UI 顯示與稽核比對；多位候選人時為 null，不得任選其一
+  delegatedFromUserId        String? // 實際核准途徑：僅 approvalAuthorityType=DELEGATE 決策完成後填入，記錄被代理人
+  approvalAuthorityType      String? // 實際核准途徑：DIRECT_SUPERVISOR / TEAM_LEAD / DELEGATE；PENDING 時恆為 null，僅決策完成後才寫入
+  supervisorAssignmentId     String? // 核准責任目標（BUSINESS_APPROVAL：唯一有效 primary 主管關係）；RD/QA/OP 恆為 null
+  approvalDelegationId       String? // 實際核准途徑：僅 approvalAuthorityType=DELEGATE 決策完成後填入
+  decision                   String    @default("PENDING") // PENDING / APPROVED / REJECTED / CANCELLED
+  recordStatus               String    @default("ACTIVE") // ACTIVE / INVALIDATED / SUPERSEDED
+  decisionReasonCode         String?
+  decisionComment            String?
+  decidedAt                  DateTime?
+  approvalSnapshotJson       String? // 由 src/lib/approvalSnapshotSchemas.ts 建立之 JSON 字串（非 Prisma Json scalar，不升級 Prisma）
+  snapshotSchemaVersion      Int       @default(1)
+  snapshotHash               String? // 對 approvalSnapshotJson 做穩定排序後計算之雜湊，讀取時用於偵測損毀
+  revisionNo                 Int       @default(1)
+  supersedesApprovalRecordId String?   @unique
+  dueAt                      DateTime?
+  remindedAt                 DateTime?
+  invalidatedAt              DateTime?
+  invalidationReason         String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  issue                Issue                     @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requestedBy          User                      @relation("ApprovalRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approver             User?                     @relation("ApprovalApprover", fields: [approverUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approverTeam         Team?                     @relation(fields: [approverTeamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  expectedApprover     User?                     @relation("ApprovalExpectedApprover", fields: [expectedApproverUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  delegatedFrom        User?                     @relation("ApprovalDelegatedFrom", fields: [delegatedFromUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supervisorAssignment UserSupervisorAssignment? @relation(fields: [supervisorAssignmentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalDelegation   ApprovalDelegation?       @relation(fields: [approvalDelegationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supersedes           ApprovalRecord?           @relation("ApprovalSupersession", fields: [supersedesApprovalRecordId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supersededBy         ApprovalRecord?           @relation("ApprovalSupersession")
+  riskChecks           StageRiskCheck[]
+
+  @@index([issueId, approvalType, recordStatus])
+  @@index([decision])
+  @@index([approverUserId])
+  @@index([dueAt])
+}
+
+// 階段影響檢核（M1.5-A 新增）。answer 為 nullable：
+// null=尚未填答（純技術未完成，非可選答案）／YES／NO／UNKNOWN，不得使用 default 冒充已填答。
+// 每次主管退回重新送核時 assessmentRound 遞增，不覆寫前次結果。
+model StageRiskCheck {
+  id                      String    @id @default(cuid())
+  issueId                 String
+  approvalRecordId        String?
+  stageKey                String // 對應送核關卡，如 pendingRdLeadApproval
+  assessmentRound         Int
+  checkKey                String // 固定模板 key，見 src/lib/riskCheckTemplates.ts
+  answer                  String? // null / YES / NO / UNKNOWN
+  detail                  String    @default("")
+  answeredByUserId        String?
+  answeredAt              DateTime?
+  verificationOwnerUserId String?
+  verificationDueAt       DateTime?
+  resolvedByUserId        String?
+  resolutionComment       String?
+  resolvedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  issue             Issue           @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalRecord    ApprovalRecord? @relation(fields: [approvalRecordId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  answeredBy        User?           @relation("RiskCheckAnsweredBy", fields: [answeredByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  verificationOwner User?           @relation("RiskCheckVerificationOwner", fields: [verificationOwnerUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy        User?           @relation("RiskCheckResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([issueId, stageKey, assessmentRound, checkKey])
+  @@index([issueId])
+  @@index([answer])
+}
+
+// ============================================================================
+// M2-A 新增：版本化 Workflow 定義基礎（WorkflowDefinition／WorkflowVersion／
+// WorkflowStage／WorkflowTransition／WorkflowStageRequirement／
+// IssueWorkflowStageHistory）。本輪僅新增獨立資料表＋Issue/Team 關聯欄位，純新增，
+// onDelete: Restrict／onUpdate: Restrict 貫穿，不使用 Cascade、不使用 SetNull。
+//
+// WorkflowDefinition 是流程身份；WorkflowVersion 是不可變版本快照（DRAFT 可編輯，
+// PUBLISHED／ARCHIVED 之後 Stage／Transition／Requirement 不可修改，由服務層
+// assertDraftVersion 守門，非本 schema 職責）。M2-A 只建立定義與版本基礎，
+// 不實作完整工單執行引擎（見 M2-B）。
+// ============================================================================
+
+model WorkflowDefinition {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  name            String
+  description     String   @default("")
+  issueType       String
+  isActive        Boolean  @default(true)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  versions WorkflowVersion[]
+
+  @@index([issueType])
+}
+
+model WorkflowVersion {
+  id                   String    @id @default(cuid())
+  workflowDefinitionId String
+  versionNo            Int
+  status               String    @default("DRAFT") // DRAFT / PUBLISHED / ARCHIVED
+  clonedFromVersionId  String?
+  publishedAt          DateTime?
+  publishedByUserId    String?
+  archivedAt           DateTime?
+  archivedByUserId     String?
+  createdByUserId      String
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  workflowDefinition WorkflowDefinition   @relation(fields: [workflowDefinitionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  stages             WorkflowStage[]
+  transitions        WorkflowTransition[]
+  issues             Issue[]              @relation("IssueWorkflowVersion")
+
+  @@unique([workflowDefinitionId, versionNo])
+  @@index([status])
+}
+
+model WorkflowStage {
+  id                     String   @id @default(cuid())
+  workflowVersionId      String
+  stageKey               String
+  label                  String
+  stageType              String // SUBMISSION/TRIAGE/CLAIM/WORK/REVIEW/APPROVAL/DEPLOYMENT/CONFIRMATION/CLOSURE
+  sortOrder              Int
+  isStart                Boolean  @default(false)
+  isEnd                  Boolean  @default(false)
+  terminalOutcome        String? // COMPLETED / CANCELLED；isEnd=false 時必須為 null，isEnd=true 時必填
+  assignedTeamId         String? // 範本預設負責 Team
+  requiredExecutionRole  String?
+  requiredMembershipRole String?
+  approvalType           String?
+  requireReason          Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  workflowVersion     WorkflowVersion             @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTeam        Team?                       @relation(fields: [assignedTeamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requirements        WorkflowStageRequirement[]
+  outgoingTransitions WorkflowTransition[]        @relation("FromStage")
+  incomingTransitions WorkflowTransition[]        @relation("ToStage")
+  issuesCurrentlyHere Issue[]                     @relation("IssueCurrentStage")
+  // ---- M2-B 新增：IssueWorkflowStageHistory 對 WorkflowStage 有兩條 FK（fromStageId／toStageId），
+  // Prisma 要求以具名 relation 區分兩個反向關聯 ----
+  stageHistoryAsTo   IssueWorkflowStageHistory[] @relation("ToStageHistory")
+  stageHistoryAsFrom  IssueWorkflowStageHistory[] @relation("FromStageHistory")
+
+  @@unique([workflowVersionId, stageKey])
+}
+
+model WorkflowTransition {
+  id                String   @id @default(cuid())
+  workflowVersionId String
+  fromStageId       String
+  toStageId         String
+  transitionType    String // FORWARD / RETURN / CANCEL
+  actionKey         String
+  label             String
+  requireReason     Boolean  @default(false) // RETURN/CANCEL 無論此值為何，執行服務層一律強制要求 reason
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workflowVersion WorkflowVersion @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromStage       WorkflowStage   @relation("FromStage", fields: [fromStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toStage         WorkflowStage   @relation("ToStage", fields: [toStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // ---- M2-B 新增：執行歷程須記錄實際執行的 Transition ----
+  issueStageHistory IssueWorkflowStageHistory[]
+
+  @@unique([fromStageId, actionKey])
+  @@index([toStageId])
+}
+
+model WorkflowStageRequirement {
+  id              String   @id @default(cuid())
+  workflowStageId String
+  requirementType String // REQUIRE_FIELD / REQUIRE_EVIDENCE / REQUIRE_COMMENT（白名單）
+  targetKey       String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workflowStage WorkflowStage @relation(fields: [workflowStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+}
+
+// M2-B 新增欄位（原 M2-A 版本僅有 issueId／workflowStageId／transitionType／actorUserId／
+// reason／enteredAt／exitedAt，不足以在單一列內完整重建一次轉移事件的稽核事實，必須查詢
+// 「前一列」才能推出 fromStageId，脆弱且違反「不得只更新 currentWorkflowStageId 而不留
+// 歷史」的完整性要求）：
+//   - fromStageId／transitionId：完整記錄本次轉移的來源關卡與實際執行的 Transition，
+//     取代原本需靠「上一列 workflowStageId」反推的脆弱作法；ENTERED（流程啟動）無來源
+//     關卡與可執行的 Transition，兩者皆為 null，其餘 transitionType 皆非 null。
+//   - assignedTeamIdBefore／assignedTeamIdAfter：完整記錄本次轉移前後 Issue.assignedTeamId
+//     快照（尤其 TRIAGE 指派），不得只看目前 Issue 資料反推歷史某一刻的指派。
+//   - terminalOutcome：toStage.isEnd=true 時快照該結束關卡的 terminalOutcome，供稽核與
+//     M2-C 報表不需再 join WorkflowStage 判斥 COMPLETED／CANCELLED。
+//   - executedAt：取代 enteredAt 命名（語意相同：本次事件執行／進入 toStage 的時間），
+//     與 exitedAt（僅在下一次事件發生、本列被查出為目前開放列時回填）搭配使用。
+// 原 workflowStageId 欄位更名為 toStageId（語意更精確：本列描述「進入哪個關卡」）；
+// 本表自 M2-A 建立以來一直是 0 筆（M2-A 尚未實作執行引擎），無既有資料需要遷移，
+// 重新命名／新增欄位不影響任何既有正式資料。
+model IssueWorkflowStageHistory {
+  id                    String    @id @default(cuid())
+  issueId               String
+  fromStageId           String? // null 僅用於 ENTERED（流程啟動，無來源關卡）
+  toStageId             String // 本次事件進入的關卡
+  transitionId          String? // 實際執行的 WorkflowTransition；ENTERED／REASSIGNED 瞬時事件為 null
+  transitionType        String // ENTERED / FORWARDED / RETURNED / CANCELLED / REASSIGNED
+  actorUserId           String
+  reasonCode            String?
+  assignedTeamIdBefore  String?
+  assignedTeamIdAfter   String?
+  terminalOutcome       String? // COMPLETED / CANCELLED；僅 toStage.isEnd=true 時填入
+  executedAt            DateTime  @default(now())
+  exitedAt              DateTime?
+
+  issue              Issue               @relation(fields: [issueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toStage            WorkflowStage       @relation("ToStageHistory", fields: [toStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromStage          WorkflowStage?      @relation("FromStageHistory", fields: [fromStageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  transition         WorkflowTransition? @relation(fields: [transitionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTeamBefore Team?                @relation("AssignedTeamBeforeHistory", fields: [assignedTeamIdBefore], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  assignedTeamAfter  Team?                @relation("AssignedTeamAfterHistory", fields: [assignedTeamIdAfter], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([issueId])
+  @@index([toStageId])
+  @@index([fromStageId])
+  @@index([transitionId])
 }

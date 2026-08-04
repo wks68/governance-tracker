@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AI_SUGGESTION_LABELS, AiSuggestionType } from "@/lib/mockAi";
 import { runAiAction } from "@/lib/actions";
+import { formatDateTime } from "@/lib/datetime";
 
 interface AiSuggestionItem {
   id: string;
@@ -67,7 +68,7 @@ export default function AiAssistantPanel({ issueId, suggestions }: { issueId: st
               <div key={s.id} className="rounded-md border border-indigo-100 bg-indigo-50/40 p-3 text-sm">
                 <div className="flex items-center justify-between text-xs text-indigo-600">
                   <span className="font-medium">{AI_SUGGESTION_LABELS[s.suggestionType as AiSuggestionType] ?? s.suggestionType}</span>
-                  <span>{new Date(s.createdAt).toLocaleString("zh-TW")}</span>
+                  <span>{formatDateTime(s.createdAt)}</span>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap text-gray-800">{s.output}</p>
               </div>

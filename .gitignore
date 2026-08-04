@@ -4,3 +4,7 @@ node_modules/
 *.db
 *.db-journal
 *.tsbuildinfo
+
+# Hotfix 附件（選填）實際檔案位元組：一律不進版控，只有 Evidence row（url/type/title/
+# description metadata）進 DB；本地端每個 worktree 各自獨立一份，不共用、不同步。
+/storage/hotfix-attachments/

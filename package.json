@@ -10,14 +10,28 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "governance:test": "./start-governance-test.sh",
+    "governance:preview": "rm -f prisma/governance-preview.db && touch prisma/governance-preview.db && DATABASE_URL=\"file:./governance-preview.db\" npx prisma migrate deploy && DATABASE_URL=\"file:./governance-preview.db\" tsx scripts/governance_dashboard_preview.ts",
+    "dev:governance-preview": "DATABASE_URL=\"file:./governance-preview.db\" next dev",
+    "hotfix-ui:preview": "rm -f prisma/hotfix-ui-preview.db && touch prisma/hotfix-ui-preview.db && DATABASE_URL=\"file:./hotfix-ui-preview.db\" npx prisma migrate deploy && DATABASE_URL=\"file:./hotfix-ui-preview.db\" tsx scripts/hotfix_ui_preview.ts",
+    "dev:hotfix-ui-preview": "NEXT_SERVER_ACTIONS_PREVIEW_PORT=\"3100\" DATABASE_URL=\"file:./hotfix-ui-preview.db\" next dev"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
+    "@tiptap/extension-color": "^2.27.1",
+    "@tiptap/extension-font-family": "^2.27.1",
+    "@tiptap/extension-image": "^2.27.1",
+    "@tiptap/extension-placeholder": "^2.27.1",
+    "@tiptap/extension-text-style": "^2.27.1",
+    "@tiptap/extension-underline": "^2.27.1",
+    "@tiptap/react": "^2.27.1",
+    "@tiptap/starter-kit": "^2.27.1",
     "clsx": "^2.1.1",
+    "lucide-react": "^1.28.0",
     "next": "14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
