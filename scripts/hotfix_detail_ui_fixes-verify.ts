@@ -20,15 +20,32 @@ function mojibakeOf(text: string): string {
   return Array.from(bytes, (b) => String.fromCharCode(b)).join("");
 }
 
-console.log("\n=== 雙箭頭 ScrollDownChevron 移除 ===");
+console.log("\n=== 雙箭頭 ScrollDownChevron（本輪恢復為動態波浪雙箭頭） ===");
 const shell = source("src/components/hotfix-nine-stage/HotfixStageShell.tsx");
 const selector = source("src/components/issue-relations/GovernanceRelationSelector.tsx");
 const appShell = source("src/components/app-shell/AppShell.tsx");
-test("Hotfix 詳情頁不再 import 或 render ScrollDownChevron", () => {
-  assert.ok(!shell.includes("ScrollDownChevron"));
+const scrollChevron = source("src/components/ui/ScrollDownChevron.tsx");
+test("Hotfix 詳情頁 Shell 恢復 import 並 render ScrollDownChevron", () => {
+  assert.ok(shell.includes("import ScrollDownChevron") && shell.includes("<ScrollDownChevron />"));
 });
-test("ScrollDownChevron 元件檔案已刪除，不以其他浮動箭頭替代", () => {
-  assert.ok(!fs.existsSync(path.join(ROOT, "src/components/ui/ScrollDownChevron.tsx")));
+test("ScrollDownChevron 為固定定位浮動元件，不佔用正常版面高度、無外部動畫套件", () => {
+  assert.ok(fs.existsSync(path.join(ROOT, "src/components/ui/ScrollDownChevron.tsx")));
+  assert.ok(scrollChevron.includes("fixed bottom-0"));
+  assert.ok(!/gsap|framer-motion|react-spring/.test(scrollChevron));
+});
+test("ScrollDownChevron aria-label 與可見 focus 狀態、reduced-motion 靜態雙箭頭齊備", () => {
+  assert.ok(scrollChevron.includes('aria-label="向下捲動查看更多內容"'));
+  assert.ok(scrollChevron.includes("focus-visible:ring-2"));
+  assert.ok(scrollChevron.includes("motion-reduce:animate-none"));
+});
+test("ScrollDownChevron 依據 #main-content 實際版位置中，避開左側 Sidebar；z-index 低於 Modal／Dialog（z-50）", () => {
+  assert.ok(scrollChevron.includes('getElementById("main-content")'));
+  assert.ok(scrollChevron.includes("z-30"));
+});
+test("ScrollDownChevron 的 scroll／resize listener 皆於卸載時清除，scroll 使用 passive", () => {
+  assert.ok(/addEventListener\("scroll", updateVisibility, \{ passive: true \}\)/.test(scrollChevron));
+  assert.ok(scrollChevron.includes("removeEventListener(\"scroll\"") && scrollChevron.includes("removeEventListener(\"resize\""));
+  assert.ok(scrollChevron.includes("resizeObserver.disconnect()"));
 });
 test("合法的 Select／Accordion Chevron 未被誤刪", () => {
   assert.ok(selector.includes("ChevronDown"));

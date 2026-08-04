@@ -1,6 +1,6 @@
 // @ts-nocheck -- Playwright is supplied in /tmp by the verification environment.
 //
-// Hotfix 詳情頁 UI 修正的瀏覽器級驗證：雙箭頭移除、中文附件檔名、附件精簡列表、
+// Hotfix 詳情頁 UI 修正的瀏覽器級驗證：雙箭頭浮動引導（本輪恢復為動態波浪雙箭頭）、中文附件檔名、附件精簡列表、
 // 空的送簽內容卡、責任卡與治理關聯版面、建立歷程聚合、圖片載入失敗 fallback、
 // Desktop／Mobile 無水平 overflow。
 //
@@ -162,12 +162,12 @@ async function main() {
     const bodyText = await desktopPage.locator("body").innerText();
 
     console.log("\n=== Desktop 1440 ===");
-    check("無錯誤的雙箭頭浮動按鈕", await desktopPage.locator('button[aria-label="向下查看更多內容"]').count() === 0);
+    check("已恢復動態雙箭頭浮動按鈕（aria-label 為「向下捲動查看更多內容」）", await desktopPage.locator('button[aria-label="向下捲動查看更多內容"]').count() === 1);
     check("中文附件檔名正確顯示（非 mojibake）", bodyText.includes("測試截圖.png") && bodyText.includes("報告附件圖片.png"));
     check("附件縮圖為精簡小尺寸（非全寬大圖）", await desktopPage.locator(".h-14.w-14").count() >= 1);
     check("附件區不再出現 aspect-video 大圖容器", await desktopPage.locator(".aspect-video").count() === 0);
     check("沒有無資料的送簽內容卡（已改為送簽摘要）", !bodyText.includes("送簽內容") && bodyText.includes("送簽摘要"));
-    check("送簽摘要顯示影響範圍／風險與緊急性／預計完成日／送簽佐證等既有資料", ["影響範圍", "風險與緊急性", "預計完成日", "送簽佐證"].every((label) => bodyText.includes(label)));
+    check("送簽摘要左右對應申請事由／問題摘要與影響摘要，且不再顯示風險分析框", ["申請事由／問題摘要", "影響摘要", "預計完成日", "送簽佐證"].every((label) => bodyText.includes(label)) && !bodyText.includes("風險與緊急性"));
     const responsibilityCard = desktopPage.locator('section[aria-label="目前 Hotfix 流程"]');
     await responsibilityCard.waitFor();
     const responsibilityText = await responsibilityCard.innerText();
@@ -236,7 +236,7 @@ async function main() {
     await mobilePage.waitForURL(/\/hotfix\/approval\/requester/);
     const mobileBodyText = await mobilePage.locator("body").innerText();
     check("Mobile 中文檔名可正常閱讀", mobileBodyText.includes("測試截圖.png"));
-    check("Mobile 無錯誤雙箭頭浮動按鈕", await mobilePage.locator('button[aria-label="向下查看更多內容"]').count() === 0);
+    check("Mobile 雙箭頭浮動按鈕存在且可觸控點擊", await mobilePage.locator('button[aria-label="向下捲動查看更多內容"]').count() === 1);
     const mobileTimeline = mobilePage.getByRole("region", { name: "簽核紀錄歷程" });
     await mobileTimeline.waitFor();
     await mobileTimeline.getByRole("button", { name: "技術明細" }).first().click();

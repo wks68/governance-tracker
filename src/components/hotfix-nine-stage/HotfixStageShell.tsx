@@ -19,6 +19,7 @@ import { buildApprovalReviewViewData } from "@/lib/hotfix-ui/pageContext";
 import { canActorEditHotfixDraft } from "@/lib/hotfix-ui/draftService";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
 import { formatDateTime } from "@/lib/datetime";
+import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
 
 export default async function HotfixStageShell({
   subtitle,
@@ -150,6 +151,7 @@ export default async function HotfixStageShell({
         attachments={attachments}
         after={cumulativeContext}
       />
+      <ScrollDownChevron />
     </div>
   );
 }

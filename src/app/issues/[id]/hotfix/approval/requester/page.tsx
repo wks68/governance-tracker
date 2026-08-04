@@ -4,15 +4,16 @@ import { loadHotfixPageContext, buildApprovalReviewViewData, HotfixPageNotApplic
 import { listHotfixAttachments } from "@/lib/hotfix-ui/attachmentService";
 import { loadGovernanceRelationViewForActor } from "@/lib/issue-relations/viewService";
 import { hasMeaningfulRichTextContent, getRichTextPlainText } from "@/lib/rich-text/value";
-import { hotfixPriorityDefOf } from "@/lib/hotfix-ui/priority";
 import { formatDate } from "@/lib/datetime";
 import HotfixStageShell from "@/components/hotfix-nine-stage/HotfixStageShell";
 import AttachmentSection from "@/components/hotfix-nine-stage/AttachmentSection";
 import ApprovalReviewPanel from "@/components/hotfix-nine-stage/ApprovalReviewPanel";
 import ExpandableContentBlock from "@/components/ui/ExpandableContentBlock";
 
-// 「送簽摘要」只整理既有 Hotfix 資料（問題描述／影響範圍／風險與緊急性／預計完成日／送簽
-// 佐證數量），不新增任何輸入欄位，也不重複顯示基本資訊卡已有的申請人／團隊／單號。
+// 「送簽摘要」只整理既有 Hotfix 資料（問題描述／影響範圍／預計完成日／送簽佐證數量），
+// 不新增任何輸入欄位，也不重複顯示基本資訊卡已有的申請人／團隊／單號。左右兩欄呈現同一組
+// 申請內容的兩個面向（原始描述／對應的影響摘要），不放與申請內容無直接對應的風險分析框
+// ——風險等級／緊急程度已於「Hotfix 單基本資訊」卡完整呈現，這裡不重複顯示。
 function SubmissionSummary({ ctx, attachmentCount, incidentCount, rcaCount, projectCount }: {
   ctx: HotfixPageContext;
   attachmentCount: number;
@@ -21,9 +22,9 @@ function SubmissionSummary({ ctx, attachmentCount, incidentCount, rcaCount, proj
   projectCount: number;
 }) {
   const info = ctx.ticketBasicInfo;
-  const priorityDef = hotfixPriorityDefOf(info.hotfixPriority);
   const hasDescription = hasMeaningfulRichTextContent(info.description);
-  const hasAnyContent = hasDescription || !!info.systemName || !!info.environment || !!info.riskLevel || !!priorityDef || !!info.dueDate;
+  const hasImpactSummary = !!info.systemName || !!info.environment;
+  const hasAnyContent = hasDescription || hasImpactSummary || !!info.dueDate;
 
   if (!hasAnyContent) {
     return (
@@ -38,35 +39,31 @@ function SubmissionSummary({ ctx, attachmentCount, incidentCount, rcaCount, proj
     <section className="ui-card p-5 sm:p-6">
       <h2 className="text-base font-semibold text-text-primary">送簽摘要</h2>
       <dl className="mt-4 space-y-4 text-sm">
-        <div>
-          <dt className="text-xs font-medium text-text-muted">申請事由／問題摘要</dt>
-          <dd className="mt-1">
-            {hasDescription ? (
-              <ExpandableContentBlock text={getRichTextPlainText(info.description)} characterThreshold={220} />
-            ) : (
-              <span className="text-text-muted">尚未提供</span>
-            )}
-          </dd>
-        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <dt className="text-xs font-medium text-text-muted">影響範圍</dt>
-            <dd className="mt-1 text-text-primary">
-              系統：{info.systemName || "未提供"}／環境：{info.environment || "未提供"}
+            <dt className="text-xs font-medium text-text-muted">申請事由／問題摘要</dt>
+            <dd className="mt-1">
+              {hasDescription ? (
+                <ExpandableContentBlock text={getRichTextPlainText(info.description)} characterThreshold={220} />
+              ) : (
+                <span className="text-text-muted">尚未填寫</span>
+              )}
             </dd>
           </div>
           <div>
-            <dt className="text-xs font-medium text-text-muted">風險與緊急性</dt>
+            <dt className="text-xs font-medium text-text-muted">影響摘要</dt>
             <dd className="mt-1 text-text-primary">
-              風險等級：{info.riskLevel || "未提供"}
-              {priorityDef && `／緊急程度：${priorityDef.label}`}
+              {hasImpactSummary ? (
+                <>系統：{info.systemName || "尚未填寫"}／環境：{info.environment || "尚未填寫"}</>
+              ) : (
+                <span className="text-text-muted">尚未填寫</span>
+              )}
             </dd>
-            {priorityDef && <dd className="mt-1 text-xs leading-5 text-text-secondary">{priorityDef.description}</dd>}
           </div>
         </div>
         <div>
           <dt className="text-xs font-medium text-text-muted">預計完成日</dt>
-          <dd className="mt-1 text-text-primary">{info.dueDate ? formatDate(info.dueDate) : "未設定"}</dd>
+          <dd className="mt-1 text-text-primary">{info.dueDate ? formatDate(info.dueDate) : "尚未填寫"}</dd>
         </div>
         <div>
           <dt className="text-xs font-medium text-text-muted">送簽佐證</dt>

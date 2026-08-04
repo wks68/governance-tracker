@@ -104,8 +104,8 @@ async function main() {
   );
 
   check(
-    "[5] ApprovalReviewPanel 顯示簽核關卡、應核准人姓名與角色、送簽人、送簽時間，isResponsible 判斷邏輯未被更動",
-    approvalPanel.includes("簽核關卡") && approvalPanel.includes("應核准人") && approvalPanel.includes("送簽人") && approvalPanel.includes("送簽時間") &&
+    "[5] ApprovalReviewPanel 顯示簽核關卡、核准人姓名與角色、送簽人、送簽時間，isResponsible 判斷邏輯未被更動",
+    approvalPanel.includes("簽核關卡") && approvalPanel.includes("核准人") && approvalPanel.includes("送簽人") && approvalPanel.includes("送簽時間") &&
       approvalPanel.includes("{expectedApproverLabel ?? roleLabel}") &&
       approvalPanel.includes("!isResponsible ?") && approvalPanel.includes("僅{roleLabel}可執行簽核"),
   );
@@ -177,7 +177,7 @@ async function main() {
   const ctxAaron = await loadHotfixPageContext(created.id, aaron, ["pendingBusinessApproval"]);
   const reviewAaron = await buildApprovalReviewViewData(ctxAaron);
   check("[12] buildApprovalReviewViewData 解析出實際核准人真實姓名（非角色字樣）", reviewAaron?.expectedApproverLabel === "Aaron", reviewAaron?.expectedApproverLabel ?? "");
-  check("[13] 應核准人（Aaron）isResponsible 為 true，可執行簽核", reviewAaron?.isResponsible === true);
+  check("[13] 核准人（Aaron）isResponsible 為 true，可執行簽核", reviewAaron?.isResponsible === true);
 
   const ctxSelena = await loadHotfixPageContext(created.id, selena, ["pendingBusinessApproval"]);
   const reviewSelena = await buildApprovalReviewViewData(ctxSelena);

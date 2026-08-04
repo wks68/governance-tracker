@@ -135,6 +135,19 @@ const HISTORY_ACTION_VERBS: Record<string, string> = {
   REPORTER_CLAIM_FOR_CLOSURE: "申請人認領結案確認",
   REPORTER_CONFIRMED_CLOSE: "申請人確認結案",
 };
+// transitionService.ts 對每一次關卡轉換（FORWARD／RETURN／CANCEL／終態完成）都會另外寫入
+// 一筆技術性 AuditLog，其 summary 直接內嵌原始 WorkflowTransition／WorkflowStage.label
+// （環境相依，舊資料可能出現「業務核准」等非正式字樣，屬本輪禁改的 transitionService.ts
+// 既有行為，不得修改其寫入邏輯）。同一次轉換必定也已寫入 IssueWorkflowStageHistory，並在
+// 下方 history 迴圈以正式語意（動作動詞／案件狀態／流程關卡／下一位責任人）完整呈現，
+// 這裡略過這 4 種技術副本 actionType，避免同一動作重複顯示兩筆、也避免原始標籤字串外洩。
+const TRANSITION_MIRROR_ACTION_TYPES = new Set([
+  "IssueWorkflowAdvanced",
+  "IssueWorkflowReturned",
+  "IssueWorkflowCancelled",
+  "IssueWorkflowStageCompleted",
+]);
+
 function historyActionVerb(row: { reasonCode: string | null; transitionType: string }): string {
   const code = row.reasonCode || row.transitionType;
   if (HISTORY_ACTION_VERBS[code]) return HISTORY_ACTION_VERBS[code];
@@ -415,6 +428,7 @@ export default async function CumulativeWorkflowContext({ ctx, legacyIssueId }: 
   }
 
   for (const event of auditEvents) {
+    if (TRANSITION_MIRROR_ACTION_TYPES.has(event.actionType)) continue;
     const stageEntry = [...history].reverse().find((row) => row.executedAt <= event.createdAt);
     const stageLabel = hotfixStageLabel(stageEntry?.toStage.stageKey ?? issue.currentWorkflowStage?.stageKey, "Hotfix建立工單");
     const teamName = stageEntry?.assignedTeamAfter?.name ?? issue.assignedTeam?.name ?? "尚未指派";

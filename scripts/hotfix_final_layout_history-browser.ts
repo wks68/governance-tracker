@@ -122,10 +122,10 @@ async function main() {
     check("CurrentHotfixFlowCard 顯示實際核准人姓名「Aaron」", currentFlowText.includes("Aaron"));
     check("CurrentHotfixFlowCard 同時顯示角色「申請人直屬主管」", currentFlowText.includes("申請人直屬主管"));
 
-    // 4) 應核准人（Aaron）可操作。
+    // 4) 核准人（Aaron）可操作。
     const approvalText = await aaronPage.locator("#approval-section").innerText();
     check("主管簽核顯示簽核關卡「申請人直屬主管簽核」", approvalText.includes("申請人直屬主管簽核"));
-    check("主管簽核顯示應核准人「Aaron」", approvalText.includes("Aaron"));
+    check("主管簽核顯示核准人「Aaron」", approvalText.includes("Aaron"));
     check("主管簽核顯示送簽人「Selena」", approvalText.includes("Selena"));
     check("Aaron（應核准人）看得到「同意」／「駁回」按鈕", await aaronPage.locator("#approval-section").getByRole("button", { name: "同意" }).count() === 1 && await aaronPage.locator("#approval-section").getByRole("button", { name: "駁回" }).count() === 1);
 

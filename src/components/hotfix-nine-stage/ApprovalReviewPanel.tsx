@@ -121,7 +121,7 @@ export default function ApprovalReviewPanel({ issueId, approvalRecordId, stageLa
           <dd className="mt-1 font-medium text-text-primary">{stageLabel}</dd>
         </div>
         <div>
-          <dt className="text-xs font-medium text-text-muted">應核准人</dt>
+          <dt className="text-xs font-medium text-text-muted">核准人</dt>
           <dd className="mt-1 font-medium text-text-primary">{expectedApproverLabel ?? roleLabel}</dd>
           <dd className="mt-0.5 text-xs text-text-secondary">{roleLabel}</dd>
         </div>

@@ -312,12 +312,12 @@ function runStaticSourceChecks() {
       ].every((className) => globalsSrc.includes(className)),
   );
   check(
-    "[11h] 長內容具 ARIA、條件式顯示及 reduced-motion；Hotfix 詳情頁不再有錯誤的雙箭頭 Scroll Chevron",
+    "[11h] 長內容具 ARIA、條件式顯示及 reduced-motion；Hotfix 詳情頁恢復動態雙箭頭 Scroll Chevron 浮動引導",
     expandableSrc.includes("aria-expanded={expanded}") && expandableSrc.includes("aria-controls={contentId}") &&
       expandableSrc.includes("閱讀更多") && expandableSrc.includes("顯示更少") &&
-      !shellSrc.includes("ScrollDownChevron") &&
-      !fs.existsSync(path.join(REPO_ROOT, "src/components/ui/ScrollDownChevron.tsx")) &&
-      [".animate-tooltip-in", ".animate-expand-hint-once"].every((className) => globalsSrc.includes(className)),
+      shellSrc.includes("<ScrollDownChevron />") &&
+      fs.existsSync(path.join(REPO_ROOT, "src/components/ui/ScrollDownChevron.tsx")) &&
+      [".animate-tooltip-in", ".animate-expand-hint-once", ".animate-scroll-chevron"].every((className) => globalsSrc.includes(className)),
   );
 }
 

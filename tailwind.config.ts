@@ -185,8 +185,9 @@ const config: Config = {
           "50%": { opacity: "0.55" },
         },
         "scroll-chevron": {
-          "0%, 100%": { transform: "translateY(0)", opacity: "0.75" },
-          "50%": { transform: "translateY(0.25rem)", opacity: "1" },
+          "0%": { transform: "translateY(-4px)", opacity: "0" },
+          "50%": { opacity: "1" },
+          "100%": { transform: "translateY(8px)", opacity: "0" },
         },
       },
       animation: {
@@ -207,7 +208,7 @@ const config: Config = {
         "item-enter": "item-enter 180ms ease-out both",
         "tooltip-in": "tooltip-in 180ms ease-out both",
         "expand-hint-once": "expand-hint-once 900ms ease-in-out 250ms 1 both",
-        "scroll-chevron": "scroll-chevron 1.5s ease-in-out infinite",
+        "scroll-chevron": "scroll-chevron 1.7s ease-in-out infinite",
       },
       borderRadius: {
         card: "0.75rem",
