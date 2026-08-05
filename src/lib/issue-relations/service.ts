@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Prisma, type Issue, type PrismaClient } from "@prisma/client";
 import {
   isIssueRelationType,
@@ -412,7 +411,7 @@ export async function createIssueRelationInTx(
       }
     }
 
-    const relationId = randomUUID();
+    const relationId = crypto.randomUUID();
     const createdAt = new Date();
     await tx.$executeRaw(Prisma.sql`
       INSERT INTO "IssueRelation" (
