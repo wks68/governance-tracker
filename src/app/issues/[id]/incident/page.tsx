@@ -12,6 +12,7 @@ import GovernanceRelationsCard from "@/components/issue-relations/GovernanceRela
 import IncidentActionPanel from "@/components/incident-nine-stage/IncidentActionPanel";
 import IncidentWorkflowHistory from "@/components/incident-nine-stage/IncidentWorkflowHistory";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
+import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
 import { formatDateTime } from "@/lib/datetime";
 
 export default async function IncidentDetailPage({ params }: { params: { id: string } }) {
@@ -135,6 +136,7 @@ export default async function IncidentDetailPage({ params }: { params: { id: str
         governance={<GovernanceRelationsCard view={relationView} />}
         after={<IncidentWorkflowHistory issueId={ctx.issue.id} />}
       />
+      <ScrollDownChevron />
     </div>
   );
 }

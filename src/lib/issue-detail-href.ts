@@ -1,5 +1,6 @@
 import { hotfixRoute, routeForStageKey } from "./hotfix-ui/nineStage";
 import { incidentRoute, isKnownIncidentStageKey } from "./incident-ui/incidentStage";
+import { rcaRoute, isKnownRcaStageKey } from "./rca-ui/rcaStage";
 
 export interface IssueDetailHrefSource {
   id: string;
@@ -26,6 +27,13 @@ export function resolveIssueDetailHref(issue: IssueDetailHrefSource): string {
   if (issue.issueType === "Incident") {
     if (issue.currentStageKey && isKnownIncidentStageKey(issue.currentStageKey)) {
       return incidentRoute(issue.id);
+    }
+    return genericIssueDetailHref(issue.id);
+  }
+
+  if (issue.issueType === "RCA") {
+    if (issue.currentStageKey && isKnownRcaStageKey(issue.currentStageKey)) {
+      return rcaRoute(issue.id);
     }
     return genericIssueDetailHref(issue.id);
   }
