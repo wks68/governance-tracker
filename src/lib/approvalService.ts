@@ -25,6 +25,7 @@ import {
   isTeamMembershipRole,
   type ApprovalType,
   type TeamMembershipRole,
+  type TeamDomain,
 } from "./constants";
 import {
   assertNotSelfApproval,
@@ -56,7 +57,37 @@ const TEAM_TARGET_APPROVAL_TYPES: ReadonlySet<ApprovalType> = new Set([
   "QA_LEAD_APPROVAL",
   "DEPLOYMENT_APPROVAL",
   "INCIDENT_CLOSURE_CONFIRMATION",
+  "INCIDENT_RCA_DECISION_CONFIRMATION",
+  "RCA_TECHNICAL_REVIEW",
+  "RCA_SECURITY_INTEGRITY_REVIEW",
+  "RCA_VP_CONFIRMATION",
+  "RCA_DIRECTOR_APPROVAL",
+  "RCA_SECURITY_VERIFICATION_CONFIRMATION",
+  "RCA_CLOSURE_CONFIRMATION",
 ]);
+
+// Incident／RCA 第二階段新增：核准責任團隊解析方式，不得假設 approverTeam 一定等於
+// Issue.assignedTeamId——某些關卡的責任團隊固定是「某個 domain 的團隊」（例如資安推動小組、
+// 管理階層確認），與這張 Issue 目前實際承接／處理團隊完全無關。未列在此表的既有
+// approvalType（RD/QA/OP/DEPLOYMENT／INCIDENT_CLOSURE_CONFIRMATION／RCA_TECHNICAL_REVIEW／
+// RCA_CLOSURE_CONFIRMATION）維持原本「approverTeamId＝Issue.assignedTeamId」語意不變。
+// 只在「建立」時查一次決定 approverTeamId 並持久化；決策時的信任邊界
+// （resolveActualAuthorityForDecision）直接信任已持久化的 record.approverTeamId，
+// 不重新查這張表，因此本表變動不影響既有已建立 ApprovalRecord 的授權結果。
+const APPROVAL_TEAM_RESOLUTION_BY_DOMAIN: Partial<Record<ApprovalType, TeamDomain>> = {
+  INCIDENT_RCA_DECISION_CONFIRMATION: "SECURITY",
+  RCA_SECURITY_INTEGRITY_REVIEW: "SECURITY",
+  RCA_SECURITY_VERIFICATION_CONFIRMATION: "SECURITY",
+  RCA_VP_CONFIRMATION: "MANAGEMENT_VP",
+  RCA_DIRECTOR_APPROVAL: "MANAGEMENT_DIRECTOR",
+};
+
+async function resolveApproverTeamIdForCreation(tx: Tx, approvalType: ApprovalType, issueAssignedTeamId: string | null): Promise<string | null> {
+  const fixedDomain = APPROVAL_TEAM_RESOLUTION_BY_DOMAIN[approvalType];
+  if (!fixedDomain) return issueAssignedTeamId;
+  const team = await tx.team.findFirst({ where: { domain: fixedDomain, isActive: true } });
+  return team?.id ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // 錯誤類型：呼叫端可用 instanceof 分辨拒絕原因，不得吞掉錯誤改為靜默略過。
@@ -507,9 +538,13 @@ async function resolveExpectedAuthorityForCreation(
   if (!issue) throw new ApprovalValidationError(["issueId 對應的 Issue 不存在"]);
 
   const isTeamLeadType = TEAM_TARGET_APPROVAL_TYPES.has(approvalType);
-  const teamId = isTeamLeadType ? issue.assignedTeamId : null;
+  const teamId = isTeamLeadType ? await resolveApproverTeamIdForCreation(tx, approvalType, issue.assignedTeamId) : null;
   if (isTeamLeadType && !teamId) {
-    throw new ApprovalValidationError(["Issue 尚未指派處理團隊（assignedTeamId 為 null），無法解析核准資格"]);
+    throw new ApprovalValidationError(
+      APPROVAL_TEAM_RESOLUTION_BY_DOMAIN[approvalType]
+        ? [`找不到對應的核准責任團隊（domain=${APPROVAL_TEAM_RESOLUTION_BY_DOMAIN[approvalType]}），無法解析核准資格`]
+        : ["Issue 尚未指派處理團隊（assignedTeamId 為 null），無法解析核准資格"],
+    );
   }
 
   const eligible = await fetchEligibleApproversInTx(tx, { approvalType, requestedByUserId, teamId, now });

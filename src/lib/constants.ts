@@ -149,9 +149,12 @@ export function isSystemResponsibilityType(value: string): value is SystemRespon
 // 與 SYSTEM_RESPONSIBILITY_TYPES 刻意分開宣告——後者是「System＋Team 配對」的自動路由設定，
 // 語意上不是 Team 本身的固定屬性；Team.domain 才是 Team 本身領域的正式判斷來源，兩者不得混用。
 // Incident 事件通報流程新增：INCIDENT＝事件受理窗口／系統負責人團隊（承接與分級）、
-// SECURITY＝資安推動小組（RCA 啟動判定與後續 RCA 完整性審查共用同一個團隊）。純新增值域，
-// 不影響既有 RD/QA/OP/BUSINESS/OTHER 的既有判斷邏輯。
-export const TEAM_DOMAINS = ["RD", "QA", "OP", "BUSINESS", "OTHER", "INCIDENT", "SECURITY"] as const;
+// SECURITY＝資安推動小組（RCA 啟動判定與後續 RCA 完整性／驗證審查共用同一個團隊）。
+// RCA 第二階段新增：MANAGEMENT_VP／MANAGEMENT_DIRECTOR——條件式管理階層確認（DMS 副部長／
+// 部長）沿用同一套「團隊 LEAD 核准」機制建模，該團隊只有一位 LEAD＝實際擔任該管理職務的人，
+// 不另外新增角色型核准解析路徑，降低對 approvalService 信任邊界核心的變動幅度。
+// 純新增值域，不影響既有 RD/QA/OP/BUSINESS/OTHER 的既有判斷邏輯。
+export const TEAM_DOMAINS = ["RD", "QA", "OP", "BUSINESS", "OTHER", "INCIDENT", "SECURITY", "MANAGEMENT_VP", "MANAGEMENT_DIRECTOR"] as const;
 export type TeamDomain = (typeof TEAM_DOMAINS)[number];
 export function isTeamDomain(value: string): value is TeamDomain {
   return (TEAM_DOMAINS as readonly string[]).includes(value);
@@ -187,15 +190,74 @@ export const APPROVAL_TYPES = [
   "DEPLOYMENT_APPROVAL",
   "RISK_EXCEPTION_APPROVAL",
   // Incident 事件通報流程新增：事件受理窗口／系統負責人確認事件結案。走既有「Team Lead
-  // 核准」模式（approverTeamId＝Issue.assignedTeamId，事件受理團隊全程未再變動），純新增值域。
-  // RCA 啟動判定的資安推動小組確認改走獨立的 capability-gated 動作（非 ApprovalRecord），
-  // 見 src/lib/incident-ui/incidentAssignmentService.ts 說明。
+  // 核准」模式（approverTeamId＝Issue.assignedTeamId，事件受理團隊全程未再變動）。
   "INCIDENT_CLOSURE_CONFIRMATION",
+  // 第二階段新增：資安推動小組正式確認是否需要 RCA——改走正式 ApprovalRecord（approverTeamId
+  // 固定解析為 domain=SECURITY 的團隊，不等於 Issue.assignedTeamId，見
+  // src/lib/approvalService.ts 的 APPROVAL_TEAM_RESOLUTION 對照表），取代第一階段的
+  // capability-gated 暫行實作。
+  "INCIDENT_RCA_DECISION_CONFIRMATION",
+  // RCA 正式 12 階段核准層，皆走既有「Team Lead 核准」引擎，差別只在核准責任團隊的解析方式
+  // （見 APPROVAL_TEAM_RESOLUTION）：
+  //   RCA_TECHNICAL_REVIEW：RCA 負責單位主管技術審查，approverTeamId＝RCA Issue 自己的
+  //     assignedTeamId（沿用既有機制，非新增解析路徑）。
+  //   RCA_SECURITY_INTEGRITY_REVIEW：資安推動小組完整性審查，固定解析 domain=SECURITY。
+  //   RCA_VP_CONFIRMATION：DMS 副部長確認，固定解析 domain=MANAGEMENT_VP，僅高等級或符合
+  //     條件時才會建立此關卡的 ApprovalRecord。
+  //   RCA_DIRECTOR_APPROVAL：DMS 部長核准，固定解析 domain=MANAGEMENT_DIRECTOR。
+  //   RCA_SECURITY_VERIFICATION_CONFIRMATION：資安推動小組驗證與佐證完整性確認，固定解析
+  //     domain=SECURITY（與 RCA_SECURITY_INTEGRITY_REVIEW 為同一團隊、不同關卡各自獨立
+  //     ApprovalRecord）。
+  //   RCA_CLOSURE_CONFIRMATION：權責主管／系統負責人結案確認，approverTeamId＝RCA Issue
+  //     自己的 assignedTeamId。
+  "RCA_TECHNICAL_REVIEW",
+  "RCA_SECURITY_INTEGRITY_REVIEW",
+  "RCA_VP_CONFIRMATION",
+  "RCA_DIRECTOR_APPROVAL",
+  "RCA_SECURITY_VERIFICATION_CONFIRMATION",
+  "RCA_CLOSURE_CONFIRMATION",
 ] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 export function isApprovalType(value: string): value is ApprovalType {
   return (APPROVAL_TYPES as readonly string[]).includes(value);
 }
+
+// RCA 第二階段新增：矯正／預防措施值域（見 prisma/schema.prisma RcaActionItem 註解）。
+export const RCA_ACTION_ITEM_TYPES = ["CORRECTIVE", "PREVENTIVE"] as const;
+export type RcaActionItemType = (typeof RCA_ACTION_ITEM_TYPES)[number];
+export function isRcaActionItemType(value: string): value is RcaActionItemType {
+  return (RCA_ACTION_ITEM_TYPES as readonly string[]).includes(value);
+}
+
+export const RCA_ACTION_ITEM_STATUSES = ["PLANNED", "IN_PROGRESS", "COMPLETED", "EXTENDED", "RISK_EXCEPTION"] as const;
+export type RcaActionItemStatus = (typeof RCA_ACTION_ITEM_STATUSES)[number];
+export function isRcaActionItemStatus(value: string): value is RcaActionItemStatus {
+  return (RCA_ACTION_ITEM_STATUSES as readonly string[]).includes(value);
+}
+
+export const RCA_VERIFICATION_STATUSES = ["PENDING", "PASSED", "FAILED", "NOT_APPLICABLE"] as const;
+export type RcaVerificationStatus = (typeof RCA_VERIFICATION_STATUSES)[number];
+export function isRcaVerificationStatus(value: string): value is RcaVerificationStatus {
+  return (RCA_VERIFICATION_STATUSES as readonly string[]).includes(value);
+}
+
+// RCA 根因分析：原因類型／分析方式固定值域（見任務規格第十四節）。
+export const RCA_CAUSE_TYPES = [
+  "需求／設計不足",
+  "程式缺陷",
+  "測試覆蓋不足",
+  "變更／上線問題",
+  "環境／設定問題",
+  "權限／資料處理問題",
+  "API／介接問題",
+  "監控／維運不足",
+  "流程／文件不足",
+  "人為操作錯誤",
+  "其他",
+] as const;
+export type RcaCauseType = (typeof RCA_CAUSE_TYPES)[number];
+
+export const RCA_ANALYSIS_METHODS = ["Log／監控分析", "會議檢討", "程式碼分析", "設定比對", "測試重現", "其他"] as const;
 
 export const APPROVAL_DECISIONS = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"] as const;
 export type ApprovalDecision = (typeof APPROVAL_DECISIONS)[number];
