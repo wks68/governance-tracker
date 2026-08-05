@@ -81,7 +81,10 @@ const STAGE_SPECS: StageSpec[] = [
   { key: "pendingTechLeadClaim", label: "待技術主管接單與指派", stageType: "CLAIM" },
   { key: "inHandling", label: "初步處置與服務恢復中", stageType: "WORK" },
   { key: "pendingRecoveryConfirmation", label: "待恢復結果確認", stageType: "REVIEW", requiredMembershipRole: "LEAD" },
-  { key: "pendingRcaDecision", label: "RCA 啟動判定中", stageType: "REVIEW" },
+  // 第二階段：改走正式 ApprovalRecord（approverTeamId 固定解析為 domain=SECURITY 團隊，
+  // 見 src/lib/approvalService.ts 的 APPROVAL_TEAM_RESOLUTION_BY_DOMAIN），取代第一階段的
+  // capability-gated 暫行實作，使資安推動小組的確認正式進入 Bell／待辦／核准歷程。
+  { key: "pendingRcaDecision", label: "RCA 啟動判定中", stageType: "APPROVAL", approvalType: "INCIDENT_RCA_DECISION_CONFIRMATION" },
   { key: "pendingClosureConfirmation", label: "待事件結案確認", stageType: "APPROVAL", approvalType: "INCIDENT_CLOSURE_CONFIRMATION" },
   { key: "closed", label: "已結案", stageType: "CLOSURE", isEnd: true, terminalOutcome: "COMPLETED" },
 ];

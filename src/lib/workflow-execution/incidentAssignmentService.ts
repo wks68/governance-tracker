@@ -20,7 +20,9 @@ import { prisma } from "../prisma";
 import { writeAuditLog } from "../audit";
 import { getIssueOrThrow, getStageOrThrow, assertReasonCodeProvided, throwIfInvalid } from "./validation";
 import { requireActorEligibleForStage, requireExecutionCapability } from "./access";
-import { executeIssueTransitionInTx, returnIssueToStageInTx } from "./transitionService";
+import { executeIssueTransitionInTx, executeIssueTransition, returnIssueToStageInTx } from "./transitionService";
+import { decideApprovalRecord } from "../approvalService";
+import { createRcaFromIncidentInTx } from "../rca-ui/rcaCreation";
 import { WorkflowExecutionStateError, WorkflowExecutionAccessDeniedError } from "./types";
 
 type Tx = Prisma.TransactionClient;
@@ -365,14 +367,13 @@ export async function confirmIncidentRecovery(input: ConfirmIncidentRecoveryInpu
 // ---------------------------------------------------------------------------
 // 8. RCA 啟動判定（pendingRcaDecision → pendingClosureConfirmation）
 //
-// 資安推動小組的確認不經 ApprovalRecord 正式核准治理層：既有 approvalService 的團隊核准
-// 資格解析（resolveExpectedAuthorityForCreation）固定以 Issue.assignedTeamId 作為核准責任
-// 團隊，但本關卡的責任團隊是資安推動小組（與受理窗口 assignedTeamId 不同），要支援「approver
-// team ≠ Issue.assignedTeamId」需要調整 approvalService 這個信任邊界核心模組的團隊解析邏輯
-// ——影響面已超出本輪 Incident 基礎切片，且屬於高風險變更，故本輪改以與 Hotfix 既有
-// TRIAGE／CLAIM 資格判斷同一等級的 capability-gated 動作實作（是否為資安推動小組 active
-// Team Lead），未來如需要正式 ApprovalRecord／Bell 通知／核准歷程，留給 RCA 回合視需要
-// 一併擴充 approvalService 後再串接，不在本輪臆測或搭建半套邏輯。
+// 第二階段：走正式 ApprovalRecord（approvalType=INCIDENT_RCA_DECISION_CONFIRMATION，
+// approverTeamId 固定解析為 domain=SECURITY 團隊，見 approvalService.ts 的
+// APPROVAL_TEAM_RESOLUTION_BY_DOMAIN），取代第一階段的 capability-gated 暫行實作。
+// 「是否需要 RCA」語意上是資安推動小組完成本關卡審查的結論，不是同意／駁回他人的送件，
+// 因此一律以 decision=APPROVED 記錄完成審查，needRca／原因另存 IssueFieldValue（供
+// RCA 建立與 Incident 結案關卡的 RCA 未結案 gate 使用）；決策授權（僅資安推動小組
+// active Team Lead 可執行）完全交給 decideApprovalRecord 既有信任邊界，不再自行判斷。
 // ---------------------------------------------------------------------------
 
 export interface ConfirmIncidentRcaDecisionInput {
@@ -384,51 +385,63 @@ export interface ConfirmIncidentRcaDecisionInput {
 }
 
 export async function confirmIncidentRcaDecision(input: ConfirmIncidentRcaDecisionInput) {
-  return prisma.$transaction(async (tx) => {
-    const issues: string[] = [];
-    assertReasonCodeProvided(input.reasonCode, issues);
-    if (!input.needRca && !input.reason?.trim()) issues.push("判定不需要 RCA 時必須填寫原因");
-    throwIfInvalid(issues);
+  const issues: string[] = [];
+  if (!input.needRca && !input.reason?.trim()) issues.push("判定不需要 RCA 時必須填寫原因");
+  if (issues.length > 0) throw new WorkflowExecutionStateError(issues.join("；"));
 
-    const issue = await getIssueOrThrow(tx, input.issueId);
-    if (!issue.currentWorkflowStageId) throw new WorkflowExecutionStateError("Issue 尚未啟動 Workflow");
-    const stage = await getStageOrThrow(tx, issue.currentWorkflowStageId);
-    requireStage(stage, "pendingRcaDecision");
+  const issue = await getIssueOrThrow(prisma, input.issueId);
+  if (!issue.currentWorkflowStageId) throw new WorkflowExecutionStateError("Issue 尚未啟動 Workflow");
+  const stage = await getStageOrThrow(prisma, issue.currentWorkflowStageId);
+  requireStage(stage, "pendingRcaDecision");
 
-    const securityTeam = await tx.team.findFirst({ where: { domain: "SECURITY", isActive: true, members: { some: { userId: input.actorId, isActive: true, membershipRole: "LEAD" } } } });
-    if (!securityTeam) {
-      throw new WorkflowExecutionAccessDeniedError("僅資安推動小組的 active Team Lead 可完成 RCA 啟動判定");
-    }
-
-    await writeField(tx, issue.id, "incidentNeedRca", "是否需要 RCA", input.needRca ? "是" : "否");
-    if (input.reason?.trim()) await writeField(tx, issue.id, "incidentRcaDecisionReason", "RCA 判定原因", input.reason.trim());
-
-    await writeAuditLog(
-      { entityType: "Issue", entityId: issue.id, actionType: "FieldChange", summary: `RCA 啟動判定：${input.needRca ? "需要 RCA" : "不需要 RCA"}`, actorUserId: input.actorId, reasonCode: input.reasonCode },
-      tx,
-    );
-
-    const transition = await findForwardTransition(tx, stage.id);
-    return executeIssueTransitionInTx(tx, { issueId: issue.id, transitionId: transition.id, actorId: input.actorId, reasonCode: input.reasonCode });
+  const record = await prisma.approvalRecord.findFirst({
+    where: { issueId: issue.id, approvalType: "INCIDENT_RCA_DECISION_CONFIRMATION", relatedStageKey: "pendingRcaDecision", recordStatus: "ACTIVE", decision: "PENDING" },
+    orderBy: { revisionNo: "desc" },
   });
+  if (!record) throw new WorkflowExecutionStateError("找不到待處理的 RCA 啟動判定核准紀錄，請重新整理頁面");
+
+  await writeField(prisma, issue.id, "incidentNeedRca", "是否需要 RCA", input.needRca ? "是" : "否");
+  if (input.reason?.trim()) await writeField(prisma, issue.id, "incidentRcaDecisionReason", "RCA 判定原因", input.reason.trim());
+
+  await decideApprovalRecord({ approvalRecordId: record.id, actorUserId: input.actorId, decision: "APPROVED", decisionComment: input.needRca ? "需要 RCA" : input.reason?.trim() });
+
+  if (input.needRca) {
+    await prisma.$transaction((tx) =>
+      createRcaFromIncidentInTx(tx, { incidentIssueId: issue.id, actorId: input.actorId, reasonCode: input.reasonCode || "RCA_CREATED_FROM_INCIDENT" }),
+    );
+  }
+
+  const transition = await findForwardTransition(prisma, stage.id);
+  return executeIssueTransition({ issueId: issue.id, transitionId: transition.id, actorId: input.actorId, reasonCode: input.reasonCode || "INCIDENT_RCA_DECISION_CONFIRMED" });
 }
 
 // ---------------------------------------------------------------------------
 // 9. 事件結案（pendingClosureConfirmation → closed）
 //
-// 需要 RCA 時，本輪 Incident 基礎切片尚未建立 RCA workflow，因此一律視為「RCA 尚未結案」，
-// fail closed 擋下結案動作——符合任務規格「RCA 未完成前不得關閉事件」，不臆測 RCA 完成。
-// RCA 回合會在此加入「關聯 RCA 已結案」的實際判斷。
+// 一個 Incident 可以關聯多筆 RCA（INCIDENT_TO_RCA，1:N）；只要有任何一筆有效關聯的 RCA
+// 尚未到達 rcaClosed 終點，就一律 fail closed 擋下事件結案動作——關閉第一筆 RCA 不得連帶
+// 關閉 Incident，必須「全部」關聯 RCA 都結案才放行（見任務規格第十七節）。沒有任何關聯
+// RCA（needRca≠是，或核准當下判定不需要 RCA）時視為無阻擋，直接放行。
 // ---------------------------------------------------------------------------
 
 export class IncidentRcaNotClosedError extends Error {
-  constructor() {
-    super("此事件判定需要 RCA，RCA 尚未結案前不得確認事件結案。");
+  constructor(pendingCount: number) {
+    super(`此事件關聯 ${pendingCount} 筆 RCA 尚未結案，全部關聯 RCA 結案前不得確認事件結案。`);
     this.name = "IncidentRcaNotClosedError";
   }
 }
 
 export async function assertIncidentClosableWithoutRcaBlock(issueId: string): Promise<void> {
-  const needRca = await readIncidentField(prisma, issueId, "incidentNeedRca");
-  if (needRca === "是") throw new IncidentRcaNotClosedError();
+  const relations = await prisma.issueRelation.findMany({
+    where: { sourceIssueId: issueId, relationType: "INCIDENT_TO_RCA", removedAt: null },
+    select: { targetIssueId: true },
+  });
+  if (relations.length === 0) return;
+
+  const rcaIssues = await prisma.issue.findMany({
+    where: { id: { in: relations.map((r) => r.targetIssueId) } },
+    select: { workflowStatus: true },
+  });
+  const pendingCount = rcaIssues.filter((r) => r.workflowStatus !== "rcaClosed").length;
+  if (pendingCount > 0) throw new IncidentRcaNotClosedError(pendingCount);
 }

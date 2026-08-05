@@ -99,7 +99,10 @@ export async function evaluateCurrentIncidentActorTask(issueId: string, actorId:
       const membership = await prisma.teamMember.findFirst({
         where: { userId: actorId, isActive: true, membershipRole: "LEAD", team: { domain: "SECURITY", isActive: true } },
       });
-      if (membership) action = "ENTER_WORK";
+      if (membership) {
+        action = "APPROVE";
+        isMineToApprove = true;
+      }
     }
   } else if (stage.stageKey === "closed") {
     waitingRoleLabel = "—（已結案）";

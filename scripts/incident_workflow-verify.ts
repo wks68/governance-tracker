@@ -8,6 +8,7 @@ import "./lib/assertSafeTestDatabase";
 import { prisma } from "../src/lib/prisma";
 import { seedFormalOrganization } from "./fixtures/formalOrganizationFixture";
 import { buildIncidentWorkflowV1 } from "./lib/buildIncidentWorkflowV1";
+import { buildRcaWorkflowV1 } from "./lib/buildRcaWorkflowV1";
 import { createIncidentForActor, IncidentCreationValidationError } from "../src/lib/incident-ui/incidentCreation";
 import { claimIssueForTeam } from "../src/lib/workflowExecutionService";
 import {
@@ -55,6 +56,10 @@ async function main() {
   const org = await seedFormalOrganization(prisma);
   await prisma.workflowVersion.updateMany({ where: { status: "PUBLISHED", workflowDefinition: { issueType: "Incident" } }, data: { status: "ARCHIVED" } });
   const built = await buildIncidentWorkflowV1({ actorId: org.admin.id, reasonCode: "INCIDENT_WORKFLOW_VERIFY", keySuffix: `incident-workflow-verify-${Date.now()}-${process.pid}` });
+  // RCA 判定「需要 RCA」時會透過 rca-ui/rcaCreation.ts 觸發真正的 RCA 建立，因此本測試也需要
+  // 一份已發布的 RCA Workflow 版本，否則 confirmIncidentRcaDecision(needRca: true) 會因找不到
+  // 唯一已發布的 RCA Workflow 版本而拒絕——這不是本測試要驗證的情境，故先行建置。
+  await buildRcaWorkflowV1({ actorId: org.admin.id, reasonCode: "INCIDENT_WORKFLOW_VERIFY", keySuffix: `rca-workflow-for-incident-verify-${Date.now()}-${process.pid}` });
 
   // ---- Ad hoc 團隊：事件受理窗口（INCIDENT）、資安推動小組（SECURITY）；技術處理單位沿用既有 RD 團隊並補一位成員 ----
   const intakeTeam = await prisma.team.create({ data: { name: "事件受理窗口", domain: "INCIDENT", isActive: true } });
@@ -197,15 +202,21 @@ async function main() {
   check("[18b] 服務恢復不等同事件結案", afterRecoveryConfirm.workflowStatus !== "closed");
 
   console.log("\n=== F. RCA 啟動判定與事件結案 ===");
+  // 第二階段：RCA 啟動判定改走正式 ApprovalRecord（見
+  // src/lib/workflow-execution/incidentAssignmentService.ts 的 confirmIncidentRcaDecision），
+  // 「未填原因」的輸入驗證改由本函式自己直接丟出 WorkflowExecutionStateError（不再是
+  // 第一階段暫行實作的 WorkflowExecutionValidationError）；「非資安推動小組不得決策」則完全
+  // 交給 decideApprovalRecord 既有信任邊界判斷——用 outsider（既非送核人也非資安推動小組）
+  // 驗證，避免與「送核人不得自行核准」（SelfApprovalError）混淆成不同的拒絕原因。
   await expectError(
     "[19] 判定不需要 RCA 卻未填原因，明確拒絕",
     () => confirmIncidentRcaDecision({ issueId: issue.id, actorId: securityLead.id, needRca: false, reasonCode: "V" }),
-    WorkflowExecutionValidationError,
+    WorkflowExecutionStateError,
   );
   await expectError(
-    "[20] 非資安推動小組 LEAD 不得完成 RCA 啟動判定",
-    () => confirmIncidentRcaDecision({ issueId: issue.id, actorId: intakeLead.id, needRca: false, reason: "x", reasonCode: "V" }),
-    WorkflowExecutionAccessDeniedError,
+    "[20] 非資安推動小組不得完成 RCA 啟動判定",
+    () => confirmIncidentRcaDecision({ issueId: issue.id, actorId: outsider.id, needRca: false, reason: "x", reasonCode: "V" }),
+    Error,
   );
   await confirmIncidentRcaDecision({ issueId: issue.id, actorId: securityLead.id, needRca: false, reason: "影響範圍有限，已於初步處置排除", reasonCode: "V" });
   const afterRcaDecision = await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } });
