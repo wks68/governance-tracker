@@ -13,6 +13,8 @@ import IncidentActionPanel from "@/components/incident-nine-stage/IncidentAction
 import IncidentWorkflowHistory from "@/components/incident-nine-stage/IncidentWorkflowHistory";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
 import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
+import IssueAttachmentSection from "@/components/issue-attachments/IssueAttachmentSection";
+import { listIssueAttachments } from "@/lib/issue-attachments/service";
 import { formatDateTime } from "@/lib/datetime";
 
 export default async function IncidentDetailPage({ params }: { params: { id: string } }) {
@@ -27,13 +29,15 @@ export default async function IncidentDetailPage({ params }: { params: { id: str
   }
 
   const stageKey = ctx.runtime.currentStage.stageKey;
-  const [task, review, relationView] = await Promise.all([
+  const [task, review, relationView, attachments] = await Promise.all([
     evaluateCurrentIncidentActorTask(params.id, actor.id),
     buildIncidentApprovalReviewViewData(ctx),
     loadGovernanceRelationViewForActor(actor.id, params.id),
+    listIssueAttachments(params.id, { actorId: actor.id }),
   ]);
 
   const isResponsible = stageKey === "pendingClosureConfirmation" ? (review?.isResponsible ?? false) : task?.action !== "VIEW_ONLY";
+  const canUploadAttachments = isResponsible || ctx.issue.reporterUserId === actor.id;
 
   // 各關卡表單所需的預覽資料，只在對應關卡才查詢，避免不必要的額外查詢。
   let intakeTeamId: string | null = null;
@@ -91,7 +95,7 @@ export default async function IncidentDetailPage({ params }: { params: { id: str
               <div><dt className="text-xs text-text-muted">環境</dt><dd className="mt-0.5 text-sm text-text-primary">{ctx.ticketBasicInfo.environment || "尚未提供"}</dd></div>
               <div><dt className="text-xs text-text-muted">系統名稱</dt><dd className="mt-0.5 text-sm text-text-primary">{ctx.ticketBasicInfo.systemName || "尚未提供"}</dd></div>
               <div><dt className="text-xs text-text-muted">事件類型</dt><dd className="mt-0.5 text-sm text-text-primary">{ctx.ticketBasicInfo.incidentType ?? "尚未提供"}</dd></div>
-              <div><dt className="text-xs text-text-muted">建議事件等級</dt><dd className="mt-0.5 text-sm text-text-primary">{ctx.ticketBasicInfo.suggestedSeverity ?? "尚未提供"}</dd></div>
+              <div><dt className="text-xs text-text-muted">通報人初步影響感受</dt><dd className="mt-0.5 text-sm text-text-primary">{ctx.ticketBasicInfo.suggestedImpactLevel ?? "尚未提供"}</dd></div>
               <div><dt className="text-xs text-text-muted">正式事件等級</dt><dd className="mt-0.5 text-sm text-text-primary">{ctx.ticketBasicInfo.formalSeverity ?? "尚未分級"}</dd></div>
             </dl>
             <div className="mt-5 border-t border-border pt-4">
@@ -127,13 +131,14 @@ export default async function IncidentDetailPage({ params }: { params: { id: str
             isResponsible={isResponsible}
             waitingRoleLabel={task?.waitingRoleLabel ?? "—"}
             intakeTeamId={intakeTeamId}
-            suggestedSeverity={ctx.ticketBasicInfo.suggestedSeverity}
+            suggestedSeverity={ctx.ticketBasicInfo.suggestedImpactLevel}
             candidateTeams={candidateTeams}
             technicalTeamMembers={technicalTeamMembers}
             approvalRecordId={review?.approvalRecordId ?? null}
           />
         }
         governance={<GovernanceRelationsCard view={relationView} />}
+        attachments={<IssueAttachmentSection issueId={ctx.issue.id} items={attachments} canUpload={canUploadAttachments} />}
         after={<IncidentWorkflowHistory issueId={ctx.issue.id} />}
       />
       <ScrollDownChevron />

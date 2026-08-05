@@ -9,6 +9,7 @@ import { ActionErrorText } from "@/components/ActionResultBanner";
 import { createRcaActionItemAction, updateRcaActionItemProgressAction, verifyRcaActionItemAction } from "@/app/issues/[id]/rca/actions";
 import { RCA_ACTION_ITEM_TYPES, RCA_ACTION_ITEM_STATUSES, RCA_VERIFICATION_STATUSES } from "@/lib/constants";
 import { formatDateTime } from "@/lib/datetime";
+import IssueAttachmentSection, { type IssueAttachmentItem } from "@/components/issue-attachments/IssueAttachmentSection";
 
 const TYPE_LABEL: Record<string, string> = { CORRECTIVE: "矯正措施", PREVENTIVE: "預防措施" };
 const STATUS_LABEL: Record<string, string> = { PLANNED: "規劃中", IN_PROGRESS: "執行中", COMPLETED: "已完成", EXTENDED: "已展延", RISK_EXCEPTION: "風險例外" };
@@ -52,6 +53,7 @@ export default function RcaActionItemsPanel({
   canVerify,
   candidateOwnerTeamId,
   candidateOwnerMembers,
+  attachmentsByActionItemId = {},
 }: {
   issueId: string;
   items: RcaActionItemRow[];
@@ -59,6 +61,7 @@ export default function RcaActionItemsPanel({
   canVerify: boolean;
   candidateOwnerTeamId: string | null;
   candidateOwnerMembers: Array<{ id: string; name: string }>;
+  attachmentsByActionItemId?: Record<string, IssueAttachmentItem[]>;
 }) {
   const { error, isPending, run } = useItemAction();
 
@@ -134,6 +137,17 @@ export default function RcaActionItemsPanel({
                 <button type="submit" disabled={isPending} className="ui-button-secondary">{isPending ? "處理中…" : "填寫驗證結果"}</button>
               </form>
             )}
+
+            <div className="mt-3 border-t border-border pt-3">
+              <IssueAttachmentSection
+                issueId={issueId}
+                actionItemId={item.id}
+                items={attachmentsByActionItemId[item.id] ?? []}
+                canUpload={canManage || canVerify}
+                title="改善佐證附件"
+                helperText="上傳改善措施執行的佐證截圖或文件。"
+              />
+            </div>
           </li>
         ))}
       </ul>

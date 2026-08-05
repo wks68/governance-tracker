@@ -43,6 +43,7 @@ import {
   UnresolvedUnknownRiskError,
 } from "./approvalService";
 import { AttachmentValidationError, AttachmentAuthorizationError } from "./hotfix-ui/attachmentService";
+import { IssueAttachmentValidationError, IssueAttachmentAuthorizationError } from "./issue-attachments/service";
 import { HotfixPageNotApplicableError } from "./hotfix-ui/pageContext";
 import { TeamApplicantAccessDeniedError, TeamApplicantValidationError } from "./team-applicant/teamApplicantService";
 import { NoEligibleApproverError } from "./approvalService";
@@ -95,6 +96,8 @@ const KNOWN_DOMAIN_ERRORS = [
   UnresolvedUnknownRiskError,
   AttachmentValidationError,
   AttachmentAuthorizationError,
+  IssueAttachmentValidationError,
+  IssueAttachmentAuthorizationError,
   HotfixPageNotApplicableError,
   TeamApplicantAccessDeniedError,
   TeamApplicantValidationError,

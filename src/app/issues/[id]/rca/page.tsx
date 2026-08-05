@@ -13,6 +13,8 @@ import RcaActionItemsPanel, { type RcaActionItemRow } from "@/components/rca-nin
 import RcaWorkflowHistory from "@/components/rca-nine-stage/RcaWorkflowHistory";
 import AppPageBreadcrumb from "@/components/app-shell/AppPageBreadcrumb";
 import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
+import IssueAttachmentSection from "@/components/issue-attachments/IssueAttachmentSection";
+import { listIssueAttachments } from "@/lib/issue-attachments/service";
 import { formatDateTime } from "@/lib/datetime";
 
 const DECIDED_APPROVAL_LABEL: Record<string, string> = {
@@ -36,7 +38,7 @@ export default async function RcaDetailPage({ params }: { params: { id: string }
   }
 
   const stageKey = ctx.runtime.currentStage.stageKey;
-  const [task, review, managementReview, relationView, actionItems, decidedApprovals] = await Promise.all([
+  const [task, review, managementReview, relationView, actionItems, decidedApprovals, rcaAttachments] = await Promise.all([
     evaluateCurrentRcaActorTask(params.id, actor.id),
     buildRcaApprovalReviewViewData(ctx),
     buildRcaManagementConfirmationViewData(ctx),
@@ -46,7 +48,14 @@ export default async function RcaDetailPage({ params }: { params: { id: string }
       where: { issueId: params.id, decision: { not: "PENDING" }, approvalType: { in: Object.keys(DECIDED_APPROVAL_LABEL) } },
       orderBy: { decidedAt: "desc" },
     }),
+    listIssueAttachments(params.id, { actorId: actor.id }),
   ]);
+  const rcaLevelAttachments = rcaAttachments.filter((a) => a.actionItemId === null);
+  const attachmentsByActionItemId: Record<string, typeof rcaAttachments> = {};
+  for (const attachment of rcaAttachments) {
+    if (!attachment.actionItemId) continue;
+    (attachmentsByActionItemId[attachment.actionItemId] ??= []).push(attachment);
+  }
 
   const isResponsible = stageKey === "pendingManagementConfirmation"
     ? Boolean(managementReview?.vp?.isResponsible || managementReview?.director?.isResponsible)
@@ -218,6 +227,7 @@ export default async function RcaDetailPage({ params }: { params: { id: string }
             canVerify={canVerifyActionItems}
             candidateOwnerTeamId={ctx.issue.assignedTeamId}
             candidateOwnerMembers={candidateOwners}
+            attachmentsByActionItemId={attachmentsByActionItemId}
           />
         }
         after={
@@ -230,6 +240,9 @@ export default async function RcaDetailPage({ params }: { params: { id: string }
               candidateOwners={candidateOwners}
               managementReview={managementSlice ? { approvalType: managementSlice.approvalType as "RCA_VP_CONFIRMATION" | "RCA_DIRECTOR_APPROVAL", isResponsible: managementSlice.isResponsible, decisionPending: true } : null}
             />
+            <div data-hotfix-scroll-section className="scroll-mt-24">
+              <IssueAttachmentSection issueId={ctx.issue.id} items={rcaLevelAttachments} canUpload={task?.action !== "VIEW_ONLY"} />
+            </div>
             <div data-hotfix-scroll-section className="scroll-mt-24">
               <RcaWorkflowHistory issueId={ctx.issue.id} />
             </div>
