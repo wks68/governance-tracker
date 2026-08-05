@@ -24,10 +24,18 @@ import {
 } from "../src/lib/workflow-execution/incidentAssignmentService";
 import { rcaTeamClaim, assignRcaOwner, submitRcaAnalysis, decideRcaTechnicalReview, decideRcaSecurityIntegrityReview } from "../src/lib/workflow-execution/rcaAssignmentService";
 import { createRcaActionItem, updateRcaActionItemProgress } from "../src/lib/workflow-execution/rcaActionItemService";
+import { uploadIssueAttachment } from "../src/lib/issue-attachments/service";
 
 if (process.env.DATABASE_URL !== "file:/tmp/governance-incident-preview.db") {
   throw new Error("本腳本只允許對 DATABASE_URL=file:/tmp/governance-incident-preview.db 執行，避免誤寫其他資料庫");
 }
+
+const BASE_INTAKE_FIELDS = {
+  symptomText: "服務回應緩慢",
+  impactScope: "SINGLE_USER",
+  dataPermissionImpact: ["不確定"],
+  operationalImpact: ["不確定"],
+};
 
 async function ensureUser(name: string, role: string, email: string) {
   const existing = await prisma.user.findFirst({ where: { name } });
@@ -93,6 +101,7 @@ async function main() {
   let closedIncident = await prisma.issue.findFirst({ where: { issueType: "Incident", title: { contains: "[Preview] 登入延遲事件（已結案）" } } });
   if (!closedIncident) {
     closedIncident = await createIncidentForActor(selena, {
+      ...BASE_INTAKE_FIELDS,
       title: "[Preview] 登入延遲事件（已結案）",
       description: "多名使用者反映登入頁面回應緩慢，約 10-15 秒才能完成登入。",
       systemName: "MyDMS",
@@ -100,9 +109,9 @@ async function main() {
       incidentType: "系統／功能異常",
       occurredAt: "2026-08-01T09:00:00.000Z",
       reportSource: "使用者反映",
-      suggestedSeverity: "中",
-      isOngoing: false,
-      hasWorkaround: false,
+      suggestedSeverity: "有影響，但仍可部分作業",
+      isOngoing: "否，目前已恢復",
+      hasWorkaround: "沒有",
       affectedScope: "MyDMS 登入頁面，約 20 名使用者",
       impactSummary: "登入延遲，未造成資料遺失",
     });
@@ -126,16 +135,17 @@ async function main() {
   let rcaIssue = null as Awaited<ReturnType<typeof prisma.issue.findFirst>>;
   if (!rcaSourceIncident) {
     rcaSourceIncident = await createIncidentForActor(selena, {
+      ...BASE_INTAKE_FIELDS,
       title: "[Preview] 跨單位權限異常事件（需 RCA）",
       description: "跨單位權限設定錯誤，導致部分使用者可存取不應存取的系統模組，已影響對外服務。",
       systemName: "MyDMS",
       environment: "Production",
-      incidentType: "權限問題",
+      incidentType: "登入或權限問題",
       occurredAt: "2026-08-02T14:00:00.000Z",
       reportSource: "資安監控告警",
-      suggestedSeverity: "高",
-      isOngoing: false,
-      hasWorkaround: false,
+      suggestedSeverity: "影響很大，需要立即處理",
+      isOngoing: "否，目前已恢復",
+      hasWorkaround: "沒有",
       affectedScope: "跨單位多個系統模組，涉及對外服務",
       impactSummary: "權限異常已擴大至對外服務，影響客戶可見功能",
     });
@@ -165,11 +175,24 @@ async function main() {
       rcaIssueId: rcaIssue.id, actorId: rita.id, type: "CORRECTIVE", description: "重新設計跨單位權限異動雙人審核流程",
       ownerTeamId: rdTeam.id, ownerUserId: rita.id, plannedCompletionDate: "2026-09-01", verificationMethod: "覆查權限異動紀錄與審核簽核", reasonCode: "PREVIEW_SEED",
     });
-    await createRcaActionItem({
+    const item2 = await createRcaActionItem({
       rcaIssueId: rcaIssue.id, actorId: rita.id, type: "PREVENTIVE", description: "建立跨單位權限異動季度稽核機制",
       ownerTeamId: rdTeam.id, ownerUserId: rita.id, plannedCompletionDate: "2026-10-15", verificationMethod: "查核季度稽核報告", reasonCode: "PREVIEW_SEED",
     });
+    // 供人工與 Browser 測試驗證「精確 RCA 逾期統計」（見 rca-ui/rcaOverdueService.ts）：
+    // 刻意保留一筆已逾期未完成措施與一筆已完成措施。
+    const item3 = await createRcaActionItem({
+      rcaIssueId: rcaIssue.id, actorId: rita.id, type: "CORRECTIVE", description: "（示範逾期）補齊歷史權限異動紀錄歸檔",
+      ownerTeamId: rdTeam.id, ownerUserId: rita.id, plannedCompletionDate: "2026-07-01", verificationMethod: "查核歸檔紀錄", reasonCode: "PREVIEW_SEED",
+    });
     await updateRcaActionItemProgress({ actionItemId: item1.id, actorId: rita.id, status: "IN_PROGRESS", reasonCode: "PREVIEW_SEED" });
+    await updateRcaActionItemProgress({ actionItemId: item2.id, actorId: rita.id, status: "COMPLETED", actualCompletionDate: "2026-08-01", evidenceSummary: "季度稽核機制已上線", reasonCode: "PREVIEW_SEED" });
+    void item3;
+
+    await uploadIssueAttachment({
+      issueId: rcaSourceIncident.id, actorId: selena.id, actorName: selena.name, fileName: "incident-screenshot.png", mimeType: "image/png",
+      bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
     await submitRcaAnalysis({
       issueId: rcaIssue.id, actorId: rita.id, directCause: "權限異動未經雙人審核即生效", rootCause: "跨單位權限審核流程缺乏交叉驗證機制",
       controlFailurePoint: "權限異動審核關卡", causeType: "權限／資料處理問題", analysisMethods: ["會議檢討", "程式碼分析"],
