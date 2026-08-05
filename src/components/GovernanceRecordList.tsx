@@ -4,6 +4,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import DataTableFrame from "@/components/ui/DataTableFrame";
 import { EmptyState } from "@/components/ui/FeedbackState";
 import { FilePlus2 } from "lucide-react";
+import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
 
 export interface GovernanceRecordRow {
   id: string;
@@ -43,6 +44,7 @@ export default function GovernanceRecordList({
       {records.length === 0 ? (
         <EmptyState title="目前沒有資料" description={`建立後的${title}會顯示在這裡。`} />
       ) : (
+        <div data-hotfix-scroll-section>
         <DataTableFrame label={`${title}資料表`}>
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
@@ -85,7 +87,9 @@ export default function GovernanceRecordList({
             </tbody>
           </table>
         </DataTableFrame>
+        </div>
       )}
+      <ScrollDownChevron />
     </div>
   );
 }

@@ -63,8 +63,13 @@ const ROLE_CAPABILITIES: Record<RoleKey, readonly Capability[]> = {
   QA: ["issue.view", "issue.edit", "issue.approve"],
   OP: ["issue.view", "issue.edit"],
   // C1-B2：新增 user.view／team.view（唯讀查看），不得取得新增、修改、角色、啟停或 Team 成員管理能力。
-  // M2-A：資安推動小組僅 workflow.view（唯讀），不得管理草稿／發布／封存。
-  資安推動小組: ["issue.view", "issue.approve", "governance.viewAllGovernance", "user.view", "team.view", "workflow.view"],
+  // M2-A：資安推動小組僅 workflow.view（唯讀），不得管理草稿／發布／封存（workflow.manage
+  // 相關能力，與下面新增的 issue.edit 是完全不同的能力，不受本次調整影響）。
+  // Incident 事件通報流程新增：issue.edit——資安推動小組需要能實際執行 RCA 啟動判定確認
+  // 這類 Issue 實例層級的動作（見 incidentAssignmentService.ts），過去這個角色從未出現在
+  // 任何會觸發 Issue Transition 的流程中，所以先前未取得這項能力；純新增，不影響既有
+  // user.*／team.manageMembers／workflow.manage 等既有唯讀限制。
+  資安推動小組: ["issue.view", "issue.edit", "issue.approve", "governance.viewAllGovernance", "user.view", "team.view", "workflow.view"],
   DMS主管: ["issue.view", "issue.edit", "issue.approve", "issue.assignTeam"],
   Admin: [
     "issue.view",

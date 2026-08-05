@@ -68,8 +68,8 @@ const WORK_GROUPS = [
     items: [
       { href: "/issues?view=hotfix", label: "Hotfix 清單", icon: Flame },
       { href: "/issues?view=quarterly", label: "季度專案清單", icon: CalendarRange },
-      { href: "/incidents", label: "事件通報清單", icon: Siren },
-      { href: "/rca", label: "RCA 清單", icon: FileSearch },
+      { href: "/issues?view=incident", label: "事件通報清單", icon: Siren },
+      { href: "/issues?view=rca", label: "RCA 清單", icon: FileSearch },
     ],
   },
   {
@@ -648,7 +648,12 @@ function breadcrumbLabel(pathname: string, currentView: string | null): string {
   if (pathname === "/governance" || pathname === "/dashboard") return "治理儀表板";
   if (pathname === "/work-management") return "DMS 工作管理中心";
   if (pathname === "/issues/new") return "新增事項";
-  if (pathname === "/issues") return currentView === "quarterly" ? "季度專案清單" : "Hotfix 清單";
+  if (pathname === "/issues") {
+    if (currentView === "quarterly") return "季度專案清單";
+    if (currentView === "incident") return "事件通報清單";
+    if (currentView === "rca") return "RCA 清單";
+    return "Hotfix 清單";
+  }
   if (pathname === "/incidents") return "事件通報";
   if (pathname === "/rca") return "RCA 根因分析";
   if (pathname.startsWith("/admin/people")) return "系統設定／人員管理";

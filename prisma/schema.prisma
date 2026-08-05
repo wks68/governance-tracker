@@ -66,6 +66,9 @@ model User {
   teamMembershipHistoryAsUser  TeamMembershipHistory[] @relation("TeamMembershipHistoryUser")
   teamMembershipHistoryAsActor TeamMembershipHistory[] @relation("TeamMembershipHistoryActor")
 
+  rcaActionItemsOwned    RcaActionItem[] @relation("RcaActionItemOwner")
+  rcaActionItemsVerified RcaActionItem[] @relation("RcaActionItemVerifier")
+
   @@index([role])
   @@index([isActive])
 }
@@ -146,6 +149,8 @@ model Team {
   // ---- M1.5-A 新增 ----
   approvalRecords     ApprovalRecord[]
   approvalDelegations ApprovalDelegation[]
+
+  rcaActionItems RcaActionItem[]
 
   // ---- M1.5-C1-A 新增 ----
   teamMembershipHistory TeamMembershipHistory[]
@@ -313,6 +318,7 @@ model Issue {
   workflowStageHistory IssueWorkflowStageHistory[]
   outgoingRelations    IssueRelation[]             @relation("IssueRelationSource")
   incomingRelations    IssueRelation[]             @relation("IssueRelationTarget")
+  rcaActionItems       RcaActionItem[]
 
   @@index([issueType])
   @@index([workflowStatus])
@@ -783,4 +789,47 @@ model IssueWorkflowStageHistory {
   @@index([toStageId])
   @@index([fromStageId])
   @@index([transitionId])
+}
+
+// RCA 事件通報第二階段新增：矯正／預防措施逐筆追蹤。每一件 RCA（Issue.issueType="RCA"）
+// 可有多筆改善措施，各自獨立主責單位／主責人／期限／驗證，不得塞進單一大型 JSON 字串
+// （才能個別查詢逾期、個別產生待辦通知）。純新增 Table，不影響任何既有 Model／資料。
+model RcaActionItem {
+  id      String @id @default(cuid())
+  rcaIssueId String
+  sequence   Int // 同一張 RCA 內的顯示順序，從 1 開始
+
+  type        String // CORRECTIVE（矯正措施）／PREVENTIVE（預防措施）
+  description String
+
+  ownerTeamId String?
+  ownerUserId String?
+
+  plannedCompletionDate DateTime?
+  actualCompletionDate  DateTime?
+  status                String @default("PLANNED") // PLANNED／IN_PROGRESS／COMPLETED／EXTENDED／RISK_EXCEPTION
+
+  evidenceSummary     String?
+  verificationMethod  String?
+  verificationStatus  String  @default("PENDING") // PENDING／PASSED／FAILED／NOT_APPLICABLE
+  verifierUserId      String?
+  verifiedAt          DateTime?
+  verificationNote    String?
+
+  extensionReason        String?
+  riskExceptionReference String? // 對應風險例外編號／說明，選填自由文字，不建立正式關聯表
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rcaIssue Issue @relation(fields: [rcaIssueId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownerTeam Team? @relation(fields: [ownerTeamId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownerUser User? @relation("RcaActionItemOwner", fields: [ownerUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  verifier  User? @relation("RcaActionItemVerifier", fields: [verifierUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([rcaIssueId, sequence])
+  @@index([rcaIssueId])
+  @@index([ownerUserId])
+  @@index([status])
+  @@index([verificationStatus])
 }

@@ -9,7 +9,7 @@ import { useActionErrorToast } from "@/components/toast/AppToastProvider";
 
 export interface NotificationTask {
   notificationId: string;
-  notificationType: "HOTFIX_SUPERVISOR_APPROVAL_REQUIRED" | "HOTFIX_ACTION_REQUIRED";
+  notificationType: "HOTFIX_SUPERVISOR_APPROVAL_REQUIRED" | "HOTFIX_ACTION_REQUIRED" | "INCIDENT_APPROVAL_REQUIRED" | "INCIDENT_ACTION_REQUIRED" | "RCA_APPROVAL_REQUIRED" | "RCA_ACTION_REQUIRED";
   sourceRecordId: string | null;
   recipientUserId: string;
   issueId: string;

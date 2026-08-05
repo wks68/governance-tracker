@@ -5,6 +5,40 @@ import {
   type ActorTaskSummary,
   type IssueActionKind,
 } from "./responsibilityService";
+// Incident 事件通報流程新增：與 Hotfix 版本分開維護的責任解析器（見
+// src/lib/incident-ui/incidentResponsibilityService.ts 說明），回傳的 IncidentActorTaskSummary
+// 與 ActorTaskSummary 欄位結構刻意保持一致，供本檔案以同一個 Map／清單型別呈現，不建立
+// 第二套待辦資料結構。
+import { evaluateCurrentIncidentActorTask } from "../incident-ui/incidentResponsibilityService";
+// RCA 流程新增：與 Hotfix／Incident 版本分開維護的責任解析器（見
+// src/lib/rca-ui/rcaResponsibilityService.ts 說明）。RcaActorTaskSummary 欄位結構與
+// ActorTaskSummary 不完全相同（responsibleTeamName／ownerName 對應 assignedTeamName／
+// executorName，且沒有 isClaimableStage／actionSourceId），在此正規化成同一個
+// ActorTaskSummary 形狀，供本檔案以同一個 Map／清單型別呈現，不建立第二套待辦資料結構。
+import { evaluateCurrentRcaActorTask } from "../rca-ui/rcaResponsibilityService";
+
+const SUPPORTED_ISSUE_TYPES = ["Hotfix", "Incident", "RCA"] as const;
+
+async function evaluateActorTaskForIssueType(issueType: string, issueId: string, actorId: string): Promise<ActorTaskSummary | null> {
+  if (issueType === "Incident") return evaluateCurrentIncidentActorTask(issueId, actorId);
+  if (issueType === "RCA") {
+    const rcaSummary = await evaluateCurrentRcaActorTask(issueId, actorId);
+    if (!rcaSummary) return null;
+    return {
+      stageKey: rcaSummary.stageKey,
+      businessStatusLabel: rcaSummary.businessStatusLabel,
+      waitingRoleLabel: rcaSummary.waitingRoleLabel,
+      assignedTeamName: rcaSummary.responsibleTeamName,
+      executorName: rcaSummary.ownerName,
+      action: rcaSummary.action,
+      isMineToClaim: rcaSummary.isMineToClaim,
+      isMineToApprove: rcaSummary.isMineToApprove,
+      isClaimableStage: rcaSummary.stageKey === "pendingRcaTeamClaim",
+      actionSourceId: null,
+    };
+  }
+  return evaluateCurrentActorTask(issueId, actorId);
+}
 
 export interface ActionableIssueSource {
   id: string;
@@ -20,6 +54,7 @@ export interface ActionableIssueTask {
   issueId: string;
   issueKey: string;
   title: string;
+  issueType: string;
   action: Exclude<IssueActionKind, "VIEW_ONLY">;
   actionLabel: string;
   actionHref: string;
@@ -53,13 +88,13 @@ export async function resolveIssueTasksForActor(
 ): Promise<Map<string, ResolvedIssueTask>> {
   const targets = issues.filter(
     (issue) =>
-      issue.issueType === "Hotfix" &&
+      (SUPPORTED_ISSUE_TYPES as readonly string[]).includes(issue.issueType) &&
       issue.workflowVersionId !== null &&
       issue.currentWorkflowStageId !== null,
   );
   const resolved = await Promise.all(
     targets.map(async (issue) => {
-      const summary = await evaluateCurrentActorTask(issue.id, actorId);
+      const summary = await evaluateActorTaskForIssueType(issue.issueType, issue.id, actorId);
       if (!summary) return null;
       const actionHref =
         summary.action === "VIEW_ONLY"
@@ -71,6 +106,7 @@ export async function resolveIssueTasksForActor(
               issueId: issue.id,
               issueKey: issue.issueKey,
               title: issue.title,
+              issueType: issue.issueType,
               action: summary.action,
               actionLabel: ACTION_LABELS[summary.action],
               actionHref,
@@ -109,7 +145,7 @@ export async function resolveActionableTasksForActor(
 export async function listActionableTasksForActor(actorId: string): Promise<ActionableIssueTask[]> {
   const issues = await prisma.issue.findMany({
     where: {
-      issueType: "Hotfix",
+      issueType: { in: [...SUPPORTED_ISSUE_TYPES] },
       workflowVersionId: { not: null },
       currentWorkflowStageId: { not: null },
     },
