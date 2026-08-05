@@ -15,8 +15,8 @@ export const dynamic = "force-dynamic";
 const LIST_LINKS = [
   { href: "/issues?view=hotfix", label: "Hotfix 清單", description: "查看緊急修正的簽核、執行與上版進度。", icon: Flame },
   { href: "/issues?view=quarterly", label: "季度專案清單", description: "查看本季度開發、改善、測試及上版項目。", icon: CalendarRange },
-  { href: "/incidents", label: "事件通報清單", description: "查看系統異常、服務中斷與資料錯誤紀錄。", icon: Siren },
-  { href: "/rca", label: "RCA 清單", description: "查看根因分析與後續改善追蹤。", icon: FileSearch },
+  { href: "/issues?view=incident", label: "事件通報清單", description: "查看系統異常、服務中斷與資料錯誤紀錄。", icon: Siren },
+  { href: "/issues?view=rca", label: "RCA 清單", description: "查看根因分析與後續改善追蹤。", icon: FileSearch },
 ] as const;
 
 export default async function WorkManagementPage() {

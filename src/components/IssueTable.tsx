@@ -33,6 +33,10 @@ export interface IssueRow {
   hotfixAction?: HotfixListActionView;
   dueTone?: HotfixDueTone;
   relationSummary?: GovernanceRelationListSummary;
+  /** 內部 WorkflowStage.stageKey（非顯示用業務狀態字串），供事件通報／RCA 清單統計卡片判斷用。 */
+  rawStageKey?: string | null;
+  /** Incident 正式事件等級（高／中／低），供事件通報清單統計卡片判斷用。 */
+  severityLabel?: string | null;
 }
 
 function HotfixUrgencyBadge({ value, legacyPriority }: { value?: string | null; legacyPriority: string }) {
@@ -186,14 +190,21 @@ function QuarterlyRelations({ summary }: { summary?: GovernanceRelationListSumma
   );
 }
 
-export default function IssueTable({ issues, mode, totalCount = issues.length, hasActiveFilters = false }: { issues: IssueRow[]; mode: "hotfix" | "quarterly"; totalCount?: number; hasActiveFilters?: boolean }) {
+const GENERIC_MODE_LABEL: Record<"quarterly" | "incident" | "rca", string> = {
+  quarterly: "季度專案",
+  incident: "事件通報",
+  rca: "RCA",
+};
+
+export default function IssueTable({ issues, mode, totalCount = issues.length, hasActiveFilters = false }: { issues: IssueRow[]; mode: "hotfix" | "quarterly" | "incident" | "rca"; totalCount?: number; hasActiveFilters?: boolean }) {
   if (issues.length === 0) {
     if (mode === "hotfix") {
       return hasActiveFilters
         ? <EmptyState title="找不到符合條件的 Hotfix" description="可移除搜尋或篩選條件後再試一次。" />
         : <EmptyState title="目前尚無 Hotfix 工單" />;
     }
-    return <EmptyState title={totalCount === 0 ? "目前尚無季度專案" : "找不到符合條件的季度專案"} />;
+    const label = GENERIC_MODE_LABEL[mode];
+    return <EmptyState title={totalCount === 0 ? `目前尚無${label}` : `找不到符合條件的${label}`} />;
   }
 
   if (mode === "hotfix") {
@@ -205,8 +216,9 @@ export default function IssueTable({ issues, mode, totalCount = issues.length, h
     );
   }
 
+  const typeLabel = GENERIC_MODE_LABEL[mode];
   return (
-    <DataTableFrame label="季度專案清單資料表">
+    <DataTableFrame label={`${typeLabel}清單資料表`}>
       <table className="min-w-full divide-y divide-gray-200 text-sm">
         <thead className="bg-gray-50">
           <tr className="text-left text-xs font-medium text-gray-500">
@@ -225,7 +237,7 @@ export default function IssueTable({ issues, mode, totalCount = issues.length, h
           {issues.map((issue) => (
             <tr key={issue.id} className="hover:bg-gray-50">
               <td className="whitespace-nowrap px-3 py-2"><Link href={issue.detailHref} className="font-medium text-primary hover:underline">{issue.issueKey}</Link></td>
-              <td className="whitespace-nowrap px-3 py-2 text-gray-600">季度專案</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{typeLabel}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.systemName || "—"}</td>
               <td className="max-w-[300px] truncate px-3 py-2 text-gray-800" title={issue.title}>{issue.title}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.reporterName || "—"}</td>
