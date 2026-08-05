@@ -37,6 +37,15 @@ export interface IssueRow {
   rawStageKey?: string | null;
   /** Incident 正式事件等級（高／中／低），供事件通報清單統計卡片判斷用。 */
   severityLabel?: string | null;
+  /** RCA 精確逾期狀態（見 rca-ui/rcaOverdueService.ts），以 RcaActionItem 為準，非 Issue.dueDate。 */
+  rcaOverdueSummary?: {
+    isOverdue: boolean;
+    overdueCount: number;
+    earliestOverdueDate: string | null;
+    latestPlannedDate: string | null;
+    completedCount: number;
+    totalCount: number;
+  };
 }
 
 function HotfixUrgencyBadge({ value, legacyPriority }: { value?: string | null; legacyPriority: string }) {
@@ -179,6 +188,24 @@ function HotfixCards({ issues }: { issues: IssueRow[] }) {
   );
 }
 
+function RcaOverdueBadge({ summary }: { summary?: IssueRow["rcaOverdueSummary"] }) {
+  if (!summary || summary.totalCount === 0) {
+    return <span className="text-xs text-gray-400">尚無改善措施</span>;
+  }
+  if (summary.isOverdue) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-danger-border bg-danger-muted px-2 py-0.5 text-xs font-medium text-danger-text">
+        逾期 {summary.overdueCount} 項（{summary.completedCount}／{summary.totalCount} 已完成）
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-gray-600">
+      {summary.completedCount}／{summary.totalCount} 已完成
+    </span>
+  );
+}
+
 function QuarterlyRelations({ summary }: { summary?: GovernanceRelationListSummary }) {
   if (!summary || summary.hotfixCount === 0) {
     return <span className="text-xs text-gray-400">尚未關聯</span>;
@@ -217,6 +244,7 @@ export default function IssueTable({ issues, mode, totalCount = issues.length, h
   }
 
   const typeLabel = GENERIC_MODE_LABEL[mode];
+  const isRcaMode = mode === "rca";
   return (
     <DataTableFrame label={`${typeLabel}清單資料表`}>
       <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -227,7 +255,7 @@ export default function IssueTable({ issues, mode, totalCount = issues.length, h
             <th className="px-3 py-2">系統名稱</th>
             <th className="px-3 py-2">標題</th>
             <th className="px-3 py-2">申請人</th>
-            <th className="px-3 py-2">到期日</th>
+            <th className="px-3 py-2">{isRcaMode ? "改善進度／逾期" : "到期日"}</th>
             <th className="px-3 py-2">目前階段</th>
             <th className="px-3 py-2">關聯</th>
             <th className="px-3 py-2">操作</th>
@@ -241,7 +269,9 @@ export default function IssueTable({ issues, mode, totalCount = issues.length, h
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.systemName || "—"}</td>
               <td className="max-w-[300px] truncate px-3 py-2 text-gray-800" title={issue.title}>{issue.title}</td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.reporterName || "—"}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-gray-600">{formatDate(issue.dueDate)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-gray-600">
+                {isRcaMode ? <RcaOverdueBadge summary={issue.rcaOverdueSummary} /> : formatDate(issue.dueDate)}
+              </td>
               <td className="whitespace-nowrap px-3 py-2 text-gray-600">{issue.workflowStatus}</td>
               <td className="px-3 py-2"><QuarterlyRelations summary={issue.relationSummary} /></td>
               <td className="whitespace-nowrap px-3 py-2"><QuarterlyActionCell issue={issue} /></td>

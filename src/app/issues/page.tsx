@@ -14,6 +14,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import CreateWorkItemFab from "@/components/work-items/CreateWorkItemFab";
 import ScrollDownChevron from "@/components/ui/ScrollDownChevron";
 import { resolveIssueDetailHref } from "@/lib/issue-detail-href";
+import { loadRcaOverdueSummaries, type RcaOverdueSummary } from "@/lib/rca-ui/rcaOverdueService";
 import HotfixSummaryCards from "@/components/issue-list/HotfixSummaryCards";
 import {
   matchesHotfixSearch,
@@ -54,6 +55,7 @@ function toRow(
   taskStates: Awaited<ReturnType<typeof resolveIssueTasksForActor>>,
   now: number,
   weekBounds: { start: number; end: number },
+  rcaOverdueSummary?: RcaOverdueSummary,
 ): IssueRow {
   const taskState = taskStates.get(issue.id);
   const task = taskState?.actionable;
@@ -110,6 +112,7 @@ function toRow(
     relationSummary,
     rawStageKey: issue.currentWorkflowStage?.stageKey ?? null,
     severityLabel: issue.fieldValues?.find((field: { fieldKey: string }) => field.fieldKey === "incidentFormalSeverity")?.fieldValue ?? null,
+    rcaOverdueSummary,
   };
 }
 
@@ -151,7 +154,7 @@ function buildGenericStatCards(
     ];
   }
   const inAnalysisOrReview = rows.filter((row) => RCA_IN_ANALYSIS_OR_REVIEW_STAGES.has(row.rawStageKey ?? "")).length;
-  const overdue = rows.filter((row) => row.dueDate && !row.terminal && new Date(row.dueDate).getTime() < now).length;
+  const overdue = rows.filter((row) => row.rcaOverdueSummary?.isOverdue).length;
   return [
     { label: "目前共", value: total },
     { label: "待我處理", value: mineToAct },
@@ -211,8 +214,11 @@ export default async function IssuesPage({
   const myTeamIds = new Set(myMemberships.map((membership) => membership.teamId));
   const now = Date.now();
   const weekBounds = taipeiWeekBounds(new Date(now));
+  const rcaOverdueSummaries = mode === "rca"
+    ? await loadRcaOverdueSummaries(selectedIssues.map((issue) => issue.id), new Date(now))
+    : new Map<string, RcaOverdueSummary>();
   const allRows = selectedIssues.map((issue) =>
-    toRow(issue, relationSummaries.get(issue.id), taskStates, now, weekBounds),
+    toRow(issue, relationSummaries.get(issue.id), taskStates, now, weekBounds, rcaOverdueSummaries.get(issue.id)),
   );
   const issueById = new Map(selectedIssues.map((issue) => [issue.id, issue]));
   const summaryKey = normalizeHotfixSummaryKey(searchParams.summary);
@@ -231,7 +237,9 @@ export default async function IssuesPage({
     );
   }
   if (searchParams.overdue === "1") {
-    rows = rows.filter((row) => !!row.dueDate && new Date(row.dueDate).getTime() < now && !row.terminal);
+    rows = mode === "rca"
+      ? rows.filter((row) => row.rcaOverdueSummary?.isOverdue)
+      : rows.filter((row) => !!row.dueDate && new Date(row.dueDate).getTime() < now && !row.terminal);
   }
   if (mode === "hotfix") {
     rows = rows.filter((row) => matchesHotfixSummary(row, summaryKey, weekBounds));
