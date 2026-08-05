@@ -7,6 +7,7 @@ import { prisma } from "../prisma";
 import { getIssueWorkflowRuntime, type IssueWorkflowRuntime } from "../workflowExecutionService";
 import { getEligibleApproverUserIds } from "../approvalService";
 import { incidentNineStageIndexOfStageKey } from "./incidentStage";
+import { INCIDENT_FIELD } from "./incidentFieldRegistry";
 import type { Issue, User } from "@prisma/client";
 
 export class IncidentPageNotApplicableError extends Error {
@@ -25,7 +26,8 @@ export interface IncidentTicketBasicInfoData {
   description: string;
   systemName: string;
   formalSeverity: string | null;
-  suggestedSeverity: string | null;
+  /** 通報人初步影響感受（IMPACT_FEELING_OPTIONS 之一），僅供受理窗口參考，不是正式等級猜測。 */
+  suggestedImpactLevel: string | null;
   incidentType: string | null;
   occurredAt: string | null;
 }
@@ -53,7 +55,7 @@ export async function loadIncidentPageContext(issueId: string, actor: User): Pro
 
   const team = issue.assignedTeamId ? await prisma.team.findUnique({ where: { id: issue.assignedTeamId } }) : null;
   const fieldRows = await prisma.issueFieldValue.findMany({
-    where: { issueId, fieldKey: { in: ["incidentFormalSeverity", "incidentSuggestedSeverity", "incidentType", "incidentOccurredAt"] } },
+    where: { issueId, fieldKey: { in: ["incidentFormalSeverity", INCIDENT_FIELD.suggestedImpactLevel, "incidentType", "incidentOccurredAt"] } },
   });
   const fieldByKey = new Map(fieldRows.map((row) => [row.fieldKey, row.fieldValue]));
 
@@ -66,7 +68,7 @@ export async function loadIncidentPageContext(issueId: string, actor: User): Pro
     description: issue.description,
     systemName: issue.systemName,
     formalSeverity: fieldByKey.get("incidentFormalSeverity") ?? null,
-    suggestedSeverity: fieldByKey.get("incidentSuggestedSeverity") ?? null,
+    suggestedImpactLevel: fieldByKey.get(INCIDENT_FIELD.suggestedImpactLevel) ?? null,
     incidentType: fieldByKey.get("incidentType") ?? null,
     occurredAt: fieldByKey.get("incidentOccurredAt") ?? null,
   };

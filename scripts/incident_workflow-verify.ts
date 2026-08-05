@@ -46,6 +46,15 @@ async function expectError(label: string, run: () => Promise<unknown>, ErrorType
   }
 }
 
+// 本檔案驗證的是九階段 Workflow 本身，不是通報人快速通報介面（見
+// incident_reporter_ux-verify.ts），因此結構化欄位一律用固定最小合法值，不逐案客製。
+const BASE_INTAKE_FIELDS = {
+  symptomText: "服務回應緩慢",
+  impactScope: "SINGLE_USER",
+  dataPermissionImpact: ["不確定"],
+  operationalImpact: ["不確定"],
+};
+
 async function createAdHocUser(name: string, role: string, email: string) {
   const user = await prisma.user.create({ data: { name, email, role, isActive: true } });
   await prisma.userRole.create({ data: { userId: user.id, role, isActive: true } });
@@ -83,6 +92,7 @@ async function main() {
 
   console.log("\n=== A. 建立事件並自動送出待承接 ===");
   const issue = await createIncidentForActor(reporter, {
+    ...BASE_INTAKE_FIELDS,
     title: "[verify] 事件通報流程",
     description: "服務回應緩慢",
     systemName: "MyDMS",
@@ -90,9 +100,9 @@ async function main() {
     incidentType: "服務中斷",
     occurredAt: "2026-08-01T09:00:00.000Z",
     reportSource: "監控告警",
-    suggestedSeverity: "中",
-    isOngoing: true,
-    hasWorkaround: false,
+    suggestedSeverity: "有影響，但仍可部分作業",
+    isOngoing: "是，現在仍持續",
+    hasWorkaround: "沒有",
     affectedScope: "MyDMS 全體使用者",
     impactSummary: "登入延遲",
   });
@@ -103,8 +113,9 @@ async function main() {
   await expectError(
     "[4] 建立時缺少必填欄位（事件名稱）明確拒絕，不寫入半成品",
     () => createIncidentForActor(reporter, {
-      title: "", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "其他",
-      occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "低", isOngoing: false, hasWorkaround: false, affectedScope: "x", impactSummary: "x",
+      ...BASE_INTAKE_FIELDS,
+      title: "", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "其他", incidentTypeOtherNote: "其他說明",
+      occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "影響較小", isOngoing: "否，目前已恢復", hasWorkaround: "沒有", affectedScope: "x", impactSummary: "x",
     }),
     IncidentCreationValidationError,
   );
@@ -118,8 +129,9 @@ async function main() {
 
   // 用第二筆事件驗證「退回補件」，避免影響主線流程的 issue。
   const supplementCase = await createIncidentForActor(reporter, {
-    title: "[verify] 補件退回案例", description: "描述不足", systemName: "MyDMS", environment: "Production", incidentType: "其他",
-    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "低", isOngoing: false, hasWorkaround: false, affectedScope: "x", impactSummary: "x",
+    ...BASE_INTAKE_FIELDS,
+    title: "[verify] 補件退回案例", description: "描述不足", systemName: "MyDMS", environment: "Production", incidentType: "其他", incidentTypeOtherNote: "其他說明",
+    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "影響較小", isOngoing: "否，目前已恢復", hasWorkaround: "沒有", affectedScope: "x", impactSummary: "x",
   });
   await requestIncidentSupplement({ issueId: supplementCase.id, actorId: intakeLead.id, reasonCode: "資料不足，請補充受影響範圍" });
   const afterSupplement = await prisma.issue.findUniqueOrThrow({ where: { id: supplementCase.id } });
@@ -131,12 +143,16 @@ async function main() {
   check("[7b] assignedTeamId 為事件受理窗口", claimResult.issue.assignedTeamId === intakeTeam.id);
 
   console.log("\n=== C. 影響確認與分級 ===");
+  // 第二階段起，通報人只提供「初步影響感受」（與正式等級不同值域，不可比較），因此分級
+  // 關卡不再有「建議等級與正式等級不同須填調整原因」的強制檢查（見
+  // incidentAssignmentService.ts classifyIncident 說明）；改驗證缺少必填 formalSeverity 本身
+  // 仍會被拒絕。
   await expectError(
-    "[8] 正式等級與建議等級不同卻未填調整原因，明確拒絕",
-    () => classifyIncident({ issueId: issue.id, actorId: intakeLead.id, formalSeverity: "高", reasonCode: "V" }),
-    WorkflowExecutionStateError,
+    "[8] 正式事件等級不在高／中／低值域，明確拒絕",
+    () => classifyIncident({ issueId: issue.id, actorId: intakeLead.id, formalSeverity: "非法值", reasonCode: "V" }),
+    WorkflowExecutionValidationError,
   );
-  await classifyIncident({ issueId: issue.id, actorId: intakeLead.id, formalSeverity: "高", adjustReason: "監控顯示影響擴大", reasonCode: "V" });
+  await classifyIncident({ issueId: issue.id, actorId: intakeLead.id, formalSeverity: "高", reasonCode: "V" });
   const afterClassify = await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } });
   check("[9] 完成分級後進入待指派處理單位", afterClassify.workflowStatus === "pendingUnitAssignment");
   check("[9b] 正式事件等級已寫入 Issue.riskLevel", afterClassify.riskLevel === "高");
@@ -158,8 +174,9 @@ async function main() {
 
   // 用第三筆事件驗證「技術單位無法承接，退回重新指派」路徑。
   const returnCase = await createIncidentForActor(reporter, {
-    title: "[verify] 技術單位退回案例", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "其他",
-    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "低", isOngoing: false, hasWorkaround: false, affectedScope: "x", impactSummary: "x",
+    ...BASE_INTAKE_FIELDS,
+    title: "[verify] 技術單位退回案例", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "其他", incidentTypeOtherNote: "其他說明",
+    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "影響較小", isOngoing: "否，目前已恢復", hasWorkaround: "沒有", affectedScope: "x", impactSummary: "x",
   });
   await claimIssueForTeam({ issueId: returnCase.id, teamId: intakeTeam.id, actorId: intakeLead.id, reasonCode: "V" });
   await classifyIncident({ issueId: returnCase.id, actorId: intakeLead.id, formalSeverity: "低", reasonCode: "V" });
@@ -183,8 +200,9 @@ async function main() {
 
   // 用第四筆事件驗證「恢復結果未通過，退回處理」路徑。
   const rejectCase = await createIncidentForActor(reporter, {
-    title: "[verify] 恢復未通過案例", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "其他",
-    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "低", isOngoing: false, hasWorkaround: false, affectedScope: "x", impactSummary: "x",
+    ...BASE_INTAKE_FIELDS,
+    title: "[verify] 恢復未通過案例", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "其他", incidentTypeOtherNote: "其他說明",
+    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "電話", suggestedSeverity: "影響較小", isOngoing: "否，目前已恢復", hasWorkaround: "沒有", affectedScope: "x", impactSummary: "x",
   });
   await claimIssueForTeam({ issueId: rejectCase.id, teamId: intakeTeam.id, actorId: intakeLead.id, reasonCode: "V" });
   await classifyIncident({ issueId: rejectCase.id, actorId: intakeLead.id, formalSeverity: "低", reasonCode: "V" });
@@ -237,8 +255,9 @@ async function main() {
 
   console.log("\n=== G. 需要 RCA 時，RCA 未結案不得關閉事件 ===");
   const rcaCase = await createIncidentForActor(reporter, {
-    title: "[verify] 需要 RCA 案例", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "資安事件",
-    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "監控告警", suggestedSeverity: "高", isOngoing: false, hasWorkaround: false, affectedScope: "x", impactSummary: "x",
+    ...BASE_INTAKE_FIELDS,
+    title: "[verify] 需要 RCA 案例", description: "x", systemName: "MyDMS", environment: "Production", incidentType: "資安疑慮",
+    occurredAt: "2026-08-01T09:00:00.000Z", reportSource: "監控告警", suggestedSeverity: "影響很大，需要立即處理", isOngoing: "否，目前已恢復", hasWorkaround: "沒有", affectedScope: "x", impactSummary: "x",
   });
   await claimIssueForTeam({ issueId: rcaCase.id, teamId: intakeTeam.id, actorId: intakeLead.id, reasonCode: "V" });
   await classifyIncident({ issueId: rcaCase.id, actorId: intakeLead.id, formalSeverity: "高", reasonCode: "V" });

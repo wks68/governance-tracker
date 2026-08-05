@@ -76,16 +76,20 @@ async function driveIncidentToRcaDecision(opts: {
   title: string;
 }) {
   const issue = await createIncidentForActor(await prisma.user.findUniqueOrThrow({ where: { id: opts.reporter.id } }), {
+    symptomText: "服務回應緩慢",
+    impactScope: "SINGLE_USER",
+    dataPermissionImpact: ["不確定"],
+    operationalImpact: ["不確定"],
     title: opts.title,
     description: "說明",
     systemName: "MyDMS",
     environment: "Production",
-    incidentType: "資安事件",
+    incidentType: "資安疑慮",
     occurredAt: "2026-08-01T09:00:00.000Z",
     reportSource: "監控告警",
-    suggestedSeverity: opts.severity,
-    isOngoing: false,
-    hasWorkaround: false,
+    suggestedSeverity: "不確定，請承接窗口判斷",
+    isOngoing: "否，目前已恢復",
+    hasWorkaround: "沒有",
     affectedScope: "x",
     impactSummary: "x",
   });

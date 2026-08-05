@@ -140,11 +140,10 @@ export async function classifyIncident(input: ClassifyIncidentInput) {
     requireStage(stage, "pendingClassification");
     await requireActorEligibleForStage(tx, input.actorId, issue, stage);
 
-    const suggested = await readIncidentField(tx, issue.id, "incidentSuggestedSeverity");
-    if (suggested && suggested !== input.formalSeverity && !input.adjustReason?.trim()) {
-      throw new WorkflowExecutionStateError("正式事件等級與通報人建議等級不同時，必須填寫調整原因");
-    }
-
+    // 第二階段起，通報人不再提供任何與正式事件等級同一值域可比較的建議值（快速通報介面只
+    // 收集「初步影響感受」，見 reporterIntakeOptions.ts 說明，且明確規定絕不可與正式事件
+    // 等級混用比較）——因此本關卡不再有「建議等級 vs 正式等級不同須填原因」的強制檢查；
+    // adjustReason 仍可選填，供受理窗口記錄調整脈絡。
     await writeField(tx, issue.id, "incidentFormalSeverity", "正式事件等級", input.formalSeverity);
     if (input.adjustReason?.trim()) {
       await writeField(tx, issue.id, "incidentSeverityAdjustReason", "等級調整原因", input.adjustReason.trim());

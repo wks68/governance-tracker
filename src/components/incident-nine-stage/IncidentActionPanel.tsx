@@ -120,7 +120,7 @@ export default function IncidentActionPanel(props: IncidentActionPanelProps) {
           }}
         >
           <div>
-            <label className="block text-xs font-medium text-text-muted">通報人建議等級</label>
+            <label className="block text-xs font-medium text-text-muted">通報人初步影響感受（僅供參考，非正式等級）</label>
             <p className="mt-0.5 text-sm text-text-primary">{props.suggestedSeverity ?? "未提供"}</p>
           </div>
           <div>
