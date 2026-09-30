@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model IssueType {
+  id               String           @id @default(cuid())
+  name             String           @unique
+  description      String?
+  workflowStatuses WorkflowStatus[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
+
+model WorkflowStatus {
+  id          String    @id @default(cuid())
+  issueTypeId String
+  name        String
+  sortOrder   Int
+  issueType   IssueType @relation(fields: [issueTypeId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([issueTypeId, name])
+  @@index([issueTypeId, sortOrder])
+}
+
+model Issue {
+  id                String            @id @default(cuid())
+  issueKey          String            @unique
+  issueType         String
+  title             String
+  description       String
+  systemName        String
+  environment       String
+  riskLevel         String
+  priority          String
+  ownerRole         String
+  ownerName         String
+  reporter          String
+  workflowStatus    String
+  statusLight       String
+  dueDate           DateTime
+  needRca           Boolean           @default(false)
+  needRiskException Boolean           @default(false)
+  impactProduction  Boolean           @default(false)
+  evidenceStatus    String            @default("Missing")
+  blockReason       String?
+  waitingRole       String?
+  nextStep          String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  closedAt          DateTime?
+  fieldValues       IssueFieldValue[]
+  comments          Comment[]
+  evidence          Evidence[]
+  auditLogs         AuditLog[]
+  aiSuggestions     AiSuggestion[]
+
+  @@index([issueType])
+  @@index([workflowStatus])
+  @@index([statusLight])
+  @@index([dueDate])
+}
+
+model IssueFieldValue {
+  id         String   @id @default(cuid())
+  issueId    String
+  fieldKey   String
+  fieldLabel String
+  fieldValue String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  issue      Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId, fieldKey])
+  @@index([fieldKey])
+}
+
+model Evidence {
+  id          String   @id @default(cuid())
+  issueId     String
+  type        String
+  title       String
+  url         String
+  description String?
+  createdAt   DateTime @default(now())
+  issue       Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  issueId    String
+  authorRole String
+  authorName String
+  body       String
+  createdAt  DateTime @default(now())
+  issue      Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  issueId       String
+  actionType    String
+  actionSummary String
+  actorRole     String
+  actorName     String
+  createdAt     DateTime @default(now())
+  issue         Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+  @@index([actionType])
+}
+
+model AiSuggestion {
+  id             String   @id @default(cuid())
+  issueId        String
+  suggestionType String
+  prompt         String
+  output         String
+  accepted       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  issue          Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+  @@index([suggestionType])
+}
